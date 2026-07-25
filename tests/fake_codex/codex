@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""A stand-in for the real `codex` binary, first on PATH during T1.
+
+It records the argv it was handed and replays a recorded event stream at a
+controllable pace. That makes every argv-composition and filtering behaviour
+testable at zero token cost, which is why T1 is the primary safety net here
+rather than an afterthought.
+
+Controlled entirely through the environment so the bridge under test needs no
+knowledge that it is talking to a fake:
+
+  FAKE_CODEX_ARGV_LOG   append one JSON line per invocation: {argv, cwd, env}
+  FAKE_CODEX_FIXTURE    JSONL file to replay on stdout (default: a 4-line stream)
+  FAKE_CODEX_DELAY      seconds to sleep between emitted lines (default 0)
+  FAKE_CODEX_PRE_DELAY  seconds to sleep before the first line
+  FAKE_CODEX_HANG       after replaying, sleep this many seconds before exiting
+  FAKE_CODEX_EXIT       exit code (default 0)
+  FAKE_CODEX_STDERR     text to write to stderr
+  FAKE_CODEX_VERSION    what `--version` prints (default: codex-cli 0.144.1-fake)
+  FAKE_CODEX_LOGIN_RC   exit code for `login status` (default 0)
+  FAKE_CODEX_THREAD_ID  thread id to substitute into the replayed stream
+"""
+
+import json
+import os
+import signal
+import sys
+import time
+
+DEFAULT_THREAD = "019f0000-0000-7000-0000-00000000fake"
+
+DEFAULT_STREAM = [
+    {"type": "thread.started", "thread_id": DEFAULT_THREAD},
+    {"type": "turn.started"},
+    {"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "OK"}},
+    {"type": "turn.completed", "usage": {"input_tokens": 15871, "cached_input_tokens": 13056,
+                                         "output_tokens": 5, "reasoning_output_tokens": 0}},
+]
+
+
+def log_invocation(argv):
+    path = os.environ.get("FAKE_CODEX_ARGV_LOG")
+    if not path:
+        return
+    rec = {
+        "argv": argv,
+        "cwd": os.getcwd(),
+        "codex_home": os.environ.get("CODEX_HOME"),
+        "stdin_is_tty": sys.stdin.isatty(),
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def load_stream():
+    path = os.environ.get("FAKE_CODEX_FIXTURE")
+    if not path:
+        return list(DEFAULT_STREAM)
+    events = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                events.append(json.loads(line))
+    return events
+
+
+def main():
+    argv = sys.argv[1:]
+    log_invocation(argv)
+
+    if "--version" in argv or "-V" in argv:
+        print(os.environ.get("FAKE_CODEX_VERSION", "codex-cli 0.144.1-fake"))
+        return 0
+    if argv[:2] == ["login", "status"]:
+        rc = int(os.environ.get("FAKE_CODEX_LOGIN_RC", "0"))
+        print("Logged in using ChatGPT" if rc == 0 else "Not logged in")
+        return rc
+
+    # The real CLI always writes this to stderr when stdin is not a TTY. Keeping
+    # it here means the tests exercise the "stderr is normal output" path.
+    sys.stderr.write("Reading additional input from stdin...\n")
+    if os.environ.get("FAKE_CODEX_STDERR"):
+        sys.stderr.write(os.environ["FAKE_CODEX_STDERR"] + "\n")
+    sys.stderr.flush()
+
+    interrupted = {"flag": False}
+
+    def on_int(signum, frame):
+        interrupted["flag"] = True
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, on_int)
+
+    pre = float(os.environ.get("FAKE_CODEX_PRE_DELAY", "0"))
+    delay = float(os.environ.get("FAKE_CODEX_DELAY", "0"))
+    hang = float(os.environ.get("FAKE_CODEX_HANG", "0"))
+    tid = os.environ.get("FAKE_CODEX_THREAD_ID")
+
+    try:
+        if pre:
+            time.sleep(pre)
+        last_message = None
+        for ev in load_stream():
+            if tid and ev.get("type") == "thread.started":
+                ev = dict(ev, thread_id=tid)
+            if ev.get("type") == "item.completed" and (ev.get("item") or {}).get("type") == "agent_message":
+                last_message = ev["item"].get("text")
+            sys.stdout.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+            if delay:
+                time.sleep(delay)
+
+        # -o / --output-last-message
+        for flag in ("-o", "--output-last-message"):
+            if flag in argv:
+                dest = argv[argv.index(flag) + 1]
+                with open(dest, "w", encoding="utf-8") as fh:
+                    fh.write(last_message or "")
+                break
+
+        if hang:
+            time.sleep(hang)
+    except KeyboardInterrupt:
+        sys.stderr.write("interrupted\n")
+        return 130
+
+    return int(os.environ.get("FAKE_CODEX_EXIT", "0"))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

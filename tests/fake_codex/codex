@@ -65,6 +65,61 @@ def load_stream():
     return events
 
 
+# Options taking exactly one value. Anything not listed and starting with `-` is
+# treated as a valueless flag.
+_ONE_VALUE = {"-c", "--config", "-m", "--model", "-o", "--output-last-message",
+              "--output-schema", "--add-dir", "--base", "--commit", "--title",
+              "-p", "--profile", "--enable", "--disable", "--local-provider",
+              "-s", "--sandbox", "-C", "--cd", "--color"}
+# `codex exec`'s -i is declared `<FILE>...` — it takes MULTIPLE values and keeps
+# consuming until the next flag or `--`. Modelling that greediness is the whole
+# point of parsing argv here: without it the shim silently accepts an argv the
+# real CLI rejects, and a broken command line looks like a passing test.
+_GREEDY = {"-i", "--image"}
+_SUBCOMMANDS = {"exec", "resume", "review"}
+
+
+def parse_positionals(argv):
+    """Approximate clap's parse enough to find the prompt the way Codex would."""
+    positionals, i, after_ddash = [], 0, False
+    while i < len(argv):
+        tok = argv[i]
+        if after_ddash:
+            positionals.append(tok)
+            i += 1
+            continue
+        if tok == "--":
+            after_ddash = True
+            i += 1
+            continue
+        if tok in _GREEDY:
+            i += 1
+            while i < len(argv) and not argv[i].startswith("-"):
+                i += 1
+            continue
+        if tok in _ONE_VALUE:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        if tok in _SUBCOMMANDS and not positionals:
+            i += 1
+            continue
+        positionals.append(tok)
+        i += 1
+    return positionals
+
+
+def find_prompt(argv):
+    """`resume` is `[SESSION_ID] [PROMPT]`; everything else is just `[PROMPT]`."""
+    positionals = parse_positionals(argv)
+    is_resume = "resume" in argv[:3]
+    if is_resume and "--last" not in argv:
+        return positionals[1] if len(positionals) > 1 else None
+    return positionals[0] if positionals else None
+
+
 def main():
     argv = sys.argv[1:]
     log_invocation(argv)
@@ -76,6 +131,12 @@ def main():
         rc = int(os.environ.get("FAKE_CODEX_LOGIN_RC", "0"))
         print("Logged in using ChatGPT" if rc == 0 else "Not logged in")
         return rc
+
+    # Reject exactly as the real CLI does when option parsing ate the prompt.
+    # `review` may legitimately have no prompt (--uncommitted et al).
+    if "review" not in argv[:3] and find_prompt(argv) is None:
+        sys.stderr.write("Reading prompt from stdin...\nNo prompt provided via stdin.\n")
+        return 1
 
     # The real CLI always writes this to stderr when stdin is not a TTY. Keeping
     # it here means the tests exercise the "stderr is normal output" path.

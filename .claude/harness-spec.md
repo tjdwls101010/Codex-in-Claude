@@ -146,9 +146,9 @@ Recorded here and applied to `docs/plan/codex-skill-implementation-plan.md`. Non
   | 2 | `exec resume --ignore-user-config` (no flags) | **`read-only`** — silent *downgrade* | **`None`** — dropped |
   | 3 | `exec resume --ignore-user-config -c sandbox_mode="workspace-write" -c model_reasoning_effort="high"` | `workspace-write` | `high` |
 
-  The escalation direction reproduces too, exactly as the plan recorded it: thread `019f9959` created `read-only`, resumed **with inherited config** and no sandbox flag, got `"sandbox_policy": {"type": "danger-full-access"}` with `permission_profile.file_system: {"type": "disabled"}`, and wrote `escalated_inherit.txt` containing `ESCALATED`.
+The escalation direction reproduces too, exactly as the plan recorded it: thread `019f9959` created `read-only`, resumed **with inherited config** and no sandbox flag, got `"sandbox_policy": {"type": "danger-full-access"}` with `permission_profile.file_system: {"type": "disabled"}`, and wrote `escalated_inherit.txt` containing `ESCALATED`.
 
-  Which direction you get is decided by the config layer in effect, not by the thread: inherited config on this machine escalates to `danger-full-access`; isolation downgrades to `read-only`. Isolation therefore *masks* the escalation here purely by coincidence — Codex's own built-in `exec` default happens to be `read-only`. Relying on that would be a bug: it depends on a Codex default staying put, it collapses the moment `--inherit-config` is used, and it silently breaks legitimate `workspace-write` work in the other direction. Re-injection from the registry is what makes the sandbox *stable*, and stability is the property worth stating — anti-escalation is one consequence of it.
+Which direction you get is decided by the config layer in effect, not by the thread: inherited config on this machine escalates to `danger-full-access`; isolation downgrades to `read-only`. Isolation therefore *masks* the escalation here purely by coincidence — Codex's own built-in `exec` default happens to be `read-only`. Relying on that would be a bug: it depends on a Codex default staying put, it collapses the moment `--inherit-config` is used, and it silently breaks legitimate `workspace-write` work in the other direction. Re-injection from the registry is what makes the sandbox *stable*, and stability is the property worth stating — anti-escalation is one consequence of it.
 
 - **R2 — `turn_context` is the verification channel, not the `<permissions instructions>` text.** Each turn appends a `{"type":"turn_context","payload":{…}}` line to the rollout carrying `sandbox_policy`, `permission_profile`, `model`, `cwd`, `workspace_roots`, and `collaboration_mode.settings.reasoning_effort`. It is structured, one line per turn, and unambiguous — strictly better than grepping a developer message. T2/I4 uses it.
 
@@ -174,27 +174,47 @@ Recorded here and applied to `docs/plan/codex-skill-implementation-plan.md`. Non
   | `` !`shell` `` preprocessing in a plugin SKILL.md body | **no** | The backtick expression reaches the model literally, unexpanded |
   | `Base directory for this skill: <dir>` in the skill's context | **yes** | Quoted back verbatim by a headless session from a neutral cwd |
 
-  SKILL.md now instructs the model to take the path from that context line and use it
-  literally, double-quoted. Verified end to end: a headless session in **default** permission
-  mode (no `--dangerously-skip-permissions`) ran
-  `python3 "/…/.claude/skills/codex/scripts/codex_bridge.py" doctor` with **no approval
-  prompt**, so B18 holds and the base-directory path and the `allowed-tools` pattern's
-  expansion of `${CLAUDE_PLUGIN_ROOT}` agree.
+SKILL.md now instructs the model to take the path from that context line and use it literally, double-quoted. Verified end to end: a headless session in **default** permission mode (no `--dangerously-skip-permissions`) ran `python3 "/…/.claude/skills/codex/scripts/codex_bridge.py" doctor` with **no approval prompt**, so B18 holds and the base-directory path and the `allowed-tools` pattern's expansion of `${CLAUDE_PLUGIN_ROOT}` agree.
 
-  The load-bearing consequence, written into SKILL.md with its reason: the permission
-  pattern matches the command *text*, so a command built from a shell variable is not
-  covered by it and would prompt on every poll — which is precisely what would make
-  background work unusable.
+The load-bearing consequence, written into SKILL.md with its reason: the permission pattern matches the command *text*, so a command built from a shell variable is not covered by it and would prompt on every poll — which is precisely what would make background work unusable.
 
-- **R7 — `plugin.json` must not declare `"hooks"`.** `hooks/hooks.json` is auto-loaded for
-  plugins; declaring it produced `Hook load failed: Duplicate hooks file detected` and the
-  **entire plugin failed to load**, skill included. `validate_harness.py` passed clean
-  throughout — only a real install surfaced it.
+- **R7 — `plugin.json` must not declare `"hooks"`.** `hooks/hooks.json` is auto-loaded for plugins; declaring it produced `Hook load failed: Duplicate hooks file detected` and the **entire plugin failed to load**, skill included. `validate_harness.py` passed clean throughout — only a real install surfaced it.
 
-**Results:** M0 verification sweep complete; V-01 and V-07 answered at M8 against a real
-local install. The V-03 blocker is cleared. Two plan corrections came out of the install
-(R6, R7); no component's design changed, but §4's path-resolution snippet was wrong and is
-replaced.
+- **R8 — the isolation saving is not a stable number; the clean stream is.** The plan's §3.3 headline ("~66% of input tokens") did not reproduce. Same machine, same prompt (`Reply with exactly: OK`), no deliberate config change:
+
+  | When | `--inherit-config` | `--ignore-user-config` | ratio | inherited `error` events |
+  |---|---:|---:|---:|---:|
+  | design session | 46,238 | 15,863 | 2.92× | 24 |
+  | at M9, two weeks later | 17,327 | 15,837 | 1.09× | 8 |
+
+Measured three consecutive times at M9 with identical results, so this is not noise. The isolated floor is stable to 26 tokens; what moved is how much of the user's config actually *loads* — an MCP server that fails to start contributes nothing to the prompt.
+
+Consequences applied: SKILL.md and `environment.md` no longer quote a ratio as though it were a property, and say to measure it if it matters to a decision. **I7 was rewritten** to assert what the wrapper is actually responsible for — that `--ignore-user-config` reaches the argv and has an observable effect (0 config-error events isolated vs 8 inherited, and isolation never costing more) — instead of a token threshold, which tested the user's Codex configuration rather than this code and would fail for reasons no code change could fix.
+
+- **R9 — the prompt must be preceded by `--`.** Found by I8 failing. `codex exec`'s `-i/--image <FILE>...` takes **multiple** values, so clap greedily consumed the following positional: the prompt became a second image path, Codex found no prompt, fell back to stdin (`/dev/null`) and exited having done nothing, with `state: failed` and no events. `exec resume`'s `-i` is single-valued, so only `exec` had it. `--` also fixes a second latent failure — a prompt beginning with `-` is rejected outright as an unknown flag (Codex's own error text suggests `--`). Now emitted unconditionally before the prompt on all three subcommands, verified against the real CLI on `exec` and `resume`.
+
+The T1 fake `codex` had not caught this because it did not parse argv the way clap does. It now models greedy `-i` consumption and the `--` terminator and **exits non-zero when option parsing ate the prompt** — reverting the fix makes three T1 tests fail, confirming the gap is closed rather than merely patched.
+
+### T2 — real Codex integration
+
+Run at M9 against `codex-cli 0.144.1`, throwaway git repo, **8/8 passing** in 88 s.
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| I1 | PASS | Background start captured `thread_id` immediately; `events.jsonl` grew; `result` returned the exact sentinel; usage 15,911 input tokens |
+| I2 | PASS | Interrupted mid-run, resumed with a correction: **same `thread_id`**, new `run_id`, rollout grew 15 → 27 lines, corrected answer returned |
+| I3 | PASS | Two parallel runs got distinct threads **and distinct process groups**; stopping one left the other to complete |
+| I4 | PASS | **The regression, against the real CLI.** `read-only` thread resumed: rollout `turn_context` reads `['read-only', 'read-only']`, the write was refused, and the resume argv contains `sandbox_mode="read-only"` |
+| I5 | PASS | `--output-schema` returned `{'language': 'Python', 'confident': True}`, parsed and shape-checked |
+| I6 | PASS | `review --uncommitted` over a deliberately unsafe diff produced 642 chars of findings; usage correctly reported `null` with the "unavailable, not free" note |
+| I7 | PASS (rewritten — see R8) | isolated 15,908 / 0 error events vs inherited 17,398 / 8; `--ignore-user-config` present in one argv and absent from the other |
+| I8 | PASS (after R9) | Image attached via `-i`; model replied `Crimson` to a generated crimson PNG |
+
+### T1 — unit tests
+
+**124 tests, passing**, ~40 s, verified stable across three consecutive runs. Includes the sandbox-drift regression on the recorded resume argv, the `compact`-never-leaks-output assertions against a real 22 KB `cat`, cursor exactness, parallel-stop isolation, the Korean/NFD path case, the four `doctor` failure modes, and 16 hook tests driving real process groups.
+
+**Results:** M0 verification sweep complete; V-01 and V-07 answered at M8 against a real local install. The V-03 blocker is cleared and re-confirmed against the real CLI at I4. Four plan corrections came out of building and testing (R6, R7, R8, R9). No component's design changed; §4's path-resolution snippet and §3.3's headline number were both wrong and are replaced.
 
 ## Change history
 

@@ -98,6 +98,15 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
         argv += list(review_args or [])
 
     if prompt is not None:
+        # `--` terminates option parsing, and it is required rather than tidy.
+        # Two measured failures without it:
+        #   * `codex exec`'s `-i/--image <FILE>...` takes MULTIPLE values, so it
+        #     greedily swallows the following positional — the prompt becomes a
+        #     second image path, Codex finds no prompt, falls back to stdin
+        #     (which is /dev/null) and exits having done nothing.
+        #   * a prompt beginning with `-` is rejected outright as an unknown
+        #     flag; Codex's own error even suggests `--`.
+        argv.append("--")
         argv.append(prompt)
     return argv
 

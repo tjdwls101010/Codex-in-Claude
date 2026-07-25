@@ -1,8 +1,6 @@
 # Implementation Plan — `codex` skill (Codex as a managed subagent for Claude Code)
 
-**Status:** approved, ready to implement. Written 2026-07-25 in a planning-only session.
-**Audience:** the next Claude session, which will implement this from scratch.
-**Companion file:** `.claude/harness-spec.md` (the spec `audit_harness.py` / `validate_harness.py` diff against). This plan is the *reasoning*; the spec is the *contract*. Keep both in sync.
+**Status:** approved, ready to implement. Written 2026-07-25 in a planning-only session. **Audience:** the next Claude session, which will implement this from scratch. **Companion file:** `.claude/harness-spec.md` (the spec `audit_harness.py` / `validate_harness.py` diff against). This plan is the *reasoning*; the spec is the *contract*. Keep both in sync.
 
 ---
 

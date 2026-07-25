@@ -1,8 +1,6 @@
 # Troubleshooting
 
-Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a blocker,
-and it separates blockers (the run cannot work) from warnings (it will work, but something
-is worth knowing). Most of the table below is faster to reach through it.
+Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a blocker, and it separates blockers (the run cannot work) from warnings (it will work, but something is worth knowing). Most of the table below is faster to reach through it.
 
 ## Symptom → cause → fix
 
@@ -36,40 +34,23 @@ is worth knowing). Most of the table below is faster to reach through it.
 
 ## Things that are not broken
 
-- **`error` items in the stream.** Informational config warnings. Shown at every filter
-  level on purpose, because the one time an `error` is not routine you need to see it.
-- **A silent run.** A single `command_execution` can be legitimately silent for minutes.
-  `idle_seconds` plus `in_progress_item` is how you tell that apart from a stuck one.
-- **`thread_id: null` from `start`.** The thread id had not appeared within the wait
-  window. `status` backfills it from the first line of `events.jsonl`.
-- **`compact` output that omits command stdout.** That is the entire point; the size marker
-  and `show --item` are how you get it when you want it.
+- **`error` items in the stream.** Informational config warnings. Shown at every filter level on purpose, because the one time an `error` is not routine you need to see it.
+- **A silent run.** A single `command_execution` can be legitimately silent for minutes. `idle_seconds` plus `in_progress_item` is how you tell that apart from a stuck one.
+- **`thread_id: null` from `start`.** The thread id had not appeared within the wait window. `status` backfills it from the first line of `events.jsonl`.
+- **`compact` output that omits command stdout.** That is the entire point; the size marker and `show --item` are how you get it when you want it.
 
 ## Out of scope for v1
 
 Recorded here so a future reader knows these were considered rather than overlooked.
 
-**`codex cloud`** — remote cloud tasks. Experimental, and a large surface that would need
-its own state model (remote task ids, polling, artifact retrieval) with little shared with
-the local path.
+**`codex cloud`** — remote cloud tasks. Experimental, and a large surface that would need its own state model (remote task ids, polling, artifact retrieval) with little shared with the local path.
 
-**`codex mcp-server` / `codex app-server`** — Codex as an MCP or protocol server. Both
-documented as primarily for development and debugging and *"may change without notice"*.
+**`codex mcp-server` / `codex app-server`** — Codex as an MCP or protocol server. Both documented as primarily for development and debugging and *"may change without notice"*.
 
-**True mid-turn steering.** There is no CLI channel to inject a message into an in-flight
-`codex exec` turn: it is one non-interactive turn with no input once started. The
-interactive TUI can do it — Enter injects into the current turn — but it needs a TTY that
-Claude cannot drive. v1's model is stop → resume, which works because SIGINT leaves the
-thread resumable with the interrupted turn's completed work intact.
+**True mid-turn steering.** There is no CLI channel to inject a message into an in-flight `codex exec` turn: it is one non-interactive turn with no input once started. The interactive TUI can do it — Enter injects into the current turn — but it needs a TTY that Claude cannot drive. v1's model is stop → resume, which works because SIGINT leaves the thread resumable with the interrupted turn's completed work intact.
 
-`codex app-server` is the one plausible route to real steering, since a protocol client
-could hold an open channel to a running turn. **This is unverified** — it has not been
-tested, and the documented instability is a real reason not to build on it yet. Recorded as
-unexplored, not as impossible.
+`codex app-server` is the one plausible route to real steering, since a protocol client could hold an open channel to a running turn. **This is unverified** — it has not been tested, and the documented instability is a real reason not to build on it yet. Recorded as unexplored, not as impossible.
 
 ## Reporting something that looks wrong
 
-Include: `doctor` output (it is one JSON line and carries the whole environment), the run's
-`meta.json` (which records the exact argv), and the tail of `events.jsonl`. Those three
-reproduce almost anything, and `meta.json`'s `argv` in particular settles "what did it
-actually run" without guessing.
+Include: `doctor` output (it is one JSON line and carries the whole environment), the run's `meta.json` (which records the exact argv), and the tail of `events.jsonl`. Those three reproduce almost anything, and `meta.json`'s `argv` in particular settles "what did it actually run" without guessing.

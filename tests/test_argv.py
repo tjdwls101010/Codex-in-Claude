@@ -98,6 +98,46 @@ class ArgvComposition(BridgeTestCase):
         self.assertIn("single non-interactive", argv[-1],
                       "B19 situational preamble is on by default")
 
+    def test_prompt_is_separated_by_a_double_dash(self):
+        """`codex exec`'s `-i/--image <FILE>...` takes MULTIPLE values and
+        greedily eats the next positional, so without `--` the prompt becomes a
+        second image path and Codex exits having read nothing. A prompt starting
+        with `-` is rejected outright for the same lack of a terminator."""
+        r = self.start("summarise")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertEqual(argv[-2], "--", f"prompt must be preceded by `--`; got {argv[-3:]}")
+
+    def test_image_before_prompt_does_not_swallow_it(self):
+        img = self.tmp / "a.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n")
+        r = self.start("describe the image", "--image", str(img))
+        row = self.wait_for_state(r["run_id"])
+        self.assertEqual(row["state"], "completed",
+                         "the run died — the prompt was probably eaten by -i")
+        argv = self.last_argv()
+        self.assertTrue(argv[-1].endswith("describe the image"), argv[-1][-60:])
+        self.assertEqual(argv[-2], "--")
+        self.assertIn("-i", argv)
+
+    def test_two_images_still_leave_the_prompt_intact(self):
+        for n in ("a", "b"):
+            (self.tmp / f"{n}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        r = self.start("compare them", "--image", str(self.tmp / "a.png"),
+                       "--image", str(self.tmp / "b.png"))
+        row = self.wait_for_state(r["run_id"])
+        self.assertEqual(row["state"], "completed")
+        self.assertTrue(self.last_argv()[-1].endswith("compare them"))
+
+    def test_a_prompt_starting_with_a_dash_survives(self):
+        # --no-preamble so the prompt genuinely begins with a dash; with the
+        # preamble prepended it would not exercise the case at all.
+        r = self.start("--- please summarise this diff ---", "--no-preamble")
+        row = self.wait_for_state(r["run_id"])
+        self.assertEqual(row["state"], "completed",
+                         "a dash-leading prompt must not be parsed as a flag")
+        self.assertEqual(self.last_argv()[-1], "--- please summarise this diff ---")
+
     def test_no_preamble_disables_it(self):
         r = self.start("bare prompt", "--no-preamble")
         self.wait_for_state(r["run_id"])

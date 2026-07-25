@@ -31,29 +31,31 @@ Two constraints the user stated explicitly, and which shape every component belo
 
 ## Behavior inventory
 
-| id | behavior/knowledge/constraint | layer | component | status |
-|----|-------------------------------|-------|-----------|--------|
-| B1 | Start a Codex thread with explicit, recorded sandbox/model/isolation settings; background by default | skill+script | `codex_bridge.py start` | approved |
-| B2 | Resume any Codex thread (own runs, `--last`, or a thread created in the Codex TUI) | skill+script | `codex_bridge.py resume` | approved |
-| B3 | A resumed or reviewed run must never silently escalate its filesystem sandbox | skill+script | `codex_bridge.py` (`-c sandbox_mode=` re-injection from the registry) | approved |
-| B4 | Read a run's event log incrementally at a controlled detail level | skill+script | `codex_bridge.py log --since --level` | approved |
-| B5 | File contents and successful commands' stdout never reach Claude's context by default | skill+script | filter levels; `show --item` as the only escape hatch | approved |
-| B6 | Inspect one specific event's full output on demand | skill+script | `codex_bridge.py show` | approved |
-| B7 | List runs for this project with state, elapsed, idle, tokens; detect stalls without auto-killing | skill+script | `codex_bridge.py status` | approved |
-| B8 | Interrupt exactly one run without touching other concurrent runs | skill+script | `codex_bridge.py stop` (process group, never name matching) | approved |
-| B9 | Collect a run's final message, usage, and schema-validated JSON when a schema was supplied | skill+script | `codex_bridge.py result`, `start --schema` | approved |
-| B10 | Drive `codex exec review`'s distinct flag surface (`--uncommitted`/`--base`/`--commit`/prompt) | skill+script | `codex_bridge.py review` | approved |
-| B11 | Attach images to a Codex prompt | skill+script | `start --image` | approved |
-| B12 | Diagnose the Codex environment in one command (PATH, version, `CODEX_HOME`, auth, config sandbox, resolved skill dir, runs dir) | skill+script | `codex_bridge.py doctor` | approved |
-| B13 | Run isolated from the user's Codex config by default; opt back in per run | skill+script | `--ignore-user-config` default, `--inherit-config` opt-in | approved |
-| B14 | Preserve the user's priority service tier despite isolation | skill+script | `-c service_tier="priority"` | approved |
-| B15 | Persist run state (thread id, sandbox, pid, session id) durably across Claude context loss | script | `<project>/.codex-runs/<run_id>/meta.json` | approved |
-| B16 | The run registry must never pollute the user's git history or `.gitignore` | script | `.codex-runs/.gitignore` containing `*` | approved |
-| B17 | Background Codex runs must not outlive the Claude session that started them, unless deliberately detached | hook | `SessionEnd` → `codex_session_cleanup.py`; `start --detach` exempts | approved |
-| B18 | Running the bridge must not raise an approval prompt on every poll | permissions | SKILL.md `allowed-tools` (plugin-portable); `settings.json` equivalent documented for symlink installs | approved |
-| B19 | Prepend minimal situational facts to every Codex prompt (non-interactive, single turn, nobody to ask) — facts only, no methodology | script | `start`/`resume` preamble, `--no-preamble` disables | approved |
-| B20 | Codex-CLI gotchas that cannot be derived from general competence | skill | SKILL.md gotcha section + `references/` | approved |
-| B21 | Live-follow a run so each event becomes a notification, including terminal failure states | skill+script | `log --follow`, paired with the Monitor tool | approved |
+All 21 rows are **validated**. The evidence column names the specific check; full detail is in Validation below.
+
+| id | behavior/knowledge/constraint | layer | component | status | evidence |
+|----|-------------------------------|-------|-----------|--------|----------|
+| B1 | Start a Codex thread with explicit, recorded sandbox/model/isolation settings; background by default | skill+script | `codex_bridge.py start` | validated | T1 `ArgvComposition` (9 tests); T2 I1; T4 E1 |
+| B2 | Resume any Codex thread (own runs, `--last`, or a thread created in the Codex TUI) | skill+script | `codex_bridge.py resume` | validated | T1 `test_resume_by_thread_id_and_by_last`; T2 I2; T4 E4. External-thread path checked directly: with an **empty registry**, `--include-external` listed 11 sqlite-recorded threads and resuming a bare-`codex`-created one by id returned its remembered passphrase |
+| B3 | A resumed or reviewed run must never silently escalate its filesystem sandbox | skill+script | `codex_bridge.py` (`-c sandbox_mode=` re-injection from the registry) | validated | T1 `SandboxDriftRegression` (7 tests); T2 **I4** against the real CLI (`turn_context` = `['read-only','read-only']`, write refused); T4 E4's recorded argv. Generalised by R1: drift goes both ways |
+| B4 | Read a run's event log incrementally at a controlled detail level | skill+script | `codex_bridge.py log --since --level` | validated | T1 `CursorExactness` (5 tests) incl. a partial trailing line; T4 E1/E2/E5 all polled |
+| B5 | File contents and successful commands' stdout never reach Claude's context by default | skill+script | filter levels; `show --item` as the only escape hatch | validated | T1 `test_compact_never_leaks_command_output` against a real 22 KB `cat`; T3 measured 10–19% of raw on command-heavy workloads |
+| B6 | Inspect one specific event's full output on demand | skill+script | `codex_bridge.py show` | validated | T1 `LogAndShowEndToEnd` incl. loud truncation and per-run item scoping. Not exercised by T4 — no scenario needed it, which is the intended shape |
+| B7 | List runs for this project with state, elapsed, idle, tokens; detect stalls without auto-killing | skill+script | `codex_bridge.py status` | validated | T1 `StateReporting` (11 tests) incl. `stalled` with the process confirmed still alive, and `orphaned` |
+| B8 | Interrupt exactly one run without touching other concurrent runs | skill+script | `codex_bridge.py stop` (process group, never name matching) | validated | T1 `StopIsolation` (6 tests); T2 I3 with distinct process groups verified |
+| B9 | Collect a run's final message, usage, and schema-validated JSON when a schema was supplied | skill+script | `codex_bridge.py result`, `start --schema` | validated | T1 `Results` (7 tests) incl. loud failure on malformed JSON; T2 I5 |
+| B10 | Drive `codex exec review`'s distinct flag surface (`--uncommitted`/`--base`/`--commit`/prompt) | skill+script | `codex_bridge.py review` | validated | T1 `ReviewArgumentValidation` (5 tests); T2 I6; T4 E2 chose the review path unprompted; V-10 covers the clean-tree case |
+| B11 | Attach images to a Codex prompt | skill+script | `start --image` | validated | T2 I8 (model identified a generated crimson PNG) after R9; T1 adds three argv tests for the `-i`-eats-the-prompt trap |
+| B12 | Diagnose the Codex environment in one command (PATH, version, `CODEX_HOME`, auth, config sandbox, resolved skill dir, runs dir) | skill+script | `codex_bridge.py doctor` | validated | T1 `test_doctor` (15 tests) across all four failure modes; T4 E2 used it unprompted as a preflight |
+| B13 | Run isolated from the user's Codex config by default; opt back in per run | skill+script | `--ignore-user-config` default, `--inherit-config` opt-in | validated | T1 `test_start_defaults`, `test_inherit_config_drops_isolation_and_priority`; T2 I7 (0 config-error events isolated vs 8 inherited). Magnitude claim corrected by R8 |
+| B14 | Preserve the user's priority service tier despite isolation | skill+script | `-c service_tier="priority"` | validated | V-02 — a bogus tier produces an explicit error event, `priority` produces none, so it is parsed and sent; T1 `test_priority_can_be_forced_off_and_on` |
+| B15 | Persist run state (thread id, sandbox, pid, session id) durably across Claude context loss | script | `<project>/.codex-runs/<run_id>/meta.json` | validated | T1 `test_run_directory_contents`; T4 E4 resumed across a **separate session** using only what the registry held |
+| B16 | The run registry must never pollute the user's git history or `.gitignore` | script | `.codex-runs/.gitignore` containing `*` | validated | T1 `test_runs_dir_is_self_ignoring` asserts the file is exactly `*` and that `git status --porcelain` never mentions it |
+| B17 | Background Codex runs must not outlive the Claude session that started them, unless deliberately detached | hook | `SessionEnd` → `codex_session_cleanup.py`; `start --detach` exempts | validated | `test_hook.py` clean; 16 T1 hook tests over real process groups covering selection, both session-id sources, SIGINT-only vs SIGTERM escalation, and the 1.5 s budget |
+| B18 | Running the bridge must not raise an approval prompt on every poll | permissions | SKILL.md `allowed-tools` (plugin-portable); `settings.json` equivalent documented for symlink installs | validated | Headless session in **default** permission mode ran the bridge with no prompt; `${CLAUDE_PLUGIN_ROOT}` is expanded in permission matching even though it is absent from the process environment (R6) |
+| B19 | Prepend minimal situational facts to every Codex prompt (non-interactive, single turn, nobody to ask) — facts only, no methodology | script | `start`/`resume` preamble, `--no-preamble` disables | validated | T1 `test_prompt_is_last_and_carries_the_preamble`, `test_no_preamble_disables_it` |
+| B20 | Codex-CLI gotchas that cannot be derived from general competence | skill | SKILL.md gotcha section + `references/` | validated | Eight gotchas, each carrying the measurement that produced it; `validate_harness.py` 0 errors / 0 warnings; frontmatter re-verified to parse |
+| B21 | Live-follow a run so each event becomes a notification, including terminal failure states | skill+script | `log --follow`, paired with the Monitor tool | validated | T1 `test_follow_emits_a_terminal_line` (asserts `run.failed exit=4`, so silence can never read as success); T4 E1/E2/E5 all used `--follow --level compact` |
 
 ## Component specs
 
@@ -117,10 +119,129 @@ Plus `validate_harness.py` clean and `test_hook.py` passing.
 
 **Open verification items (V-01…V-10)** are listed in the plan §6 with a check recipe and a fallback each. V-03 (does `-c sandbox_mode=` genuinely constrain a resumed run?) is a blocker; the rest have documented degradations. Record every outcome here as it is resolved.
 
-**Results:** none yet — nothing has been generated. This spec was written in a planning-only session on 2026-07-25.
+### V-01…V-10 results
+
+Measured 2026-07-25 against `codex-cli 0.144.1`, Claude Code 2.1.220, macOS 25.5.0 (APFS), `CODEX_HOME=…/orca/codex-runtime-home/home`. Scratch repo under the session scratchpad. Raw event streams and rollout paths were kept for the run; the durable evidence is quoted inline below.
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| V-01 | **answered at M8 — NO** | `CLAUDE_PLUGIN_ROOT` is **empty in the Bash tool's environment even for a plugin-installed skill**. Measured in a headless session with the plugin installed and the skill active: `PLUGIN_ROOT=[] SKILL_DIR=[] PROJECT_DIR=[]`. The plan's §4 fallback (`$HOME/.claude/skills/codex`) does **not** rescue this — for a plugin install that path does not exist. See refinement R6 for what replaced it. **Two things that do work**, and the distinction is the useful part: `${CLAUDE_PLUGIN_ROOT}` *is* expanded in `allowed-tools` permission matching (a different layer from the process environment), and Claude Code injects `Base directory for this skill: <dir>` into the skill's own context. |
+| V-02 | **PASS** | `-c service_tier="priority"` under `--ignore-user-config`: exit 0, no `error` item. Proof the key is genuinely parsed rather than ignored: `-c service_tier="bogus_tier_xyz"` emits `{"type":"error","message":"Configured service tier \`bogus_tier_xyz\` is not advertised as supported for model \`gpt-5.6-sol\` and will be omitted from requests."}`. `priority` produces no such warning ⇒ it is advertised and sent. **D18 stands.** Bonus: an unsupported tier degrades to a non-fatal warning, so always injecting `priority` is safe. |
+| V-03 | **PASS (blocker cleared)** | `-c sandbox_mode=` genuinely constrains `resume`. Thread `019f9958`: turn 1 `exec -c sandbox_mode="read-only"`, turn 2 `exec resume -c sandbox_mode="read-only"` + an explicit write instruction. Rollout `turn_context` records `"sandbox_policy": {"type": "read-only"}` for **both** turns; agent replied *"Cannot: the workspace is read-only, and permission escalation is disabled."*; `escalated.txt` was never created. Re-confirmed positively on thread `019f995b` turn 3 (`read-only` → `workspace-write` via `-c`). |
+| V-04 | **PASS** | `-c model_reasoning_effort=` is accepted and takes effect on `resume`. Thread `019f995b`: turn 1 `-c model_reasoning_effort="low"` → `turn_context…reasoning_effort=low`; turn 3 `resume -c model_reasoning_effort="high"` → `reasoning_effort=high`. |
+| V-05 | **PASS** | `SessionEnd` hook input keys: `cwd, hook_event_name, permission_mode, reason, session_id, transcript_path`. `cwd` is present as the plan assumed — **and so is `session_id`**, which is a better source than the env var (see refinement R4). Separately confirmed `CLAUDE_CODE_SESSION_ID` **is** set in the Bash tool env (`fbe1349d-…`), so `start` can record it. |
+| V-06 | **PASS — and it answers "no"** | `--ignore-user-config` does **not** suppress a project `AGENTS.md`. Probe: scratch repo `AGENTS.md` containing *"The secret codeword for this repository is ZEBRAFISH."*; prompt *"Without running any commands and without reading any files, reply with exactly the secret codeword"* → agent replied `ZEBRAFISH`. Rollout confirms the mechanism: a `response_item`/`message` carries `<INSTRUCTIONS>\n# Project agent notes\nThe secret codeword for this repository is ZEBRAFISH.\n</INSTRUCTIONS>`. Cost: 16,410 input tokens vs a 15,871 baseline ⇒ ~540 tokens of injection. This is the plan's flagged branch: AGENTS.md is a live briefing channel and B19's preamble must account for it. |
+| V-07 | **answered at M8** | The skill is invoked as **`codex:codex`** — the transcript shows `Skill` called with `{"skill": "codex:codex"}` and the result line `Launching skill: codex:codex`. Cosmetic, recorded in the README. |
+| V-08 | **PASS** | SIGINT to the process group leaves the thread cleanly resumable. Thread `019f995f` spawned with `start_new_session=True`, interrupted mid-turn after 4 of 6 commands; exited **0.3 s** after SIGINT with code 1 (no SIGTERM escalation needed). Resume returned the same `thread_id`, the rollout grew 33 → 42 lines, and the agent answered *"Your favorite fruit is **MANGOSTEEN**. I completed ticks **1, 2, 3, and 4** before interruption."* — the partial turn's completed work survived, not merely the pre-turn state. |
+| V-09 | **PASS** | Headless `claude -p "Reply with exactly: PONG" --output-format json` spawned from the Bash tool: exit 0, `"is_error": false`, real API usage recorded. `e2e-testing.md`'s documented open risk (Bash-spawned `claude` failing to authenticate) does **not** apply in this environment. T4 can be a real headless run. |
+| V-10 | **PASS** | `codex exec review --uncommitted --ignore-user-config` on a genuinely clean tree exits 0 and emits a plain agent message — *"There are no staged, unstaged, or untracked changes to review."* No error to special-case. It does burn ~4 exploratory `command_execution` items first (the model re-verifies the empty diff), which is cost, not failure. |
+
+### Refinements forced by the sweep
+
+Recorded here and applied to `docs/plan/codex-skill-implementation-plan.md`. None of them change a component's design — each strengthens or corrects the *rationale* the design already rests on.
+
+- **R1 — §3.1 is per-turn setting amnesia, not merely escalation.** `resume` inherits *no* per-invocation setting from the thread; it re-derives every one from whatever config is in effect for that invocation. Measured on thread `019f995b`, one thread, three turns:
+
+  | Turn | Invocation | `turn_context.sandbox_policy` | `reasoning_effort` |
+  |---|---|---|---|
+  | 1 | `exec --ignore-user-config -c sandbox_mode="workspace-write" -c model_reasoning_effort="low"` | `workspace-write` | `low` |
+  | 2 | `exec resume --ignore-user-config` (no flags) | **`read-only`** — silent *downgrade* | **`None`** — dropped |
+  | 3 | `exec resume --ignore-user-config -c sandbox_mode="workspace-write" -c model_reasoning_effort="high"` | `workspace-write` | `high` |
+
+The escalation direction reproduces too, exactly as the plan recorded it: thread `019f9959` created `read-only`, resumed **with inherited config** and no sandbox flag, got `"sandbox_policy": {"type": "danger-full-access"}` with `permission_profile.file_system: {"type": "disabled"}`, and wrote `escalated_inherit.txt` containing `ESCALATED`.
+
+Which direction you get is decided by the config layer in effect, not by the thread: inherited config on this machine escalates to `danger-full-access`; isolation downgrades to `read-only`. Isolation therefore *masks* the escalation here purely by coincidence — Codex's own built-in `exec` default happens to be `read-only`. Relying on that would be a bug: it depends on a Codex default staying put, it collapses the moment `--inherit-config` is used, and it silently breaks legitimate `workspace-write` work in the other direction. Re-injection from the registry is what makes the sandbox *stable*, and stability is the property worth stating — anti-escalation is one consequence of it.
+
+- **R2 — `turn_context` is the verification channel, not the `<permissions instructions>` text.** Each turn appends a `{"type":"turn_context","payload":{…}}` line to the rollout carrying `sandbox_policy`, `permission_profile`, `model`, `cwd`, `workspace_roots`, and `collaboration_mode.settings.reasoning_effort`. It is structured, one line per turn, and unambiguous — strictly better than grepping a developer message. T2/I4 uses it.
+
+- **R3 — `review` reports zero token usage.** Both V-10 runs ended `{"usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0}}` despite doing real work. `result` and `status` must not present that as a real measurement for review runs; report usage as unavailable rather than as zero.
+
+- **R4 — the `SessionEnd` hook should match on the input's `session_id` first.** Plan §5.4 assumed `$CLAUDE_CODE_SESSION_ID` in the hook's environment. The hook *input* carries `session_id` directly (V-05), which is authoritative. The hook matches a recorded run if its `claude_session_id` equals **either** the input's `session_id` or the hook process's `CLAUDE_CODE_SESSION_ID` — either source alone is a single point of failure, and disagreement between them would otherwise mean killing nothing (benign) or everything (not).
+
+- **R5 — measured resume cost curve** (isolated, same machine, `gpt-5.6-sol`), which is the concrete form of plan §3.4:
+
+  | Invocation | Input tokens | Cached |
+  |---|---|---|
+  | fresh `exec`, trivial prompt | 15,871 | 13,056 |
+  | fresh `exec`, trivial prompt, repo has a 2-line `AGENTS.md` | 16,410 | 0 |
+  | `resume`, 1 prior turn | 31,780 | 28,160 |
+  | `resume`, 2 prior turns | 47,774 | 43,264 |
+  | `resume`, after an interrupted 6-command turn | 86,142 | 75,520 |
+
+- **R6 — script path resolution comes from the skill's context header, not from any environment variable.** V-01 answered "no", which invalidates the plan §4 snippet: `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/codex}` resolves to a path that does not exist under a plugin install. Three mechanisms were tested against a real install:
+
+  | Mechanism | Works? | Evidence |
+  |---|---|---|
+  | `$CLAUDE_PLUGIN_ROOT` / `$CLAUDE_SKILL_DIR` in Bash | **no** | Both empty with the plugin installed and the skill active |
+  | `` !`shell` `` preprocessing in a plugin SKILL.md body | **no** | The backtick expression reaches the model literally, unexpanded |
+  | `Base directory for this skill: <dir>` in the skill's context | **yes** | Quoted back verbatim by a headless session from a neutral cwd |
+
+SKILL.md now instructs the model to take the path from that context line and use it literally, double-quoted. Verified end to end: a headless session in **default** permission mode (no `--dangerously-skip-permissions`) ran `python3 "/…/.claude/skills/codex/scripts/codex_bridge.py" doctor` with **no approval prompt**, so B18 holds and the base-directory path and the `allowed-tools` pattern's expansion of `${CLAUDE_PLUGIN_ROOT}` agree.
+
+The load-bearing consequence, written into SKILL.md with its reason: the permission pattern matches the command *text*, so a command built from a shell variable is not covered by it and would prompt on every poll — which is precisely what would make background work unusable.
+
+- **R7 — `plugin.json` must not declare `"hooks"`.** `hooks/hooks.json` is auto-loaded for plugins; declaring it produced `Hook load failed: Duplicate hooks file detected` and the **entire plugin failed to load**, skill included. `validate_harness.py` passed clean throughout — only a real install surfaced it.
+
+- **R8 — the isolation saving is not a stable number; the clean stream is.** The plan's §3.3 headline ("~66% of input tokens") did not reproduce. Same machine, same prompt (`Reply with exactly: OK`), no deliberate config change:
+
+  | When | `--inherit-config` | `--ignore-user-config` | ratio | inherited `error` events |
+  |---|---:|---:|---:|---:|
+  | design session | 46,238 | 15,863 | 2.92× | 24 |
+  | at M9, two weeks later | 17,327 | 15,837 | 1.09× | 8 |
+
+Measured three consecutive times at M9 with identical results, so this is not noise. The isolated floor is stable to 26 tokens; what moved is how much of the user's config actually *loads* — an MCP server that fails to start contributes nothing to the prompt.
+
+Consequences applied: SKILL.md and `environment.md` no longer quote a ratio as though it were a property, and say to measure it if it matters to a decision. **I7 was rewritten** to assert what the wrapper is actually responsible for — that `--ignore-user-config` reaches the argv and has an observable effect (0 config-error events isolated vs 8 inherited, and isolation never costing more) — instead of a token threshold, which tested the user's Codex configuration rather than this code and would fail for reasons no code change could fix.
+
+- **R9 — the prompt must be preceded by `--`.** Found by I8 failing. `codex exec`'s `-i/--image <FILE>...` takes **multiple** values, so clap greedily consumed the following positional: the prompt became a second image path, Codex found no prompt, fell back to stdin (`/dev/null`) and exited having done nothing, with `state: failed` and no events. `exec resume`'s `-i` is single-valued, so only `exec` had it. `--` also fixes a second latent failure — a prompt beginning with `-` is rejected outright as an unknown flag (Codex's own error text suggests `--`). Now emitted unconditionally before the prompt on all three subcommands, verified against the real CLI on `exec` and `resume`.
+
+The T1 fake `codex` had not caught this because it did not parse argv the way clap does. It now models greedy `-i` consumption and the `--` terminator and **exits non-zero when option parsing ate the prompt** — reverting the fix makes three T1 tests fail, confirming the gap is closed rather than merely patched.
+
+### T2 — real Codex integration
+
+Run at M9 against `codex-cli 0.144.1`, throwaway git repo, **8/8 passing** in 88 s.
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| I1 | PASS | Background start captured `thread_id` immediately; `events.jsonl` grew; `result` returned the exact sentinel; usage 15,911 input tokens |
+| I2 | PASS | Interrupted mid-run, resumed with a correction: **same `thread_id`**, new `run_id`, rollout grew 15 → 27 lines, corrected answer returned |
+| I3 | PASS | Two parallel runs got distinct threads **and distinct process groups**; stopping one left the other to complete |
+| I4 | PASS | **The regression, against the real CLI.** `read-only` thread resumed: rollout `turn_context` reads `['read-only', 'read-only']`, the write was refused, and the resume argv contains `sandbox_mode="read-only"` |
+| I5 | PASS | `--output-schema` returned `{'language': 'Python', 'confident': True}`, parsed and shape-checked |
+| I6 | PASS | `review --uncommitted` over a deliberately unsafe diff produced 642 chars of findings; usage correctly reported `null` with the "unavailable, not free" note |
+| I7 | PASS (rewritten — see R8) | isolated 15,908 / 0 error events vs inherited 17,398 / 8; `--ignore-user-config` present in one argv and absent from the other |
+| I8 | PASS (after R9) | Image attached via `-i`; model replied `Crimson` to a generated crimson PNG |
+
+### T4 — headless e2e
+
+Five scenarios, run at M9 as real headless `claude -p` sessions via `run_e2e.py` against the **plugin-installed** skill (not a symlink), in a shared scratch repo so E4 could resume the thread E1 created. Composed on the spot per `e2e-testing.md` and graded here with cited transcript evidence; no fixed e2e workflow file was created. **5/5 PASS.**
+
+`e2e-testing.md`'s standing caveat about headless auth does not apply here — V-09 confirmed it works in this environment, and all five scenarios completed against a real, authenticated `claude`.
+
+| ID | Prompt (Korean) | Verdict | Cited evidence |
+|---|---|---|---|
+| E1 | *"이건 코덱스한테 시켜줘: … total() 함수가 …"* | **PASS** | `line 15: Skill(skill='codex:codex')`. `line 47` runs `codex_bridge.py start --sandbox read-only --label pricing-order --cwd …`. `line 71` polls with `log --follow --level compact`. Final response reports `run 20260725-232834-pricing-order-6170`. Registry confirms thread `019f99ad-878a-…`, `state=completed`. |
+| E2 | *"GPT한테 이 diff 검토받아줘."* | **PASS** | `line 35: Skill(skill='codex:codex')`. `line 88` uses the **review path**: `review --sandbox read-only --label pricing-diff --uncommitted`, followed by `log --follow`, `status`, `result`. Not surface compliance — a bug deliberately planted in the diff (tax applied to the pre-discount subtotal) was found and explained with a worked example, `(100-20)*1.1 = 88` vs `100*1.1-20 = 90`. |
+| E3 | **near-miss** — *"lib/discount.py 의 tier_discount 함수 좀 리뷰해줘."* (no Codex/GPT mention) | **PASS** | The correct evidence is an absence: **`Skill invocations: 0`**. Claude reviewed it itself with three `Read` calls and one `Bash`, and found a real off-by-one (`> 1000` excludes exactly 1000). The description's boundary language held — "리뷰해줘" alone did not steal the trigger from plain judgment. |
+| E4 | *"아까 그 코덱스 세션 이어서 …"* | **PASS** | `line 19: Skill(skill='codex:codex')`. `line 56` searches with `status --all --include-external`. `line 128` runs `resume 20260725-232834-pricing-order-6170 --foreground --timeout 240`. Registry: the new run carries `parent_run_id=…-6170` and **the same `thread_id` 019f99ad-878a-…**, and its recorded argv is `codex exec resume 019f99ad-878a-… --ignore-user-config -c sandbox_mode="read-only" …` — the sandbox re-injection observed firing in an unscripted session rather than in a test. |
+| E5 | *"코덱스에 긴 작업 맡기고, 그동안 README 정리해줘."* | **PASS** | `line 25: Skill(...)`. `line 113` starts in the background with `--sandbox workspace-write` — note it chose `read-only` for E1's explain task and `workspace-write` here, so the judgment differentiates. Unrelated work is genuinely interleaved (`Read`×3 then `Write` on README) before `status` (line 212), `log --follow` (236) and `result` (303). At line 331 it re-ran `pytest` itself instead of trusting Codex's report. **Artifacts verified on disk, not from the transcript:** README rewritten to 82 real lines, `tests/` contains 143 lines across two files, `pytest` reports `30 passed`, and `git status` shows `lib/` untouched. |
+
+This also satisfies the "fresh session, plugin-installed, Korean natural-language prompt triggers the skill and a real Codex run appears" check: E1, E2, E4 and E5 are each exactly that.
+
+Two observations worth carrying forward rather than burying:
+
+- The model reached for `doctor` unprompted in E2 (`line 66`) before running the review. The skill points at `doctor` for "something is wrong"; it is apparently also read as a sensible preflight, which is harmless and arguably right.
+- No scenario ever used `show --item`, because no scenario needed a specific command's full output. That is the intended shape — the escape hatch stayed shut — but it means `show` is exercised only by T1 and by hand, not by e2e.
+
+### T1 — unit tests
+
+**124 tests, passing**, ~40 s, verified stable across three consecutive runs. Includes the sandbox-drift regression on the recorded resume argv, the `compact`-never-leaks-output assertions against a real 22 KB `cat`, cursor exactness, parallel-stop isolation, the Korean/NFD path case, the four `doctor` failure modes, and 16 hook tests driving real process groups.
+
+**Results:** M0 verification sweep complete; V-01 and V-07 answered at M8 against a real local install. The V-03 blocker is cleared and re-confirmed against the real CLI at I4. Four plan corrections came out of building and testing (R6, R7, R8, R9). No component's design changed; §4's path-resolution snippet and §3.3's headline number were both wrong and are replaced.
 
 ## Change history
 
 | Date | Mode | Summary |
 |---|---|---|
+| 2026-07-25 | generate | Implemented and released v0.1.0. All 21 behaviours validated. V-01…V-10 swept (V-03 blocker cleared; V-01 answered "no" and forced R6). T1 124 tests, T2 8/8, T3 four workloads, T4 5/5 including the near-miss. Nine plan corrections recorded as R1–R9; no component's design changed, but plan §3.1, §3.3 and §4 were each wrong and are replaced. |
 | 2026-07-25 | new (plan only) | Interviewed across five AskUserQuestion rounds; verified the Codex environment empirically (including a reproduced sandbox-escalation defect); recorded 20 decisions; wrote `docs/plan/codex-skill-implementation-plan.md` and this spec. All inventory rows are at `approved` — no files generated yet, so an audit on re-entry should report every row as awaiting generation. |

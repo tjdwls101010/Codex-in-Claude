@@ -1,8 +1,6 @@
 # Implementation Plan — `codex` skill (Codex as a managed subagent for Claude Code)
 
-**Status:** approved, ready to implement. Written 2026-07-25 in a planning-only session.
-**Audience:** the next Claude session, which will implement this from scratch.
-**Companion file:** `.claude/harness-spec.md` (the spec `audit_harness.py` / `validate_harness.py` diff against). This plan is the *reasoning*; the spec is the *contract*. Keep both in sync.
+**Status:** approved, ready to implement. Written 2026-07-25 in a planning-only session. **Audience:** the next Claude session, which will implement this from scratch. **Companion file:** `.claude/harness-spec.md` (the spec `audit_harness.py` / `validate_harness.py` diff against). This plan is the *reasoning*; the spec is the *contract*. Keep both in sync.
 
 ---
 
@@ -76,20 +74,31 @@ Record these in `references/troubleshooting.md` (or a short "Out of scope" secti
 
 Everything in this section was **measured on this machine** during the planning session against `codex-cli 0.144.1` and Claude Code 2.1.220. Treat it as ground truth, but re-run §6's checks before relying on any of it — Codex ships fast.
 
-### 3.1 CRITICAL — resume silently escalates the sandbox
+### 3.1 CRITICAL — resume does not carry the thread's settings (M0 revised this section)
 
-A session created with `codex exec -s read-only` was resumed with `codex exec resume <id>` and the second turn ran with **`danger-full-access`**, then successfully created a file the original policy forbade.
+**Original finding.** A session created with `codex exec -s read-only` was resumed with `codex exec resume <id>` and the second turn ran with **`danger-full-access`**, then successfully created a file the original policy forbade. Reproduced during M0 on thread `019f9959`, with the rollout's `turn_context` as evidence:
 
-Evidence, from the rollout file's injected `<permissions instructions>` developer messages:
-
-| Turn | Command | Injected policy | Result |
+| Turn | Command | `turn_context.sandbox_policy` | Result |
 |---|---|---|---|
-| 1 | `codex exec --json -s read-only …` | ``sandbox_mode`` is `read-only` | read only |
-| 2 | `codex exec resume <id> --json …` | ``sandbox_mode`` is **`danger-full-access`** | **wrote `b.txt`** |
+| 1 | `codex exec --json --ignore-user-config -c sandbox_mode="read-only"` | `read-only` | replied `OK` |
+| 2 | `codex exec resume <id> --json` (inherited config, no sandbox flag) | **`danger-full-access`**, `permission_profile.file_system: disabled` | **wrote `escalated_inherit.txt`** |
 
-Root cause: `codex exec resume` has **no `-s/--sandbox` flag**, so it falls back to `config.toml`'s `sandbox_mode`, which on this machine is `danger-full-access`. The legacy skill has this hole wide open.
+**M0 generalization (R1).** The defect is broader than escalation, and stating it as "resume escalates" would leave half of it unhandled. `resume` inherits **no** per-invocation setting from the thread — it re-derives every one of them from whatever config layer is in effect for that invocation. Measured on thread `019f995b`, one thread, three turns:
 
-**Design consequence (non-negotiable):** the wrapper records the sandbox mode at run creation and re-asserts it on every subsequent invocation via `-c sandbox_mode="<mode>"`. This is why a run registry is mandatory rather than a convenience. T1 carries a dedicated regression test for it; T2 re-verifies it against the real CLI.
+| Turn | Invocation | `sandbox_policy` | `reasoning_effort` |
+|---|---|---|---|
+| 1 | `exec --ignore-user-config -c sandbox_mode="workspace-write" -c model_reasoning_effort="low"` | `workspace-write` | `low` |
+| 2 | `exec resume --ignore-user-config` (no flags) | **`read-only`** — silent *downgrade* | **`None`** — dropped |
+| 3 | `exec resume --ignore-user-config -c sandbox_mode="workspace-write" -c model_reasoning_effort="high"` | `workspace-write` | `high` |
+
+Root cause is the same one: `codex exec resume` has **no `-s/--sandbox` flag** (§3.8), so the sandbox comes from the config layer. Which way it drifts is decided by that layer, not by the thread — inherited config on this machine escalates to `danger-full-access`; isolation downgrades to `read-only`, because Codex's own built-in `exec` default is `read-only`.
+
+Two consequences worth stating explicitly, because each is easy to get wrong:
+
+- **Isolation masks the escalation here by coincidence, and must not be treated as the fix.** It depends on a Codex built-in default staying where it is, it collapses the moment `--inherit-config` is used (a supported per-run option, D2), and in the other direction it silently breaks legitimate `workspace-write` work by dropping it to `read-only` mid-thread.
+- **Reasoning effort drifts the same way.** D19 says not to *pin* an effort by default, which remains right; it does not mean an explicitly chosen `--effort` may evaporate on the next turn. Whatever was recorded gets re-asserted.
+
+**Design consequence (non-negotiable):** the wrapper records sandbox, model, effort, isolation, priority, and cwd at run creation and re-asserts them on every subsequent invocation — sandbox via `-c sandbox_mode="<mode>"`. The property being bought is **stability of the run's settings across turns**; anti-escalation is one consequence of it, not the whole of it. This is why a run registry is mandatory rather than a convenience. T1 carries a dedicated regression test; T2 re-verifies against the real CLI.
 
 ### 3.2 `CODEX_HOME` is overridden on this machine
 
@@ -105,6 +114,13 @@ Root cause: `codex exec resume` has **no `-s/--sandbox` flag**, so it falls back
 | `--ignore-user-config` | "Reply with exactly: OK" | **15,863** | none — a clean 4-line event stream |
 
 The ~15.8k floor is Codex's own base instructions and tool definitions; it is not removable. The delta is the user's plugins, MCP servers, agent roles, and hooks. Auth still works under `--ignore-user-config` (documented, and confirmed: exit 0).
+
+**What isolation does *not* remove (M0/V-06): the project's own `AGENTS.md`.** Measured — a scratch repo `AGENTS.md` reading *"The secret codeword for this repository is ZEBRAFISH."* was answered correctly by a run told not to read any files, and the rollout shows it injected verbatim as a developer message: `<INSTRUCTIONS>\n# Project agent notes\nThe secret codeword…\n</INSTRUCTIONS>`. Cost was ~540 input tokens for two lines.
+
+Two design consequences:
+
+- `AGENTS.md` is a **live briefing channel that survives isolation** — the one piece of project-specific instruction that reaches an isolated Codex run without being pasted into the prompt. Say so in `environment.md`; it is a capability, not just a caveat.
+- It is also **uncontrolled input**: whatever is in the repo's `AGENTS.md` is in every run Claude starts there, whether or not Claude read it. B19's preamble must not contradict it or assume a blank slate, and `doctor` should report whether the project has one.
 
 ### 3.4 Resume replays the whole thread
 
@@ -132,6 +148,13 @@ Observed facts that matter:
 - **`item.id` restarts at `item_0` on every invocation.** It is per-invocation, not per-thread. Key items by `(run_id, item_id)`; never treat an item id as thread-unique.
 - Commands are wrapped: `/bin/zsh -lc "…"`. Strip the wrapper for display (the legacy `strip_wrapper` logic is worth porting).
 - `error` items are informational config warnings, not fatal.
+- **`review` runs report all-zero usage** (M0/R3). Both V-10 runs ended `{"usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0}}` despite doing real work across several commands. `result` and `status` must report usage as *unavailable* for review runs rather than presenting zeros as a measurement.
+
+### 3.5b The rollout's `turn_context` line — the per-turn settings record (M0/R2)
+
+Each turn appends one `{"type":"turn_context","payload":{…}}` line to the rollout file carrying `turn_id`, `cwd`, `workspace_roots`, `approval_policy`, **`sandbox_policy`**, `permission_profile`, `model`, and `collaboration_mode.settings.reasoning_effort`. It is structured, exactly one line per turn, and unambiguous.
+
+This is the verification channel for anything about what a turn actually ran under — strictly better than grepping the `<permissions instructions>` developer message the original §3.1 investigation used. V-03/V-04 and T2's I4 all read it.
 
 ### 3.6 Rollout files and the thread database
 
@@ -217,15 +240,27 @@ codex in claude/                          # repo root == plugin root
 
 Mirror `skills-for-repo-wiki`, which the user already ships this way: `.claude-plugin/{plugin.json,marketplace.json}` at repo root, skill under `.claude/skills/<name>/`, installed into `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`.
 
-**Script path resolution** must work in both installation modes. Canonical expression, used verbatim in SKILL.md:
+**Script path resolution.** ~~Canonical expression, used verbatim in SKILL.md:~~
 
 ```bash
+# SUPERSEDED — this does not work. Kept to record what was tried.
 CODEX_SKILL="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/.claude/skills/codex}"
 CODEX_SKILL="${CODEX_SKILL:-$HOME/.claude/skills/codex}"
-python3 "$CODEX_SKILL/scripts/codex_bridge.py" …
 ```
 
-If V-01 shows `CLAUDE_PLUGIN_ROOT` is not in the Bash environment, the fallback branch already covers the symlink install, and `doctor` prints the resolved path so a broken resolution is diagnosable in one command instead of being a mystery.
+**Corrected at M8 (R6).** V-01 came back **no**: `CLAUDE_PLUGIN_ROOT` is empty in the Bash environment even for a plugin-installed skill, and the fallback above then resolves to `$HOME/.claude/skills/codex`, which does not exist under a plugin install. The snippet fails in exactly the case it was written for.
+
+What works, verified against a real install: Claude Code injects **`Base directory for this skill: <dir>`** into the skill's own context. SKILL.md instructs the model to take the path from there and use it literally, double-quoted:
+
+```bash
+python3 "<base directory>/scripts/codex_bridge.py" …
+```
+
+Two mechanisms that do *not* work were tested and ruled out: environment variables (above), and `` !`shell` `` preprocessing inside a plugin SKILL.md body — the backtick expression reaches the model unexpanded.
+
+This must be a literal path, not a shell variable, and the reason belongs in SKILL.md: the `allowed-tools` pattern matches the command *text*, so a command built from a variable is not covered by it and prompts on every poll. Confirmed working — a headless session in default permission mode ran the bridge with no approval prompt, so `${CLAUDE_PLUGIN_ROOT}` *is* expanded in permission matching even though it is absent from the process environment. Those are two different layers, and only one of them has it.
+
+`doctor` prints the resolved path either way, so a broken resolution stays diagnosable in one command.
 
 ---
 
@@ -354,8 +389,8 @@ The load-bearing principle, and the user's own framing: `file_change` events alr
 
 **The binding constraint is a 1.5 second default timeout** — the shortest of any hook event by nearly two orders of magnitude. The hook must therefore be structured to do nothing expensive:
 
-1. Resolve the project dir from the hook input's `cwd` (V-05). If `<project>/.codex-runs` doesn't exist, `exit 0` immediately — this is the common case for every project that never uses Codex, and it must cost effectively nothing.
-2. Read `meta.json` files; select `state == running AND claude_session_id == $CLAUDE_CODE_SESSION_ID AND NOT detached`.
+1. Resolve the project dir from the hook input's `cwd` (V-05: confirmed present). If `<project>/.codex-runs` doesn't exist, `exit 0` immediately — this is the common case for every project that never uses Codex, and it must cost effectively nothing.
+2. Read `meta.json` files; select `state == running AND NOT detached AND` the run's recorded `claude_session_id` matches this session. **Match against the hook input's `session_id` *or* the hook process's `CLAUDE_CODE_SESSION_ID`** (M0/R4) — V-05 confirmed the input carries `session_id`, and both sources were confirmed available, but either one alone is a single point of failure whose failure mode is silent: no match means killing nothing (benign), a wrong match means killing another session's runs (not benign). Accepting either source makes disagreement fail toward the benign side.
 3. Signal each process group (SIGINT, then SIGTERM) and record the outcome in `meta.json`. **Do not wait for exit** — signal and return.
 
 `SessionEnd` fires on `/clear` and `/resume` as well as real termination. The user chose the simple policy deliberately (D15): kill everything not `--detach`ed. The reasoning to write into the hook and the skill: a background Codex run that nobody is watching keeps writing to the repo and burning tokens, and that is the worse failure than losing a run that can be resumed from its rollout anyway.
@@ -422,13 +457,17 @@ Launch, watch, interrupt, resume, and collect stay in SKILL.md because a single 
 
 ## 6. Verification items — do these FIRST
 
+**Status: swept 2026-07-25. All results and their evidence are recorded in `.claude/harness-spec.md` → Validation → "V-01…V-10 results".** Summary: V-02, V-03, V-04, V-05, V-06, V-08, V-09, V-10 all **PASS**; V-01 and V-07 are **deferred to M8** because both require an installed plugin to answer. The V-03 blocker is cleared — `-c sandbox_mode=` genuinely constrains a resumed run — so the design proceeds unchanged. Refinements R1–R5 forced by the sweep are folded into §3.1, §3.3, §3.5, §3.5b, and §5.4 above.
+
+The table below is the original recipe list, kept because it documents the fallback for each item.
+
 Each can invalidate part of the design, so run them before writing much code. Record every outcome in `.claude/harness-spec.md`'s Validation section.
 
 | ID | Question | How to check | If it fails |
 |---|---|---|---|
 | V-01 | Is `CLAUDE_PLUGIN_ROOT` in the **Bash tool's** environment for a plugin-installed skill? | Install this repo locally (`/plugin marketplace add ./`), start a fresh session, invoke the skill, run `echo "$CLAUDE_PLUGIN_ROOT"` | Fallback branch in §4 already covers it; make `doctor` print the resolved path and document the symlink install as primary |
 | V-02 | Is `-c service_tier="priority"` accepted under `--ignore-user-config`, and honored by the account? | Run twice with and without; compare wall-clock and check for a config error event | Drop D18, note it in the reference |
-| V-03 | Does `-c sandbox_mode=` actually constrain a `resume` / `review` run? | Resume with `-c sandbox_mode="read-only"`, then read the rollout's `<permissions instructions>` developer message for that turn; also attempt a write and confirm refusal | **Blocker.** Escalate: consider always starting a fresh thread instead of resuming when the sandbox must be tightened |
+| V-03 | Does `-c sandbox_mode=` actually constrain a `resume` / `review` run? | Resume with `-c sandbox_mode="read-only"`, then read that turn's `turn_context.sandbox_policy` line in the rollout (§3.5b — a cleaner channel than the `<permissions instructions>` developer message this recipe originally named); also attempt a write and confirm refusal | **Blocker.** Escalate: consider always starting a fresh thread instead of resuming when the sandbox must be tightened |
 | V-04 | Is `-c model_reasoning_effort=` accepted on `resume`? | Same technique, check `threads.reasoning_effort` | Document that effort is fixed at thread creation |
 | V-05 | What does the `SessionEnd` hook input carry — is `cwd` there? | `test_hook.py --event SessionEnd`, inspect the payload | Fall back to `CLAUDE_PROJECT_DIR`, then to the hook's own cwd |
 | V-06 | Does `--ignore-user-config` also suppress project `AGENTS.md` and project `.codex/hooks.json`? | Create a scratch repo with a distinctive `AGENTS.md`, run isolated, check the rollout for its text | If `AGENTS.md` still loads, say so in the reference — it is a *useful* channel for Claude to brief Codex, and materially changes what the preamble needs to say |
@@ -470,7 +509,7 @@ Against a scratch git repo, gated behind an env flag so it never runs by acciden
 - I1 background start → `thread_id` captured → `events.jsonl` grows → `result` returns the final message
 - I2 stop mid-run → `resume` with a correction → **same `thread_id`**, rollout appended
 - I3 two parallel runs → `stop` one → the other completes unaffected
-- I4 **sandbox regression against the real CLI**: start `read-only`, resume, read the rollout's permissions instruction for the resumed turn, assert `read-only`, assert a write attempt is refused
+- I4 **sandbox regression against the real CLI**: start `read-only`, resume, read the resumed turn's `turn_context.sandbox_policy` from the rollout (§3.5b), assert `read-only`, assert a write attempt is refused
 - I5 `--schema` returns JSON that validates
 - I6 `review --uncommitted` on a repo with a real change produces findings
 - I7 isolate vs inherit reproduces the §3.3 token delta (assert a large ratio, not exact numbers — Codex config drifts)

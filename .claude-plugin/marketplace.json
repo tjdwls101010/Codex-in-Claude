@@ -1,0 +1,25 @@
+{
+  "name": "codex-in-claude",
+  "description": "Home of the codex plugin: drive the OpenAI Codex CLI as a managed subagent from Claude Code.",
+  "owner": {
+    "name": "seongjin",
+    "url": "https://github.com/tjdwls101010"
+  },
+  "plugins": [
+    {
+      "name": "codex",
+      "source": "./",
+      "description": "Run OpenAI Codex as a managed subagent from Claude Code — background runs with a handle, a filtered live event log, stop-and-redirect, thread resume, and schema-validated results. Re-asserts each run's sandbox on every turn, closing a silent escalation in the Codex CLI's own resume path.",
+      "category": "development",
+      "keywords": [
+        "codex",
+        "openai",
+        "gpt",
+        "subagent",
+        "delegation",
+        "sandbox",
+        "background-tasks"
+      ]
+    }
+  ]
+}

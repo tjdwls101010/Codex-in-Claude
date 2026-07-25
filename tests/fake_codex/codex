@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""A stand-in for the real `codex` binary, first on PATH during T1.
+
+It records the argv it was handed and replays a recorded event stream at a
+controllable pace. That makes every argv-composition and filtering behaviour
+testable at zero token cost, which is why T1 is the primary safety net here
+rather than an afterthought.
+
+Controlled entirely through the environment so the bridge under test needs no
+knowledge that it is talking to a fake:
+
+  FAKE_CODEX_ARGV_LOG   append one JSON line per invocation: {argv, cwd, env}
+  FAKE_CODEX_FIXTURE    JSONL file to replay on stdout (default: a 4-line stream)
+  FAKE_CODEX_DELAY      seconds to sleep between emitted lines (default 0)
+  FAKE_CODEX_PRE_DELAY  seconds to sleep before the first line
+  FAKE_CODEX_HANG       after replaying, sleep this many seconds before exiting
+  FAKE_CODEX_EXIT       exit code (default 0)
+  FAKE_CODEX_STDERR     text to write to stderr
+  FAKE_CODEX_VERSION    what `--version` prints (default: codex-cli 0.144.1-fake)
+  FAKE_CODEX_LOGIN_RC   exit code for `login status` (default 0)
+  FAKE_CODEX_THREAD_ID  thread id to substitute into the replayed stream
+"""
+
+import json
+import os
+import signal
+import sys
+import time
+
+DEFAULT_THREAD = "019f0000-0000-7000-0000-00000000fake"
+
+DEFAULT_STREAM = [
+    {"type": "thread.started", "thread_id": DEFAULT_THREAD},
+    {"type": "turn.started"},
+    {"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "OK"}},
+    {"type": "turn.completed", "usage": {"input_tokens": 15871, "cached_input_tokens": 13056,
+                                         "output_tokens": 5, "reasoning_output_tokens": 0}},
+]
+
+
+def log_invocation(argv):
+    path = os.environ.get("FAKE_CODEX_ARGV_LOG")
+    if not path:
+        return
+    rec = {
+        "argv": argv,
+        "cwd": os.getcwd(),
+        "codex_home": os.environ.get("CODEX_HOME"),
+        "stdin_is_tty": sys.stdin.isatty(),
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def load_stream():
+    path = os.environ.get("FAKE_CODEX_FIXTURE")
+    if not path:
+        return list(DEFAULT_STREAM)
+    events = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                events.append(json.loads(line))
+    return events
+
+
+# Options taking exactly one value. Anything not listed and starting with `-` is
+# treated as a valueless flag.
+_ONE_VALUE = {"-c", "--config", "-m", "--model", "-o", "--output-last-message",
+              "--output-schema", "--add-dir", "--base", "--commit", "--title",
+              "-p", "--profile", "--enable", "--disable", "--local-provider",
+              "-s", "--sandbox", "-C", "--cd", "--color"}
+# `codex exec`'s -i is declared `<FILE>...` — it takes MULTIPLE values and keeps
+# consuming until the next flag or `--`. Modelling that greediness is the whole
+# point of parsing argv here: without it the shim silently accepts an argv the
+# real CLI rejects, and a broken command line looks like a passing test.
+_GREEDY = {"-i", "--image"}
+_SUBCOMMANDS = {"exec", "resume", "review"}
+
+
+def parse_positionals(argv):
+    """Approximate clap's parse enough to find the prompt the way Codex would."""
+    positionals, i, after_ddash = [], 0, False
+    while i < len(argv):
+        tok = argv[i]
+        if after_ddash:
+            positionals.append(tok)
+            i += 1
+            continue
+        if tok == "--":
+            after_ddash = True
+            i += 1
+            continue
+        if tok in _GREEDY:
+            i += 1
+            while i < len(argv) and not argv[i].startswith("-"):
+                i += 1
+            continue
+        if tok in _ONE_VALUE:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        if tok in _SUBCOMMANDS and not positionals:
+            i += 1
+            continue
+        positionals.append(tok)
+        i += 1
+    return positionals
+
+
+def find_prompt(argv):
+    """`resume` is `[SESSION_ID] [PROMPT]`; everything else is just `[PROMPT]`."""
+    positionals = parse_positionals(argv)
+    is_resume = "resume" in argv[:3]
+    if is_resume and "--last" not in argv:
+        return positionals[1] if len(positionals) > 1 else None
+    return positionals[0] if positionals else None
+
+
+def main():
+    argv = sys.argv[1:]
+    log_invocation(argv)
+
+    if "--version" in argv or "-V" in argv:
+        print(os.environ.get("FAKE_CODEX_VERSION", "codex-cli 0.144.1-fake"))
+        return 0
+    if argv[:2] == ["login", "status"]:
+        rc = int(os.environ.get("FAKE_CODEX_LOGIN_RC", "0"))
+        print("Logged in using ChatGPT" if rc == 0 else "Not logged in")
+        return rc
+
+    # Reject exactly as the real CLI does when option parsing ate the prompt.
+    # `review` may legitimately have no prompt (--uncommitted et al).
+    if "review" not in argv[:3] and find_prompt(argv) is None:
+        sys.stderr.write("Reading prompt from stdin...\nNo prompt provided via stdin.\n")
+        return 1
+
+    # The real CLI always writes this to stderr when stdin is not a TTY. Keeping
+    # it here means the tests exercise the "stderr is normal output" path.
+    sys.stderr.write("Reading additional input from stdin...\n")
+    if os.environ.get("FAKE_CODEX_STDERR"):
+        sys.stderr.write(os.environ["FAKE_CODEX_STDERR"] + "\n")
+    sys.stderr.flush()
+
+    interrupted = {"flag": False}
+
+    def on_int(signum, frame):
+        interrupted["flag"] = True
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, on_int)
+
+    pre = float(os.environ.get("FAKE_CODEX_PRE_DELAY", "0"))
+    delay = float(os.environ.get("FAKE_CODEX_DELAY", "0"))
+    hang = float(os.environ.get("FAKE_CODEX_HANG", "0"))
+    tid = os.environ.get("FAKE_CODEX_THREAD_ID")
+
+    try:
+        if pre:
+            time.sleep(pre)
+        last_message = None
+        for ev in load_stream():
+            if tid and ev.get("type") == "thread.started":
+                ev = dict(ev, thread_id=tid)
+            if ev.get("type") == "item.completed" and (ev.get("item") or {}).get("type") == "agent_message":
+                last_message = ev["item"].get("text")
+            sys.stdout.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+            if delay:
+                time.sleep(delay)
+
+        # -o / --output-last-message
+        for flag in ("-o", "--output-last-message"):
+            if flag in argv:
+                dest = argv[argv.index(flag) + 1]
+                with open(dest, "w", encoding="utf-8") as fh:
+                    fh.write(last_message or "")
+                break
+
+        if hang:
+            time.sleep(hang)
+    except KeyboardInterrupt:
+        sys.stderr.write("interrupted\n")
+        return 130
+
+    return int(os.environ.get("FAKE_CODEX_EXIT", "0"))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

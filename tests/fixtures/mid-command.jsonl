@@ -1,0 +1,13 @@
+{"type":"thread.started","thread_id":"019f995f-03c7-76f3-9dec-044b80fd5dd2"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll remember MANGOSTEEN for this conversation and run the six commands separately, reporting each output."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'sleep 2 && echo tick1'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'sleep 2 && echo tick1'","aggregated_output":"tick1\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"1/6 completed: `tick1`."}}
+{"type":"item.started","item":{"id":"item_3","type":"command_execution","command":"/bin/zsh -lc 'sleep 2 && echo tick2'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/bin/zsh -lc 'sleep 2 && echo tick2'","aggregated_output":"tick2\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"2/6 completed: `tick2`."}}
+{"type":"item.started","item":{"id":"item_5","type":"command_execution","command":"/bin/zsh -lc 'sleep 2 && echo tick3'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_5","type":"command_execution","command":"/bin/zsh -lc 'sleep 2 && echo tick3'","aggregated_output":"tick3\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":"3/6 completed: `tick3`."}}
+{"type":"item.started","item":{"id":"item_7","type":"command_execution","command":"/bin/zsh -lc 'sleep 2 && echo tick4'","aggregated_output":"","exit_code":null,"status":"in_progress"}}

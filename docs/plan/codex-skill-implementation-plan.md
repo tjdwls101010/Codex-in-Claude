@@ -242,15 +242,27 @@ codex in claude/                          # repo root == plugin root
 
 Mirror `skills-for-repo-wiki`, which the user already ships this way: `.claude-plugin/{plugin.json,marketplace.json}` at repo root, skill under `.claude/skills/<name>/`, installed into `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`.
 
-**Script path resolution** must work in both installation modes. Canonical expression, used verbatim in SKILL.md:
+**Script path resolution.** ~~Canonical expression, used verbatim in SKILL.md:~~
 
 ```bash
+# SUPERSEDED — this does not work. Kept to record what was tried.
 CODEX_SKILL="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/.claude/skills/codex}"
 CODEX_SKILL="${CODEX_SKILL:-$HOME/.claude/skills/codex}"
-python3 "$CODEX_SKILL/scripts/codex_bridge.py" …
 ```
 
-If V-01 shows `CLAUDE_PLUGIN_ROOT` is not in the Bash environment, the fallback branch already covers the symlink install, and `doctor` prints the resolved path so a broken resolution is diagnosable in one command instead of being a mystery.
+**Corrected at M8 (R6).** V-01 came back **no**: `CLAUDE_PLUGIN_ROOT` is empty in the Bash environment even for a plugin-installed skill, and the fallback above then resolves to `$HOME/.claude/skills/codex`, which does not exist under a plugin install. The snippet fails in exactly the case it was written for.
+
+What works, verified against a real install: Claude Code injects **`Base directory for this skill: <dir>`** into the skill's own context. SKILL.md instructs the model to take the path from there and use it literally, double-quoted:
+
+```bash
+python3 "<base directory>/scripts/codex_bridge.py" …
+```
+
+Two mechanisms that do *not* work were tested and ruled out: environment variables (above), and `` !`shell` `` preprocessing inside a plugin SKILL.md body — the backtick expression reaches the model unexpanded.
+
+This must be a literal path, not a shell variable, and the reason belongs in SKILL.md: the `allowed-tools` pattern matches the command *text*, so a command built from a variable is not covered by it and prompts on every poll. Confirmed working — a headless session in default permission mode ran the bridge with no approval prompt, so `${CLAUDE_PLUGIN_ROOT}` *is* expanded in permission matching even though it is absent from the process environment. Those are two different layers, and only one of them has it.
+
+`doctor` prints the resolved path either way, so a broken resolution stays diagnosable in one command.
 
 ---
 

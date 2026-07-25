@@ -19,27 +19,28 @@ allowed-tools:
 
 # Codex as a managed subagent
 
-One CLI wraps the whole surface. On this machine it is at:
-
-**!`{ ls -d "$HOME"/.claude/plugins/cache/*/codex/*/.claude/skills/codex/scripts/codex_bridge.py 2>/dev/null | sort -V | tail -1; ls -d "$HOME"/.claude/skills/codex/scripts/codex_bridge.py 2>/dev/null; } | head -1`**
-
-Use that absolute path **verbatim and double-quoted** in every call:
+One CLI wraps the whole surface. Your context already carries a line reading
+**`Base directory for this skill: <dir>`** — the bridge is `<dir>/scripts/codex_bridge.py`.
+Use that absolute path, double-quoted, in every call:
 
 ```bash
-python3 "<the path above>" status
+python3 "<base directory>/scripts/codex_bridge.py" status
 ```
 
-Two reasons it has to be the literal path rather than a shell variable. Neither
-`$CLAUDE_PLUGIN_ROOT` nor `$CLAUDE_SKILL_DIR` exists in the Bash environment — both expand
-to nothing, even for a plugin install (measured). And this skill's pre-approved permission
-pattern matches the command *text*, so `python3 "$CODEX/..."` is not covered by it and
-would raise an approval prompt on every poll, which makes background work unusable.
+**Do not build the path from an environment variable.** `$CLAUDE_PLUGIN_ROOT` and
+`$CLAUDE_SKILL_DIR` are both empty in the Bash environment, even for a plugin install
+(measured — `$CLAUDE_PLUGIN_ROOT` is expanded in permission rules, which is a different
+layer from the process environment). And because this skill's pre-approved permission
+pattern matches the command *text*, a command written as `python3 "$SOMEVAR/..."` is not
+covered by it and raises an approval prompt on every poll — which is exactly what makes
+background work unusable.
 
-If the line above is empty or a command fails with "No such file or directory", the install
-is not where it is expected; `doctor` prints the path it resolved.
+If a call fails with "No such file or directory", run `doctor`: it prints the path it
+resolved, turning a broken install into a one-command diagnosis.
 
 Every subcommand prints **one line of JSON**, except `log`, which prints text plus a
-trailing `# cursor=<n>`. Below, `$CODEX` stands for `python3 "<that path>"`.
+trailing `# cursor=<n>`. Below, `$CODEX` is shorthand for that literal
+`python3 "<base directory>/scripts/codex_bridge.py"` — write it out in full when you run it.
 
 | Command | What it does |
 |---|---|

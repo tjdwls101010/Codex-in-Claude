@@ -123,13 +123,13 @@ Measured 2026-07-25 against `codex-cli 0.144.1`, Claude Code 2.1.220, macOS 25.5
 
 | ID | Verdict | Evidence |
 |---|---|---|
-| V-01 | **deferred to M8** | `CLAUDE_PLUGIN_ROOT` is empty in the Bash tool env with no plugin-installed skill active, so the question is only answerable after the plugin exists. `CLAUDE_PROJECT_DIR` and `CLAUDE_SKILL_DIR` confirmed **unset** (plan §3.7 holds). The design does not depend on the answer — the §4 fallback branch covers it and `doctor` prints the resolved path. |
+| V-01 | **answered at M8 — NO** | `CLAUDE_PLUGIN_ROOT` is **empty in the Bash tool's environment even for a plugin-installed skill**. Measured in a headless session with the plugin installed and the skill active: `PLUGIN_ROOT=[] SKILL_DIR=[] PROJECT_DIR=[]`. The plan's §4 fallback (`$HOME/.claude/skills/codex`) does **not** rescue this — for a plugin install that path does not exist. See refinement R6 for what replaced it. **Two things that do work**, and the distinction is the useful part: `${CLAUDE_PLUGIN_ROOT}` *is* expanded in `allowed-tools` permission matching (a different layer from the process environment), and Claude Code injects `Base directory for this skill: <dir>` into the skill's own context. |
 | V-02 | **PASS** | `-c service_tier="priority"` under `--ignore-user-config`: exit 0, no `error` item. Proof the key is genuinely parsed rather than ignored: `-c service_tier="bogus_tier_xyz"` emits `{"type":"error","message":"Configured service tier \`bogus_tier_xyz\` is not advertised as supported for model \`gpt-5.6-sol\` and will be omitted from requests."}`. `priority` produces no such warning ⇒ it is advertised and sent. **D18 stands.** Bonus: an unsupported tier degrades to a non-fatal warning, so always injecting `priority` is safe. |
 | V-03 | **PASS (blocker cleared)** | `-c sandbox_mode=` genuinely constrains `resume`. Thread `019f9958`: turn 1 `exec -c sandbox_mode="read-only"`, turn 2 `exec resume -c sandbox_mode="read-only"` + an explicit write instruction. Rollout `turn_context` records `"sandbox_policy": {"type": "read-only"}` for **both** turns; agent replied *"Cannot: the workspace is read-only, and permission escalation is disabled."*; `escalated.txt` was never created. Re-confirmed positively on thread `019f995b` turn 3 (`read-only` → `workspace-write` via `-c`). |
 | V-04 | **PASS** | `-c model_reasoning_effort=` is accepted and takes effect on `resume`. Thread `019f995b`: turn 1 `-c model_reasoning_effort="low"` → `turn_context…reasoning_effort=low`; turn 3 `resume -c model_reasoning_effort="high"` → `reasoning_effort=high`. |
 | V-05 | **PASS** | `SessionEnd` hook input keys: `cwd, hook_event_name, permission_mode, reason, session_id, transcript_path`. `cwd` is present as the plan assumed — **and so is `session_id`**, which is a better source than the env var (see refinement R4). Separately confirmed `CLAUDE_CODE_SESSION_ID` **is** set in the Bash tool env (`fbe1349d-…`), so `start` can record it. |
 | V-06 | **PASS — and it answers "no"** | `--ignore-user-config` does **not** suppress a project `AGENTS.md`. Probe: scratch repo `AGENTS.md` containing *"The secret codeword for this repository is ZEBRAFISH."*; prompt *"Without running any commands and without reading any files, reply with exactly the secret codeword"* → agent replied `ZEBRAFISH`. Rollout confirms the mechanism: a `response_item`/`message` carries `<INSTRUCTIONS>\n# Project agent notes\nThe secret codeword for this repository is ZEBRAFISH.\n</INSTRUCTIONS>`. Cost: 16,410 input tokens vs a 15,871 baseline ⇒ ~540 tokens of injection. This is the plan's flagged branch: AGENTS.md is a live briefing channel and B19's preamble must account for it. |
-| V-07 | **deferred to M8** | Requires the plugin to be installed to read the `/` menu. |
+| V-07 | **answered at M8** | The skill is invoked as **`codex:codex`** — the transcript shows `Skill` called with `{"skill": "codex:codex"}` and the result line `Launching skill: codex:codex`. Cosmetic, recorded in the README. |
 | V-08 | **PASS** | SIGINT to the process group leaves the thread cleanly resumable. Thread `019f995f` spawned with `start_new_session=True`, interrupted mid-turn after 4 of 6 commands; exited **0.3 s** after SIGINT with code 1 (no SIGTERM escalation needed). Resume returned the same `thread_id`, the rollout grew 33 → 42 lines, and the agent answered *"Your favorite fruit is **MANGOSTEEN**. I completed ticks **1, 2, 3, and 4** before interruption."* — the partial turn's completed work survived, not merely the pre-turn state. |
 | V-09 | **PASS** | Headless `claude -p "Reply with exactly: PONG" --output-format json` spawned from the Bash tool: exit 0, `"is_error": false`, real API usage recorded. `e2e-testing.md`'s documented open risk (Bash-spawned `claude` failing to authenticate) does **not** apply in this environment. T4 can be a real headless run. |
 | V-10 | **PASS** | `codex exec review --uncommitted --ignore-user-config` on a genuinely clean tree exits 0 and emits a plain agent message — *"There are no staged, unstaged, or untracked changes to review."* No error to special-case. It does burn ~4 exploratory `command_execution` items first (the model re-verifies the empty diff), which is cost, not failure. |
@@ -166,7 +166,35 @@ Recorded here and applied to `docs/plan/codex-skill-implementation-plan.md`. Non
   | `resume`, 2 prior turns | 47,774 | 43,264 |
   | `resume`, after an interrupted 6-command turn | 86,142 | 75,520 |
 
-**Results:** M0 verification sweep complete except V-01/V-07 (deferred to M8 by construction — they require an installed plugin). The V-03 blocker is cleared, so the design proceeds unchanged.
+- **R6 — script path resolution comes from the skill's context header, not from any environment variable.** V-01 answered "no", which invalidates the plan §4 snippet: `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/codex}` resolves to a path that does not exist under a plugin install. Three mechanisms were tested against a real install:
+
+  | Mechanism | Works? | Evidence |
+  |---|---|---|
+  | `$CLAUDE_PLUGIN_ROOT` / `$CLAUDE_SKILL_DIR` in Bash | **no** | Both empty with the plugin installed and the skill active |
+  | `` !`shell` `` preprocessing in a plugin SKILL.md body | **no** | The backtick expression reaches the model literally, unexpanded |
+  | `Base directory for this skill: <dir>` in the skill's context | **yes** | Quoted back verbatim by a headless session from a neutral cwd |
+
+  SKILL.md now instructs the model to take the path from that context line and use it
+  literally, double-quoted. Verified end to end: a headless session in **default** permission
+  mode (no `--dangerously-skip-permissions`) ran
+  `python3 "/…/.claude/skills/codex/scripts/codex_bridge.py" doctor` with **no approval
+  prompt**, so B18 holds and the base-directory path and the `allowed-tools` pattern's
+  expansion of `${CLAUDE_PLUGIN_ROOT}` agree.
+
+  The load-bearing consequence, written into SKILL.md with its reason: the permission
+  pattern matches the command *text*, so a command built from a shell variable is not
+  covered by it and would prompt on every poll — which is precisely what would make
+  background work unusable.
+
+- **R7 — `plugin.json` must not declare `"hooks"`.** `hooks/hooks.json` is auto-loaded for
+  plugins; declaring it produced `Hook load failed: Duplicate hooks file detected` and the
+  **entire plugin failed to load**, skill included. `validate_harness.py` passed clean
+  throughout — only a real install surfaced it.
+
+**Results:** M0 verification sweep complete; V-01 and V-07 answered at M8 against a real
+local install. The V-03 blocker is cleared. Two plan corrections came out of the install
+(R6, R7); no component's design changed, but §4's path-resolution snippet was wrong and is
+replaced.
 
 ## Change history
 

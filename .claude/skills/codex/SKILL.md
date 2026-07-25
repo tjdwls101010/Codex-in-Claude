@@ -19,20 +19,27 @@ allowed-tools:
 
 # Codex as a managed subagent
 
-One CLI wraps the whole surface. Resolve it once per session; `${CLAUDE_SKILL_DIR}` does
-not exist in the Bash environment and expands to nothing:
+One CLI wraps the whole surface. On this machine it is at:
+
+**!`{ ls -d "$HOME"/.claude/plugins/cache/*/codex/*/.claude/skills/codex/scripts/codex_bridge.py 2>/dev/null | sort -V | tail -1; ls -d "$HOME"/.claude/skills/codex/scripts/codex_bridge.py 2>/dev/null; } | head -1`**
+
+Use that absolute path **verbatim and double-quoted** in every call:
 
 ```bash
-CODEX_SKILL="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/.claude/skills/codex}"
-CODEX_SKILL="${CODEX_SKILL:-$HOME/.claude/skills/codex}"
-CODEX="python3 $CODEX_SKILL/scripts/codex_bridge.py"
+python3 "<the path above>" status
 ```
 
-If a command fails with "No such file or directory", run `$CODEX doctor` — it prints the
-path it resolved, which turns a broken install into a one-command diagnosis.
+Two reasons it has to be the literal path rather than a shell variable. Neither
+`$CLAUDE_PLUGIN_ROOT` nor `$CLAUDE_SKILL_DIR` exists in the Bash environment — both expand
+to nothing, even for a plugin install (measured). And this skill's pre-approved permission
+pattern matches the command *text*, so `python3 "$CODEX/..."` is not covered by it and
+would raise an approval prompt on every poll, which makes background work unusable.
+
+If the line above is empty or a command fails with "No such file or directory", the install
+is not where it is expected; `doctor` prints the path it resolved.
 
 Every subcommand prints **one line of JSON**, except `log`, which prints text plus a
-trailing `# cursor=<n>`.
+trailing `# cursor=<n>`. Below, `$CODEX` stands for `python3 "<that path>"`.
 
 | Command | What it does |
 |---|---|

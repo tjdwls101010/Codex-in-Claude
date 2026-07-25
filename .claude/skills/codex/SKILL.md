@@ -1,0 +1,199 @@
+---
+name: codex
+description: >-
+  Run OpenAI Codex (the `codex` CLI, GPT models) as a managed subagent from Claude Code —
+  start work in the background and get a run handle back immediately, watch its live event
+  log at a controlled level of detail, interrupt and redirect a run, resume any earlier
+  Codex thread including ones started in the Codex TUI, and collect results as text or
+  schema-validated JSON. Use whenever work is being handed to Codex or GPT, when a second
+  independent model should look at something, when an external agent should keep working
+  while Claude does something else, or when an earlier Codex session needs continuing.
+  Also covers Codex CLI setup, auth, sandbox and config diagnosis. Triggers include: codex,
+  코덱스, 코덱스로, 코덱스한테, 코덱스에게, GPT, GPT한테, GPT에게 시켜, delegate to codex,
+  run with codex, ask GPT, resume codex. Not for Claude's own subagents, the Task tool, or
+  background Bash — those are Claude doing the work itself. Not for Codex Cloud or
+  `codex mcp-server` / `app-server`.
+allowed-tools:
+  - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/.claude/skills/codex/scripts/codex_bridge.py" *)
+---
+
+# Codex as a managed subagent
+
+One CLI wraps the whole surface. Resolve it once per session; `${CLAUDE_SKILL_DIR}` does
+not exist in the Bash environment and expands to nothing:
+
+```bash
+CODEX_SKILL="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/.claude/skills/codex}"
+CODEX_SKILL="${CODEX_SKILL:-$HOME/.claude/skills/codex}"
+CODEX="python3 $CODEX_SKILL/scripts/codex_bridge.py"
+```
+
+If a command fails with "No such file or directory", run `$CODEX doctor` — it prints the
+path it resolved, which turns a broken install into a one-command diagnosis.
+
+Every subcommand prints **one line of JSON**, except `log`, which prints text plus a
+trailing `# cursor=<n>`.
+
+| Command | What it does |
+|---|---|
+| `start [opts] "<prompt>"` | New thread. Background by default; returns `{run_id, thread_id, state, …}` |
+| `resume <ref\|--last> [opts] "<prompt>"` | Another turn on an existing thread. `<ref>` is a run id, thread id, or thread name |
+| `review [opts] --uncommitted \| --base <ref> \| --commit <sha> \| "<prompt>"` | `codex exec review`'s separate flag surface |
+| `status [--run <id>] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
+| `log --run <id> [--since <n>] [--level …] [--follow]` | Filtered events, incrementally |
+| `show --run <id> --item <item_id> [--max-bytes N]` | One item's full output |
+| `stop --run <id> \| --all-mine` | Interrupt by process group |
+| `result --run <id>` | Final message, usage, parsed JSON when `--schema` was used |
+| `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, resolved paths, runs dir |
+
+Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}`
+(default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`,
+`--inherit-config`, `--foreground [--timeout <sec>]`, `--detach`, `--no-preamble`,
+`--config k=v`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
+
+## The loop
+
+```bash
+$CODEX start --label refactor "…"            # → run_id, thread_id, immediately
+$CODEX log --run <id> --since 0              # → events + "# cursor=4213"
+$CODEX log --run <id> --since 4213           # → only what is new
+$CODEX stop --run <id>                       # if it is going wrong
+$CODEX resume <id> "Stop rewriting tests — …" # correct it, same thread
+$CODEX result --run <id>                     # final message + usage
+```
+
+There is no way to inject a message into a turn that is already running. `codex exec` is
+one non-interactive turn with no input channel once started, so intervention is
+**stop then resume**, and a stopped run stays resumable: SIGINT lets Codex flush its
+rollout, and the resumed turn still knows what the interrupted one had finished.
+
+## Context discipline
+
+`file_change` events carry paths and a kind, never file contents. **The entire context risk
+is one field: `command_execution.aggregated_output`**, which holds a command's full stdout —
+so a run that `cat`s a 2,000-line file puts that whole file in there.
+
+The default level therefore never carries command output. Instead each command line reports
+its size:
+
+```
+cmd[item_2] exit=0 out=8797B rg -n "" tests . --glob '*.py'
+```
+
+That byte count is there so fetching output is a decision, not a guess: `show --run <id>
+--item item_2` returns exactly that one command's output, and nothing else's.
+
+This works because **the agent's own messages are never filtered at any level**. Codex
+states what it found and what it did, so raw output is usually a second copy of a summary
+you already have. Reach for `show` when you need to check the summary rather than read it —
+a claim looks wrong, or the run stopped before it explained itself.
+
+Levels: `compact` (default) · `normal` adds output for **failed** commands only · `full`
+adds capped output for every item · `raw` passes events through. Measured costs and the
+reason `compact` is the default are in `references/event-stream.md`. Raise to `normal` when
+a command failed and the agent's account of it is not enough to act on — that is the one
+case where the withheld bytes are the diagnosis rather than a copy of it.
+
+## Gotchas
+
+These are the traps that cost a real failure to learn. Everything else about driving a CLI
+you already know.
+
+**A resumed run inherits none of its thread's settings.** `codex exec resume` has no
+`-s/--sandbox` flag, so the sandbox comes from whatever config layer is in effect, not from
+the thread. Measured: a `read-only` thread resumed under the user's config ran as
+`danger-full-access` and wrote a file its original policy forbade; the same thread resumed
+under isolation silently dropped to `read-only` and lost its reasoning effort. This wrapper
+re-asserts sandbox, model, effort, isolation and cwd from the registry on **every**
+invocation, which is why the registry exists at all. The consequence for you: a bare
+`codex` command you type yourself does not have this protection, and changing a run's
+sandbox needs an explicit `--sandbox` (the change is then recorded).
+
+**`item.id` restarts at `item_0` on every invocation.** It is per-invocation, not
+per-thread, so two runs on one thread both have an `item_0`. Always pass `--run` with
+`--item`; an item id alone identifies nothing.
+
+**`resume` replays the entire thread.** Measured on one thread: 15.9k input tokens fresh →
+31.8k after one turn → 47.8k after two → 86.1k after an interrupted multi-command turn.
+Resuming is not free and gets worse as a thread grows, so a fresh thread is sometimes the
+cheaper choice. Judge it; there is no threshold worth memorising.
+
+**A project's `AGENTS.md` is loaded even under isolation.** `--ignore-user-config` drops
+the user's config, plugins and MCP servers, but the repository's own `AGENTS.md` is still
+injected verbatim as a developer instruction (measured). That makes it a briefing channel
+that survives isolation — and equally, means whatever is in it is in every run you start
+there, whether you intended it or not. `doctor` reports whether the project has one.
+
+**stderr is normal output.** Codex writes `Reading additional input from stdin...` to
+stderr on every non-TTY run. Never treat stderr content as failure; `status` already
+filters that line out and shows you the rest.
+
+**`review` reports zero token usage.** Measured on every review run: `turn.completed` comes
+back all zeros after real work. `status` and `result` report usage as `null` for review
+runs — that means unavailable, not free.
+
+**Never kill Codex by process name.** `stop` signals one run's recorded process group.
+Matching `codex exec` by name kills every Codex on the machine, including runs started by
+another session or another person.
+
+**`CODEX_HOME` may be overridden**, so `~/.codex` is not reliably where sessions, config
+and auth live. `doctor` prints the resolved value.
+
+## Background work and parallelism
+
+Runs are backgrounded by default and several can run at once — each gets its own process
+group, so stopping one does not touch the others. Start work, do something else, come back
+with `log --since`.
+
+To be notified as events arrive rather than polling, pair `--follow` with the **Monitor**
+tool:
+
+```bash
+$CODEX log --run <id> --follow --level compact
+```
+
+`--follow` emits a terminal line (`run.completed` / `run.failed` / `run.interrupted` with
+the exit code) before exiting, so a crashed run never looks like a quiet one.
+
+**Silence is not failure.** A run producing no events for minutes may be inside one long
+`command_execution` — legitimately silent. `status` gives you `idle_seconds` *and*
+`in_progress_item`; silence with an in-progress item is work, silence with none is a
+problem worth investigating. The `stalled` state is advisory and nothing is ever
+auto-killed.
+
+Background runs are stopped when the Claude session ends, including on `/clear` and
+`/resume`, unless started with `--detach`. An unwatched run keeps writing to the repo and
+burning tokens, and a stopped one is resumable — so the default favours stopping. `--detach`
+is for when outliving the session is the point, and a detached run can outlive every
+session that knows about it; `status --all` and `doctor` will still find it.
+
+## Structured output
+
+`--schema <file>` passes a JSON Schema to Codex and `result` returns the parsed object as
+`json`. If the final message is not valid JSON, `result` fails loudly rather than handing
+back something malformed. Worth the extra file when you are going to branch on the answer;
+not worth it when you are going to read the answer.
+
+## Cost and configuration
+
+Runs are **isolated by default** (`--ignore-user-config`). Measured: an inherited-config
+run spent 46,238 input tokens on a one-line task and leaked config-error events plus an
+unrelated plugin advertisement into the agent's own message; the isolated equivalent spent
+15,863 with a clean four-line stream. `--inherit-config` buys back the user's MCP servers,
+plugins and agent roles at roughly 3× the input cost — use it when the run genuinely needs
+one of those tools, not by default.
+
+## Out of scope
+
+`codex cloud`, and `codex mcp-server` / `codex app-server` — all experimental and
+documented as subject to change without notice. `app-server` is the only plausible route to
+true mid-turn steering and is recorded in `references/troubleshooting.md` as unexplored,
+not as impossible.
+
+## References
+
+- `references/environment.md` — `CODEX_HOME`, isolation vs inherit with the numbers, auth,
+  the full sandbox story, `service_tier`, reading `doctor` output.
+- `references/event-stream.md` — both event schemas, the filter levels with the measured
+  calibration table, cursors and polling, Monitor pairing, `show`.
+- `references/troubleshooting.md` — symptom → cause → fix.

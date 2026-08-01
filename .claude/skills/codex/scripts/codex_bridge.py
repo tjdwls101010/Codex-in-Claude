@@ -45,7 +45,7 @@ from _events import (  # noqa: E402
     strip_wrapper,
 )
 from _registry import (  # noqa: E402
-    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, new_run_id, read_meta,
+    TERMINAL_STATES, claim_run_dir, ensure_runs_dir, find_run, iter_runs, read_meta,
     reap, resolve_project, resolve_runs_dir, update_meta, write_meta,
 )
 from _util import (  # noqa: E402
@@ -103,9 +103,11 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
     sandbox = args.sandbox or (base["sandbox"] if base else "workspace-write")
     priority = isolated if getattr(args, "priority", None) is None else args.priority
 
-    run_id = new_run_id(args.label or (base.get("label") if base else None))
-    run_dir = runs_dir / run_id
-    run_dir.mkdir(parents=True)
+    try:
+        run_id, run_dir = claim_run_dir(
+            runs_dir, args.label or (base.get("label") if base else None))
+    except FileExistsError as e:
+        fail(str(e), runs_dir=str(runs_dir))
 
     meta = {
         "run_id": run_id,

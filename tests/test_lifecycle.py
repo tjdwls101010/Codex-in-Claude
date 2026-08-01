@@ -32,8 +32,8 @@ class StopIsolation(BridgeTestCase):
 
         out = self.bridge("stop", "--run", a["run_id"])
         self.assertTrue(out["stopped"][0]["signalled"])
-        self.assertIn("SIGINT", out["stopped"][0]["signals_sent"],
-                      "SIGINT first: Codex flushes its rollout and stays resumable")
+        self.assertEqual(out["stopped"][0]["signals_sent"], ["SIGINT"],
+                         "SIGINT first: Codex flushes its rollout and stays resumable")
 
         self.wait_for_state(a["run_id"], states=("interrupted", "failed", "completed"))
         after = self.bridge("status", "--run", b["run_id"])["runs"][0]
@@ -41,6 +41,29 @@ class StopIsolation(BridgeTestCase):
                          "stopping one run must not touch a concurrent one")
         self.assertTrue(codex_bridge.pid_alive(brow["codex_pid"]))
         self.bridge("stop", "--run", b["run_id"])
+
+    def test_stop_escalates_to_sigterm_against_a_sigint_ignoring_child(self):
+        """The fake shim normally dies on SIGINT, so the ladder's later rungs
+        never run and `assertIn("SIGINT", …)` can't tell a lone SIGINT from a
+        full escalation. FAKE_CODEX_IGNORE_SIGINT forces the shim to sit through
+        SIGINT so SIGTERM has to be sent too."""
+        r = self.start("long", "--label", "ignores-sigint",
+                       env_extra={"FAKE_CODEX_HANG": "120",
+                                  "FAKE_CODEX_IGNORE_SIGINT": "1"})
+        deadline = time.time() + 30
+        row = None
+        while time.time() < deadline:
+            row = self.bridge("status", "--run", r["run_id"])["runs"][0]
+            if row["state"] == "running" and row["codex_pid"]:
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("run never reached running")
+
+        out = self.bridge("stop", "--run", r["run_id"], "--grace", "0.5")
+        self.assertEqual(out["stopped"][0]["signals_sent"], ["SIGINT", "SIGTERM"])
+        self.assertFalse(codex_bridge.pid_alive(row["codex_pid"]),
+                         "SIGTERM must actually reap the SIGINT-ignoring child")
 
     def test_stop_marks_the_run_interrupted_and_keeps_the_thread(self):
         a, _ = self._long_run("a")

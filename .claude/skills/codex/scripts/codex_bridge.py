@@ -150,7 +150,17 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
         isolated = True
 
     sandbox = args.sandbox or (base["sandbox"] if base else "workspace-write")
-    priority = isolated if getattr(args, "priority", None) is None else args.priority
+    if getattr(args, "priority", None) is not None:
+        priority = args.priority
+    elif base and isolated == base["isolated"]:
+        # Isolation state unchanged from the parent: inherit its priority like
+        # every other recorded setting.
+        priority = base.get("priority")
+    else:
+        # No base, or --inherit-config/--isolate just flipped isolation: priority
+        # is only re-injected to undo what isolation removed, so it follows the
+        # new isolation state rather than carrying over the parent's value.
+        priority = isolated
 
     try:
         run_id, run_dir = claim_run_dir(
@@ -180,7 +190,8 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
                    for i in (getattr(args, "image", None) or [])],
         "add_dirs": [str(Path(d).expanduser().resolve())
                      for d in (getattr(args, "add_dir", None) or [])],
-        "extra_config": list(getattr(args, "config", None) or []),
+        "extra_config": (list(args.config) if getattr(args, "config", None)
+                         else (base.get("extra_config") if base else [])) or [],
         # Only where Codex's own guard does not apply. The wrapper does not
         # silently disable a Codex safety default just to keep its own argv
         # uniform.

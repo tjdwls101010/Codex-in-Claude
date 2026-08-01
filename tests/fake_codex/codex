@@ -19,6 +19,8 @@ knowledge that it is talking to a fake:
   FAKE_CODEX_VERSION    what `--version` prints (default: codex-cli 0.144.1-fake)
   FAKE_CODEX_LOGIN_RC   exit code for `login status` (default 0)
   FAKE_CODEX_THREAD_ID  thread id to substitute into the replayed stream
+  FAKE_CODEX_IGNORE_SIGINT  ignore SIGINT instead of exiting, so the caller's
+                            signal ladder has to escalate to SIGTERM/SIGKILL
 """
 
 import json
@@ -148,6 +150,8 @@ def main():
     interrupted = {"flag": False}
 
     def on_int(signum, frame):
+        if os.environ.get("FAKE_CODEX_IGNORE_SIGINT"):
+            return
         interrupted["flag"] = True
         raise KeyboardInterrupt
 

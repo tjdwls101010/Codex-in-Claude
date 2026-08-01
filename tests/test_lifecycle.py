@@ -221,12 +221,51 @@ class ForegroundMode(BridgeTestCase):
         self.assertEqual(out["exit_code"], 0)
         self.assertEqual(out["last_agent_message"], "OK")
 
-    def test_foreground_timeout_interrupts(self):
+    def test_foreground_timeout_records_timed_out_not_interrupted(self):
+        """`timed_out` is its own terminal state so a caller can tell "I stopped
+        it" from "Codex failed" from "it ran out of the time I gave it". Only
+        the third is answered by raising --timeout."""
         out = self.bridge("start", "--foreground", "--timeout", "2", "x",
                           env_extra={"FAKE_CODEX_HANG": "60"})
-        self.assertEqual(out["state"], "interrupted")
+        self.assertEqual(out["state"], "timed_out")
         row = self.bridge("status", "--run", out["run_id"])["runs"][0]
         self.assertIn("timed out", row["error"])
+
+
+class BackgroundTimeout(BridgeTestCase):
+    """D26. `--timeout` used to be accepted in the background, recorded nowhere,
+    and silently do nothing — the deadline only worked with --foreground. With
+    the SessionEnd hook gone it is the only automatic bound left on a run, and
+    unlike the hook it is a per-call value the caller picks rather than a policy
+    the skill imposes."""
+
+    def test_background_timeout_fires_and_records_timed_out(self):
+        r = self.start("x", "--timeout", "2", env_extra={"FAKE_CODEX_HANG": "60"})
+        row = self.wait_for_state(r["run_id"], ("timed_out",), timeout=30)
+        self.assertEqual(row["state"], "timed_out")
+        self.assertIn("timed out", row["error"])
+
+    def test_the_deadline_travels_through_meta(self):
+        """A background run re-execs `__supervise --run-dir`, so nothing reaches
+        the supervisor on the command line. meta.json is the only channel that
+        survives that hop."""
+        r = self.start("x", "--timeout", "45")
+        self.wait_for_state(r["run_id"])
+        meta = json.loads(
+            (self.project / ".codex-runs" / r["run_id"] / "meta.json").read_text())
+        self.assertEqual(meta["timeout_seconds"], 45)
+
+    def test_stopping_a_timed_run_still_records_interrupted(self):
+        """The trap this guards: giving Codex its own session so a timeout can
+        kill its tree would put the supervisor outside the group `stop` signals,
+        so its handler would never fire and a deliberately stopped run would be
+        recorded `failed`. Background runs therefore keep sharing the
+        supervisor's group, and only the foreground path splits them."""
+        r = self.start("x", "--timeout", "600", env_extra={"FAKE_CODEX_HANG": "60"})
+        self.wait_for_state(r["run_id"], ("running",), timeout=30)
+        self.bridge("stop", "--run", r["run_id"])
+        row = self.wait_for_state(r["run_id"], ("interrupted",), timeout=30)
+        self.assertEqual(row["state"], "interrupted")
 
 
 class PromptSources(BridgeTestCase):

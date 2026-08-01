@@ -46,7 +46,7 @@ from _events import (  # noqa: E402
 )
 from _registry import (  # noqa: E402
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, find_run, iter_runs, read_meta,
-    reap, resolve_project, resolve_runs_dir, update_meta, write_meta,
+    reap, resolve_project, resolve_runs_dir, update_meta, update_meta_if, write_meta,
 )
 from _util import (  # noqa: E402
     clip, codex_home, emit, fail, git_toplevel, nfc, now_iso, pid_alive,
@@ -199,6 +199,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
         "preamble": not args.no_preamble,
         "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
         "foreground": bool(getattr(args, "foreground", False)),
+        "timeout_seconds": getattr(args, "timeout", None),
         "started_at": now_iso(),
         "ended_at": None, "exit_code": None, "state": "starting",
         "codex_pid": None, "supervisor_pid": None, "pgid": None,
@@ -613,9 +614,11 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
 
     result["signals_sent"] = sent
     result["signalled"] = bool(sent)
-    m = read_meta(run_dir) or {}
-    if m.get("state") in ("running", "starting", "stalled"):
-        m = update_meta(run_dir, state="interrupted", ended_at=now_iso())
+    # Compare-and-set, not a plain write: the supervisor may have recorded its
+    # own outcome (`completed`, or `timed_out` if its deadline fired) between
+    # the last signal and this line, and that outcome is the true one.
+    m = update_meta_if(run_dir, ("running", "starting", "stalled"),
+                       state="interrupted", ended_at=now_iso())
     result["state"] = m.get("state")
     result["thread_id"] = m.get("thread_id")
     return result
@@ -829,7 +832,10 @@ def add_run_options(p, *, kind):
     p.add_argument("--schema")
     p.add_argument("--config", action="append", metavar="k=v")
     p.add_argument("--foreground", action="store_true")
-    p.add_argument("--timeout", type=float)
+    p.add_argument("--timeout", type=float,
+                   help="give the run this many seconds, then SIGINT its process "
+                        "group and record state=timed_out. Works in background "
+                        "and foreground. No default: no flag, no deadline.")
     p.add_argument("--no-preamble", action="store_true")
     if kind in ("start", "resume"):
         p.add_argument("--image", action="append")

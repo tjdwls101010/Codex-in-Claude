@@ -158,6 +158,11 @@ def supervise(run_dir: Path, timeout=None) -> int:
     meta = read_meta(run_dir)
     if not meta:
         return 1
+    if timeout is None:
+        # A background run re-execs `__supervise --run-dir`, so nothing can be
+        # handed to it on the command line. meta.json is the only channel that
+        # survives that hop, which is why the deadline is recorded there.
+        timeout = meta.get("timeout_seconds")
     interrupted = {"flag": False}
 
     def on_signal(signum, _frame):
@@ -176,9 +181,19 @@ def supervise(run_dir: Path, timeout=None) -> int:
     out = events_path.open("ab")
     err = (run_dir / "stderr.log").open("ab")
     kwargs = {}
-    if timeout is not None:
-        # Foreground: give Codex its own group so a timeout can kill the tree
-        # without killing the caller.
+    if timeout is not None and meta.get("foreground"):
+        # Foreground only: the supervisor *is* the caller's process here, so
+        # Codex needs its own group for a timeout to kill the tree without
+        # killing the caller.
+        #
+        # Doing the same in the background would be a silent bug rather than a
+        # nicety. There the supervisor is already a session leader, and Codex
+        # shares its group — which is what lets `stop`'s killpg reach the
+        # supervisor, whose handler records `interrupted`. Split them and the
+        # signal reaches only Codex, the handler never fires, and a deliberately
+        # stopped run is recorded `failed`. Since batch members routinely carry
+        # --timeout, that would surface as intermittent lifecycle-test failures
+        # that read as flakiness.
         kwargs["start_new_session"] = True
     try:
         proc = subprocess.Popen(
@@ -222,7 +237,13 @@ def supervise(run_dir: Path, timeout=None) -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
             rc = proc.wait()
-        update_meta(run_dir, state="interrupted", exit_code=rc, ended_at=now_iso(),
+        # A distinct terminal state, not `interrupted`: the caller needs to tell
+        # "I stopped it" from "Codex failed" from "it ran out of the time I gave
+        # it", and only the third is answered by raising --timeout. Measured
+        # (V-16): the thread stays resumable across this SIGINT, with the
+        # pre-timeout turn's context intact — so `timed_out` is recoverable,
+        # not a failure.
+        update_meta(run_dir, state="timed_out", exit_code=rc, ended_at=now_iso(),
                     error=f"timed out after {timeout}s")
         return rc
 

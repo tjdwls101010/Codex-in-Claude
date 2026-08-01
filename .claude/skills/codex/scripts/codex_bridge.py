@@ -41,8 +41,8 @@ from _codex import (  # noqa: E402
     spawn_supervised, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
-    DEFAULT_LEVEL, LEVELS, find_item, format_events, read_events, scan_progress,
-    strip_wrapper,
+    CursorOutOfRange, DEFAULT_LEVEL, LEVELS, find_item, format_events, read_events,
+    scan_progress, strip_wrapper,
 )
 from _registry import (  # noqa: E402
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, find_run, iter_runs, read_meta,
@@ -79,6 +79,52 @@ def read_prompt(args) -> str:
         if p is None:
             return ""
     return p or ""
+
+
+def resolve_implicit_run(candidates):
+    """D27: pick a run nobody named, without silently crossing into another
+    run's identity.
+
+    `candidates` must be oldest-first (`iter_runs` order). Reaping first means
+    the decision is made on live state, not a meta.json a dead supervisor never
+    updated. Exactly one non-terminal run is unambiguous. Zero non-terminal
+    runs falls back to the newest run, and the caller must echo which one it
+    picked. Two or more is exactly the F4 reproduction — a read-only caller
+    silently inheriting another run's label and sandbox — so it fails loud
+    with the candidate list instead of guessing.
+    """
+    reaped = [(rd, reap(rd, m)) for rd, m in candidates]
+    non_terminal = [(rd, m) for rd, m in reaped if m.get("state") not in TERMINAL_STATES]
+    if len(non_terminal) == 1:
+        rd, m = non_terminal[0]
+        return rd, m, "the only non-terminal run"
+    if len(non_terminal) >= 2:
+        fail("multiple non-terminal runs; an implicit target is ambiguous — "
+             "pass an explicit run id, thread id, or thread name",
+             candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
+                          "state": m.get("state"), "sandbox": m.get("sandbox"),
+                          "thread_id": m.get("thread_id")} for rd, m in non_terminal])
+    if not reaped:
+        return None, None, None
+    rd, m = reaped[-1]
+    return rd, m, "the newest run (no non-terminal runs)"
+
+
+def refuse_concurrent_turn(runs_dir, thread_id, force):
+    """F4 reproduced two turns run concurrently on one thread: rc 0, no
+    warning. A resumed run shares its parent's process group with nothing —
+    two live turns on the same thread would race on the same rollout file —
+    so a live turn on the target thread is refused unless the caller opts in
+    with --force."""
+    if not thread_id or force:
+        return
+    live = [reap(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id") == thread_id]
+    live = [m for m in live if m.get("state") not in TERMINAL_STATES]
+    if live:
+        fail("thread already has a live turn; pass --force to run a second turn "
+             "concurrently", thread_id=thread_id,
+             live_runs=[{"run_id": m.get("run_id"), "state": m.get("state")}
+                        for m in live])
 
 
 def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None):
@@ -216,11 +262,16 @@ def cmd_resume(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
 
-    base, thread_ref = None, None
+    base, thread_ref, resolved_from = None, None, None
     if args.last:
-        runs = [(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id")]
-        if runs:
-            _, base = runs[-1]  # iter_runs yields oldest-first by started_at
+        # F4: this used to be `runs[-1]` with no filter on cwd, label or kind —
+        # a read-only caller could inherit another run's label AND its
+        # danger-full-access sandbox. resolve_implicit_run enforces D27: exactly
+        # one non-terminal run is unambiguous, zero falls back to the newest and
+        # says so, two or more fails loud with the candidate list.
+        candidates = [(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id")]
+        if candidates:
+            _, base, resolved_from = resolve_implicit_run(candidates)
             thread_ref = base["thread_id"]
         else:
             # Nothing in the registry: fall back to Codex's own thread list for
@@ -231,6 +282,7 @@ def cmd_resume(args):
                 fail("no previous run in this project's registry and no Codex thread "
                      "recorded for this directory", project=str(project))
             thread_ref = rows[0]["id"]
+            resolved_from = "Codex's own thread list (no registry entry)"
     else:
         if not args.ref:
             fail("resume needs a run id, thread id, thread name, or --last")
@@ -239,10 +291,22 @@ def cmd_resume(args):
         # thread name, so pass it through.
         thread_ref = (base or {}).get("thread_id") or args.ref
 
+    # F4's second reproduction: two turns run concurrently on one thread, rc 0,
+    # no warning. Refuse a second live turn on the same thread unless the
+    # caller explicitly opts in.
+    refuse_concurrent_turn(runs_dir, thread_ref, args.force)
+
     # A resumed run is a NEW run pointing at the SAME thread, so each turn gets
     # its own event log while the thread stays linked.
-    emit(create_run(args, kind="resume", base=dict(base) if base else None,
-                    thread_ref=thread_ref))
+    out = create_run(args, kind="resume", base=dict(base) if base else None,
+                     thread_ref=thread_ref)
+    if args.last:
+        # The escalation F4 reproduced was invisible precisely because nothing
+        # was echoed — say which run (and its label/sandbox) this run inherited.
+        out["resolved_from_run_id"] = base.get("run_id") if base else None
+        out["resolved_from"] = resolved_from
+        out["label"] = base.get("label") if base else None
+    emit(out)
 
 
 def cmd_review(args):
@@ -384,24 +448,32 @@ def cmd_log(args):
         if not meta:
             fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
     else:
-        runs = list(iter_runs(runs_dir))
-        if not runs:
+        # F4: this used to be `runs[-1]` with no filter at all. Apply the same
+        # D27 resolution as `resume --last` — exactly one non-terminal run is
+        # unambiguous, zero falls back to the newest, two or more fails loud
+        # instead of silently picking across concurrent runs.
+        candidates = list(iter_runs(runs_dir))
+        if not candidates:
             fail("no runs in this project", runs_dir=str(runs_dir))
-        rd, meta = runs[-1]
+        rd, meta, _ = resolve_implicit_run(candidates)
 
     events_path = rd / "events.jsonl"
     rel_to = Path(meta.get("cwd") or project)
+    run_id = meta.get("run_id")
     cursor = args.since
 
     def dump(cur):
-        events, new_cur = read_events(events_path, cur)
+        try:
+            events, new_cur = read_events(events_path, cur)
+        except CursorOutOfRange as e:
+            fail(str(e), run_id=run_id, since=cur)
         for line in format_events(events, args.level, rel_to):
             sys.stdout.write(line + "\n")
         return new_cur
 
     if not args.follow:
         cursor = dump(cursor)
-        sys.stdout.write(f"# cursor={cursor}\n")
+        sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
         sys.stdout.flush()
         return
 
@@ -417,12 +489,12 @@ def cmd_log(args):
         if st in TERMINAL_STATES:
             cursor = dump(cursor)
             sys.stdout.write(f"run.{st} run={m.get('run_id')} exit={m.get('exit_code')}\n")
-            sys.stdout.write(f"# cursor={cursor}\n")
+            sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
         if deadline and time.time() > deadline:
             sys.stdout.write(f"run.still-running run={m.get('run_id')} state={st}\n")
-            sys.stdout.write(f"# cursor={cursor}\n")
+            sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
         time.sleep(args.interval)
@@ -744,6 +816,8 @@ def build_parser():
     p = sub.add_parser("resume", help="continue an existing Codex thread")
     add_common(p); add_run_options(p, kind="resume")
     p.add_argument("--last", action="store_true")
+    p.add_argument("--force", action="store_true",
+                   help="allow a second turn on a thread that already has one running")
     p.add_argument("rest", nargs="*", metavar="[REF] PROMPT",
                    help="run id / thread id / thread name, then the prompt; "
                         "with --last, just the prompt")

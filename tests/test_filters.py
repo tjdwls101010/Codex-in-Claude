@@ -6,6 +6,7 @@ filter exists is gone, and nothing else in the system would notice.
 """
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -201,6 +202,30 @@ class LogAndShowEndToEnd(BridgeTestCase):
         self.assertEqual(c1, c2)
         allover, _ = self.log_lines("--run", r["run_id"], "--since", 0)
         self.assertEqual(allover, first)
+
+    def test_cursor_trailer_names_the_run(self):
+        """F11: a bare `# cursor=<n>` is indistinguishable between two runs in
+        flight, so feeding the wrong one back is easy. The trailer must be
+        self-identifying."""
+        r = self.start("x")
+        self.wait_for_state(r["run_id"])
+        p = self.bridge_raw("log", "--run", r["run_id"])
+        self.assertEqual(p.returncode, 0, p.stderr)
+        trailer = [ln for ln in p.stdout.splitlines() if ln.startswith("# cursor=")]
+        self.assertEqual(len(trailer), 1)
+        self.assertRegex(trailer[0], r"^# cursor=\d+ run=" + re.escape(r["run_id"]) + r"$")
+
+    def test_an_out_of_range_since_fails_loud_instead_of_going_silent(self):
+        """F11: the old guard (`since >= size`) accepted an out-of-range
+        `--since` silently, printed nothing, and exited 0 — echoing the bad
+        cursor straight back so the stream stayed dead forever."""
+        r = self.start("x")
+        self.wait_for_state(r["run_id"])
+        events_path = Path(r["events"])
+        way_past = events_path.stat().st_size + 100_000
+        out = self.bridge("log", "--run", r["run_id"], "--since", way_past, expect_rc=1)
+        self.assertIn("past the end", out["error"])
+        self.assertEqual(out["run_id"], r["run_id"])
 
     def test_show_returns_full_output_for_one_item(self):
         r = self.start("x")

@@ -238,5 +238,66 @@ class StateReporting(BridgeTestCase):
         self.assertIn("no such run", out["error"])
 
 
+class ImplicitTargetResolution(BridgeTestCase):
+    """F4: `resume --last` used to pick `runs[-1]` project-wide, no filter on
+    cwd, label or kind — a read-only caller could inherit another run's label
+    AND its danger-full-access sandbox. D27 replaces that with: exactly one
+    non-terminal run wins unambiguously, zero falls back to the newest (and
+    says so), two or more fails loud with the candidate list."""
+
+    def _running(self, label):
+        r = self.start(f"long {label}", "--label", label,
+                       env_extra={"FAKE_CODEX_HANG": "120"})
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            row = self.bridge("status", "--run", r["run_id"])["runs"][0]
+            if row["state"] == "running" and row["codex_pid"]:
+                return r
+            time.sleep(0.1)
+        self.fail(f"run {label} never reached running")
+
+    def test_exactly_one_non_terminal_run_wins_even_if_not_the_newest(self):
+        stale_live = self._running("stale-live")
+        r_newer = self.start("newer, but terminal", "--label", "newer")
+        self.wait_for_state(r_newer["run_id"])
+
+        out = self.bridge("resume", "--last", "--force", "continue")
+        self.assertEqual(out["resolved_from_run_id"], stale_live["run_id"],
+                         "the only non-terminal run must win over a newer terminal one")
+        self.assertEqual(out["thread_id"], stale_live["thread_id"])
+        self.assertEqual(out["label"], "stale-live")
+        self.bridge("stop", "--run", stale_live["run_id"])
+
+    def test_zero_non_terminal_runs_falls_back_to_newest_and_says_so(self):
+        r1 = self.start("first", "--label", "a")
+        self.wait_for_state(r1["run_id"])
+        r2 = self.start("second", "--label", "b")
+        self.wait_for_state(r2["run_id"])
+
+        out = self.bridge("resume", "--last", "continue")
+        self.assertEqual(out["resolved_from_run_id"], r2["run_id"])
+        self.assertEqual(out["label"], "b")
+        self.assertIn("newest", out["resolved_from"])
+
+    def test_two_or_more_non_terminal_runs_fails_loud(self):
+        a = self._running("a")
+        b = self._running("b")
+
+        out = self.bridge("resume", "--last", "continue", expect_rc=1)
+        self.assertIn("multiple non-terminal", out["error"])
+        ids = {c["run_id"] for c in out["candidates"]}
+        self.assertEqual(ids, {a["run_id"], b["run_id"]})
+
+        self.bridge("stop", "--run", a["run_id"])
+        self.bridge("stop", "--run", b["run_id"])
+
+    def test_a_second_turn_on_a_live_thread_is_refused_without_force(self):
+        a = self._running("a")
+        out = self.bridge("resume", a["run_id"], "second turn", expect_rc=1)
+        self.assertIn("live turn", out["error"])
+        self.assertEqual(out["thread_id"], a["thread_id"])
+        self.bridge("stop", "--run", a["run_id"])
+
+
 if __name__ == "__main__":
     unittest.main()

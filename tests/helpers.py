@@ -107,7 +107,9 @@ class BridgeTestCase(unittest.TestCase):
         body = []
         for ln in lines:
             if ln.startswith("# cursor="):
-                cursor = int(ln.split("=", 1)[1])
+                # Trailer is `# cursor=<n> run=<id>` (F11) — take only the
+                # cursor field, whitespace-delimited from `run=`.
+                cursor = int(ln[len("# cursor="):].split(" ", 1)[0])
             else:
                 body.append(ln)
         return body, cursor

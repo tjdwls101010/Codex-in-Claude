@@ -69,7 +69,10 @@ STALL_SECONDS = 300
 
 def read_prompt(args) -> str:
     if getattr(args, "prompt_file", None):
-        return Path(args.prompt_file).read_text(encoding="utf-8")
+        try:
+            return Path(args.prompt_file).read_text(encoding="utf-8")
+        except OSError as e:
+            fail(f"cannot read prompt file: {e}")
     p = getattr(args, "prompt", None)
     if p == "-" or p is None:
         if not sys.stdin.isatty():
@@ -829,6 +832,8 @@ def main(argv=None):
             pass
     except KeyboardInterrupt:
         fail("interrupted")
+    except Exception as e:
+        fail(f"internal error: {e}")
 
 
 if __name__ == "__main__":

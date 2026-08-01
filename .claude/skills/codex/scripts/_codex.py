@@ -23,7 +23,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-from _events import first_thread_id
+from _events import final_usage, first_thread_id
 from _registry import read_meta, update_meta
 from _util import codex_home, nfc, now_iso
 
@@ -253,6 +253,14 @@ def supervise(run_dir: Path, timeout=None) -> int:
     fields = {"state": state, "exit_code": rc, "ended_at": now_iso()}
     if tid:
         fields["thread_id"] = tid
+    # Copy final usage into meta. It is already in events.jsonl, but leaving it
+    # there means anything wanting the number has to scan the whole stream —
+    # and `batch start`'s projected_cost wants it for several past runs at once,
+    # before spawning anything. The supervisor is the one place that pays this
+    # scan exactly once, at a point where the stream is complete.
+    usage = final_usage(events_path)
+    if usage:
+        fields["usage"] = usage
     update_meta(run_dir, **fields)
     return rc
 

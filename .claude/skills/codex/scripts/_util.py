@@ -6,6 +6,7 @@ dependency graph and imports nothing from its siblings.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import json
 import os
@@ -53,9 +54,45 @@ def emit(obj, code: int = 0):
     sys.exit(code)
 
 
+class BridgeError(Exception):
+    """A `fail()` raised instead of emitted. See `failures_raise`."""
+
+    def __init__(self, msg: str, extra: dict):
+        super().__init__(msg)
+        self.msg = msg
+        self.extra = extra
+
+    def as_dict(self) -> dict:
+        return {"error": self.msg, **self.extra}
+
+
+_FAIL_RAISES = False
+
+
+@contextlib.contextmanager
+def failures_raise():
+    """Inside this block, `fail()` raises `BridgeError` instead of printing and
+    exiting.
+
+    `batch start` needs it: one member failing to spawn must not take the other
+    members with it (D11), and it must not print a second line of JSON either,
+    since the one-line-per-invocation contract is what every caller parses
+    against. Reentrant so a nested helper cannot switch it back off.
+    """
+    global _FAIL_RAISES
+    prev = _FAIL_RAISES
+    _FAIL_RAISES = True
+    try:
+        yield
+    finally:
+        _FAIL_RAISES = prev
+
+
 def fail(msg: str, **extra):
     """Errors are JSON too — the caller parses stdout either way, and a plain
     text error would force it to branch on whether parsing worked."""
+    if _FAIL_RAISES:
+        raise BridgeError(msg, extra)
     emit({"error": msg, **extra}, code=1)
 
 

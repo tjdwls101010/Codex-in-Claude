@@ -94,6 +94,31 @@ def read_events(path: Path, since: int = 0):
     return events, cursor
 
 
+def final_usage(events_path: Path):
+    """The last `usage` object in the stream, or None.
+
+    Codex reports usage cumulatively per turn, so the last one wins. Read from
+    the end rather than parsed with `scan_progress`, which builds the whole
+    progress summary — this is called once per run at completion and only needs
+    one field.
+    """
+    try:
+        lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            u = json.loads(line).get("usage")
+        except json.JSONDecodeError:
+            continue
+        if u:
+            return u
+    return None
+
+
 def first_thread_id(events_path: Path):
     """`thread.started` is the first line Codex emits, and on resume it repeats
     the *same* id — so the first line always names the thread this run is on."""

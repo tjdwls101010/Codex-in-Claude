@@ -44,12 +44,17 @@ from _events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, LEVELS, find_item, format_events, read_events,
     scan_progress, strip_wrapper,
 )
+from _batch import (  # noqa: E402
+    claim_group, group_path, list_groups, member_run_ids, read_group, valid_name,
+    write_members,
+)
 from _registry import (  # noqa: E402
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, find_run, iter_runs, read_meta,
     reap, resolve_project, resolve_runs_dir, update_meta, update_meta_if, write_meta,
 )
 from _util import (  # noqa: E402
-    clip, codex_home, emit, fail, git_toplevel, nfc, now_iso, pid_alive,
+    BridgeError, clip, codex_home, emit, fail, failures_raise, git_toplevel, nfc,
+    now_iso, pid_alive,
 )
 
 # `show --item` default cap. A silently truncated blob is worse than a loud one,
@@ -130,7 +135,8 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
                         for m in live])
 
 
-def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None):
+def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
+               group=None):
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
 
@@ -200,6 +206,10 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
         "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
         "foreground": bool(getattr(args, "foreground", False)),
         "timeout_seconds": getattr(args, "timeout", None),
+        # The manifest is the authority on membership and order; this copy lets
+        # a single run say which group it belongs to without one, so `status`
+        # can still answer that after a manifest is lost or hand-deleted.
+        "group": group,
         "started_at": now_iso(),
         "ended_at": None, "exit_code": None, "state": "starting",
         "codex_pid": None, "supervisor_pid": None, "pgid": None,
@@ -227,7 +237,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
         return {"run_id": run_id, "thread_id": m.get("thread_id"),
                 "state": m.get("state"), "exit_code": m.get("exit_code"),
                 "events": str(run_dir / "events.jsonl"), "project": str(project),
-                "sandbox": sandbox, "isolated": isolated,
+                "cwd": str(cwd), "sandbox": sandbox, "isolated": isolated,
                 "last_agent_message": info["last_agent_message"],
                 "usage": info["usage"]}
 
@@ -246,7 +256,9 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
     out = {"run_id": run_id, "thread_id": thread_id,
            "state": m.get("state", "starting"),
            "events": str(run_dir / "events.jsonl"), "project": str(project),
-           "sandbox": sandbox, "isolated": isolated}
+           "cwd": str(cwd), "sandbox": sandbox, "isolated": isolated}
+    if group:
+        out["group"] = group
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
     return out
@@ -254,6 +266,193 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
 
 def cmd_start(args):
     emit(create_run(args, kind="start"))
+
+
+# --------------------------------------------------------------------------
+# batch — start N runs as one addressable group
+# --------------------------------------------------------------------------
+
+TASK_FIELDS = ("prompt", "kind", "label", "model", "effort", "sandbox", "schema",
+               "image", "cwd", "resume", "review")
+
+
+def load_tasks(args):
+    """Build the ordered task list from `--task` and `--tasks-file`.
+
+    Both may be given; `--task` entries come first, because that is the order
+    they were typed in and `--resume-from` pairs positionally. A `--task` is
+    always `kind: start` — it is a bare prompt with nowhere to say otherwise.
+    """
+    tasks = [{"prompt": p, "kind": "start"} for p in (args.task or [])]
+    if args.tasks_file:
+        try:
+            raw = Path(args.tasks_file).read_text(encoding="utf-8")
+        except OSError as e:
+            fail(f"cannot read tasks file: {e}")
+        for n, line in enumerate(raw.splitlines(), 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as e:
+                fail(f"tasks file line {n} is not valid JSON: {e}", line=clip(line, 200))
+            if not isinstance(item, dict):
+                fail(f"tasks file line {n} is not a JSON object", line=clip(line, 200))
+            unknown = set(item) - set(TASK_FIELDS)
+            if unknown:
+                # Loud, because the failure mode of a silently ignored field is
+                # a run that quietly used the group default instead.
+                fail(f"tasks file line {n} has unknown field(s): {sorted(unknown)}",
+                     known_fields=list(TASK_FIELDS))
+            item.setdefault("kind", "start")
+            if item["kind"] not in ("start", "resume", "review"):
+                fail(f"tasks file line {n}: kind must be start, resume or review",
+                     got=item["kind"])
+            if item["kind"] == "resume" and not item.get("resume"):
+                fail(f"tasks file line {n}: kind 'resume' needs a 'resume' field "
+                     f"naming a run id or thread id")
+            tasks.append(item)
+    if not tasks:
+        fail("batch start needs at least one --task or a --tasks-file")
+    return tasks
+
+
+def task_args(base_args, item):
+    """A per-task argv namespace: the group-level options as defaults, the
+    task's own fields overriding them.
+
+    Group options are defaults rather than constraints on purpose — a batch is
+    usually "the same thing N ways", and the exceptions are exactly what the
+    per-item fields exist to express.
+    """
+    ns = argparse.Namespace(**vars(base_args))
+    ns.prompt = item.get("prompt")
+    ns.prompt_file = None
+    for field in ("label", "model", "effort", "sandbox", "cwd"):
+        if item.get(field) is not None:
+            setattr(ns, field, item[field])
+    if item.get("schema") is not None:
+        ns.schema = item["schema"]
+    ns.image = item.get("image") or []
+    ns.add_dir = getattr(base_args, "add_dir", None) or []
+    return ns
+
+
+def projected_cost(runs_dir: Path, n_runs: int):
+    """What N runs will cost at the floor, computed from this project's own
+    history rather than a constant.
+
+    D37. A baked-in number rots: the isolation overhead measured at design time
+    moved 2.92x -> 1.09x within two weeks (R8), so any constant written here
+    would be wrong by the time anyone read it. The median input_tokens over
+    recent isolated, completed runs is the same measurement taken fresh.
+
+    It is a floor and it is reported, not enforced (D10): the caller decides
+    whether N runs is worth it, and this only makes the decision informed
+    instead of blind.
+    """
+    samples = []
+    for _rd, m in reversed(list(iter_runs(runs_dir))):
+        if m.get("state") != "completed" or not m.get("isolated"):
+            continue
+        tokens = (m.get("usage") or {}).get("input_tokens")
+        if tokens:
+            samples.append(int(tokens))
+        if len(samples) >= 10:
+            break
+    if len(samples) < 3:
+        return {"runs": n_runs, "input_floor_per_run": None, "input_floor_total": None,
+                "samples": len(samples),
+                "note": "not enough completed isolated runs in this project to "
+                        "measure a floor yet (need 3)"}
+    samples.sort()
+    per_run = samples[len(samples) // 2]
+    return {"runs": n_runs, "input_floor_per_run": per_run,
+            "input_floor_total": per_run * n_runs, "samples": len(samples),
+            "note": "floor only, measured from this project's recent isolated runs. "
+                    "Real cost is higher and grows with each resume. Do not budget "
+                    "from this number — re-measure."}
+
+
+def cmd_batch_start(args):
+    if not valid_name(args.group):
+        fail("group name must be alphanumeric with . _ - and no path separators",
+             got=args.group)
+    project = resolve_project(args.project)
+    runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
+    tasks = load_tasks(args)
+
+    # Claim the name before spawning anything. D36: a reused group name would
+    # make "the members of p1" ambiguous, and --resume-from pairs positionally
+    # against exactly that list. Failing here costs nothing — no Codex process
+    # has started yet.
+    try:
+        claim_group(runs_dir, args.group)
+    except FileExistsError:
+        existing = read_group(runs_dir, args.group) or {}
+        fail(f"group {args.group!r} already exists in this project; group names "
+             f"are single-use so that membership and start order stay unambiguous",
+             created_at=existing.get("created_at"),
+             members=len(existing.get("members") or []))
+
+    members, results = [], []
+    for index, item in enumerate(tasks):
+        entry = {"index": index, "kind": item["kind"],
+                 "label": item.get("label") or args.label}
+        try:
+            with failures_raise():
+                out = spawn_task(task_args(args, item), item, group=args.group,
+                                 runs_dir=runs_dir, project=project)
+        except BridgeError as e:
+            # D11: one member failing to spawn does not take the batch with it.
+            # The failure is recorded in place so the caller sees which slot is
+            # missing rather than a shorter list than it asked for.
+            entry["error"] = e.msg
+            entry.update(e.extra)
+            members.append(entry)
+            results.append(entry)
+            continue
+        entry["run_id"] = out["run_id"]
+        entry["thread_id"] = out.get("thread_id")
+        entry["cwd"] = out.get("cwd")
+        entry["sandbox"] = out.get("sandbox")
+        members.append(entry)
+        results.append({**entry, "state": out.get("state")})
+
+    write_members(runs_dir, args.group, members)
+    spawned = [m for m in members if m.get("run_id")]
+    emit({"group": args.group, "runs": results,
+          "spawned": len(spawned), "requested": len(tasks),
+          "projected_cost": projected_cost(runs_dir, len(spawned)),
+          "manifest": str(group_path(runs_dir, args.group))})
+
+
+def spawn_task(ns, item, *, group, runs_dir, project):
+    """Start one member. Mirrors cmd_start/cmd_resume/cmd_review's dispatch,
+    minus their argv parsing, which `task_args` has already done."""
+    kind = item["kind"]
+    if kind == "start":
+        return create_run(ns, kind="start", group=group)
+    if kind == "resume":
+        rd, base = find_run(runs_dir, item["resume"])
+        if not base:
+            # Not in the registry: it may still be a real Codex thread started
+            # outside this skill, so pass the ref through rather than refusing.
+            return create_run(ns, kind="resume", thread_ref=item["resume"], group=group)
+        refuse_concurrent_turn(runs_dir, base.get("thread_id"),
+                               getattr(ns, "force", False))
+        return create_run(ns, kind="resume", base=base,
+                          thread_ref=base.get("thread_id"), group=group)
+    review = item.get("review") or {}
+    review_args = []
+    if review.get("uncommitted"):
+        review_args.append("--uncommitted")
+    if review.get("base"):
+        review_args += ["--base", str(review["base"])]
+    if review.get("commit"):
+        review_args += ["--commit", str(review["commit"])]
+    return create_run(ns, kind="review", review_args=review_args, group=group)
 
 
 def cmd_resume(args):
@@ -420,6 +619,94 @@ def run_row(run_dir: Path, meta: dict, project: Path):
     return row
 
 
+def resolve_group(runs_dir: Path, name: str):
+    """Group members as (run_dir, meta), in start order. Fails if the group is
+    unknown. Members that never spawned are skipped — they are recorded in the
+    manifest with an `error` and no run id."""
+    ids = member_run_ids(runs_dir, name)
+    if ids is None:
+        fail(f"no such group: {name}", runs_dir=str(runs_dir),
+             known_groups=list_groups(runs_dir))
+    out = []
+    for rid in ids:
+        rd, m = find_run(runs_dir, rid)
+        if m:
+            out.append((rd, m))
+    return out
+
+
+def group_snapshot(rows):
+    """The one place group state is derived, so `status --group` and
+    `--follow`'s exit line can never disagree about whether a group is done."""
+    running = [r["run_id"] for r in rows if r["state"] in ("running", "starting", "stalled")]
+    done = [r["run_id"] for r in rows if r["state"] == "completed"]
+    failed = [r["run_id"] for r in rows
+              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
+    if running:
+        state = "running"
+    elif failed or not rows:
+        # `partial` covers "a member failed", "the user stopped it" and "a member
+        # timed out" alike. It means "this group did not all succeed", not
+        # "Codex broke" — worth stating, because a --follow exit line saying
+        # `group.partial` after a deliberate `stop --group` otherwise reads as
+        # an error.
+        state = "partial"
+    else:
+        state = "completed"
+    return running, done, failed, state
+
+
+def follow_group(args, project, runs_dir):
+    """Print one line per member state change, then a terminal line, then exit.
+
+    Deliberately symmetrical with `log --follow`, so pairing it with the Monitor
+    tool needs nothing new learned — and pairing is the intended use, because
+    the Bash tool's 600-second ceiling cannot be crossed by blocking.
+
+    A terminal line is always printed, including on --follow-timeout. Without
+    one, a group that is quietly still working and a group whose follower died
+    look identical, which is the failure B21 exists to prevent.
+
+    This holds no state: if the follower dies, nothing is lost, because
+    `status --group` re-derives everything from the registry. Do not cache
+    group state here.
+    """
+    members = resolve_group(runs_dir, args.group)
+    if not members:
+        sys.stdout.write(f"group.empty group={args.group}\n")
+        sys.stdout.flush()
+        return
+    seen = {}
+    deadline = time.time() + args.follow_timeout if args.follow_timeout else None
+    while True:
+        rows = []
+        for rd, m in members:
+            m = read_meta(rd) or m
+            row = run_row(rd, m, project)
+            rows.append(row)
+            prev = seen.get(row["run_id"])
+            if prev != row["state"]:
+                line = f"run {row['run_id']} {prev or '-'} -> {row['state']}"
+                if row.get("exit_code") is not None and row["state"] != "completed":
+                    line += f" exit={row['exit_code']}"
+                sys.stdout.write(line + "\n")
+                sys.stdout.flush()
+                seen[row["run_id"]] = row["state"]
+        running, done, failed, gstate = group_snapshot(rows)
+        if not running:
+            sys.stdout.write(f"group.{gstate} group={args.group} "
+                             f"done={len(done)} failed={len(failed)}\n")
+            sys.stdout.flush()
+            return
+        if deadline and time.time() >= deadline:
+            sys.stdout.write(f"group.still-running group={args.group} "
+                             f"running={len(running)} done={len(done)} "
+                             f"failed={len(failed)}\n")
+            sys.stdout.flush()
+            return
+        time.sleep(args.interval)
+
+
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -429,6 +716,16 @@ def cmd_status(args):
         if not m:
             fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
         rows.append(run_row(rd, m, project))
+    elif args.group:
+        if args.follow:
+            return follow_group(args, project, runs_dir)
+        for rd, m in resolve_group(runs_dir, args.group):
+            rows.append(run_row(rd, m, project))
+        running, done, failed, gstate = group_snapshot(rows)
+        emit({"project": str(project), "group": args.group, "runs": rows,
+              "running": running, "done": done, "failed": failed,
+              "total_runs": len(rows), "runs_truncated": 0,
+              "group_state": gstate})
     else:
         for rd, m in iter_runs(runs_dir):
             if args.thread and m.get("thread_id") != args.thread:
@@ -445,7 +742,8 @@ def cmd_status(args):
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
     running = [r["run_id"] for r in rows if r["state"] in ("running", "stalled")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
-    failed = [r["run_id"] for r in rows if r["state"] in ("failed", "interrupted", "orphaned")]
+    failed = [r["run_id"] for r in rows
+              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
     known = {r["thread_id"] for r in rows}
 
     display_rows = rows
@@ -636,11 +934,16 @@ def cmd_stop(args):
                 fail(f"no such run: {ref}", runs_dir=str(runs_dir))
             targets.append((rd, m))
     elif args.group:
-        # Not a name match on process/label (B8 forbids that) — this would
-        # resolve a recorded group id to run ids via the registry, then signal
-        # each run's pgid like every other selector. Not implemented until a
-        # group id exists to record (M4a).
-        fail(f"no group {args.group!r} recorded", runs_dir=str(runs_dir))
+        # Not a name match on process or label — B8 forbids that, and for good
+        # reason: matching by name is how concurrent runs end up killing each
+        # other. This resolves a group id recorded in the manifest to run ids,
+        # then signals each run's own pgid exactly like --run does. The group
+        # name never reaches a process.
+        targets = []
+        for rd, m in resolve_group(runs_dir, args.group):
+            m = reap(rd, m)
+            if m.get("state") in ("running", "starting", "stalled"):
+                targets.append((rd, m))
     elif args.all:
         targets = []
         for rd, m in iter_runs(runs_dir):
@@ -657,9 +960,82 @@ def cmd_stop(args):
 # result
 # --------------------------------------------------------------------------
 
+GROUP_MESSAGE_CAP = 4000
+
+
+def changed_paths(events_path: Path):
+    """Paths a run wrote, from its `file_change` events."""
+    paths = set()
+    for ev in read_events(events_path, 0)[0]:
+        item = ev.get("item") or {}
+        if item.get("type") != "file_change":
+            continue
+        for ch in item.get("changes") or []:
+            p = ch.get("path") if isinstance(ch, dict) else ch
+            if p:
+                paths.add(str(p))
+    return paths
+
+
+def cmd_result_group(args, project, runs_dir):
+    members = resolve_group(runs_dir, args.group)
+    results, per_run_paths, totals = [], {}, {"input_tokens": 0, "output_tokens": 0}
+
+    for rd, meta in members:
+        meta = reap(rd, meta)
+        info = scan_progress(rd / "events.jsonl")
+        msg_path = rd / "last-message.txt"
+        message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()
+                   else info["last_agent_message"]) or ""
+        raw = message.encode("utf-8")
+        row = {"run_id": meta["run_id"], "label": meta.get("label"),
+               "state": meta.get("state"), "exit_code": meta.get("exit_code"),
+               # D07: capped per run, with the real size stated. Whether to pull
+               # the full text is then a decision the caller makes, not a guess
+               # — `result --run <id>` returns it whole.
+               "message": message[:GROUP_MESSAGE_CAP],
+               "message_bytes": len(raw),
+               "message_truncated": len(raw) > GROUP_MESSAGE_CAP,
+               "usage": info["usage"], "files_changed": info["files_changed"],
+               "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
+                               if info["turn_failed"] else None)}
+        if meta.get("worktree"):
+            row["worktree"] = meta["worktree"]
+        results.append(row)
+        # Keyed by run, never by worktree: with --resume-from a phase-2 member
+        # inherits its predecessor's worktree, so a worktree-keyed set would
+        # report every member as overlapping with its own past self.
+        per_run_paths[meta["run_id"]] = changed_paths(rd / "events.jsonl")
+        for key in totals:
+            totals[key] += int((info["usage"] or {}).get(key) or 0)
+
+    # D30: the intersection only. A full path list per run inverts the context
+    # discipline this skill exists for, and `log` already prints file_change
+    # paths for anyone who wants them. What is genuinely un-derivable, and what
+    # a synthesis step needs first, is which paths two runs both touched.
+    counts = {}
+    for rid, paths in per_run_paths.items():
+        for p in paths:
+            counts.setdefault(p, []).append(rid)
+    overlaps = {p: rids for p, rids in sorted(counts.items()) if len(rids) > 1}
+
+    running, done, failed, gstate = group_snapshot(
+        [{"run_id": r["run_id"], "state": r["state"]} for r in results])
+    emit({"group": args.group, "project": str(project), "results": results,
+          "overlaps": overlaps, "totals": totals, "group_state": gstate,
+          "done": done, "failed": failed, "running": running,
+          "overlaps_note": ("paths written by more than one member. Under worktree "
+                            "isolation this is a merge conflict ahead, not damage "
+                            "already done.") if overlaps else None})
+
+
 def cmd_result(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    if args.group:
+        return cmd_result_group(args, project, runs_dir)
+    if not args.run:
+        fail("result needs --run <id> or --group <name>")
     rd, meta = find_run(runs_dir, args.run)
     if not meta:
         fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
@@ -881,8 +1257,15 @@ def build_parser():
     add_common(p)
     p.add_argument("--run")
     p.add_argument("--thread")
+    p.add_argument("--group", help="report on one batch group's members only")
     p.add_argument("--all", action="store_true")
     p.add_argument("--include-external", action="store_true")
+    p.add_argument("--follow", action="store_true",
+                   help="with --group: print each member state change, then a "
+                        "terminal group line, then exit. Pair with Monitor; the "
+                        "Bash tool's 600s ceiling cannot be crossed by blocking.")
+    p.add_argument("--interval", type=float, default=1.0)
+    p.add_argument("--follow-timeout", type=float)
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("log", help="filtered, incremental event log")
@@ -912,8 +1295,28 @@ def build_parser():
 
     p = sub.add_parser("result", help="final message, usage, and schema JSON")
     add_common(p)
-    p.add_argument("--run", required=True)
+    p.add_argument("--run")
+    p.add_argument("--group", help="collect every member of a batch group, capped "
+                                   "per run, plus the paths more than one wrote")
     p.set_defaults(func=cmd_result)
+
+    p = sub.add_parser("batch", help="start and manage a group of runs")
+    bsub = p.add_subparsers(dest="batch_cmd", required=True)
+    b = bsub.add_parser("start", help="start N runs as one addressable group")
+    add_common(b); add_run_options(b, kind="start")
+    b.add_argument("--group", required=True,
+                   help="name for this group. Single-use per project: reusing one "
+                        "would make membership and start order ambiguous, and "
+                        "--resume-from pairs positionally against exactly that list.")
+    b.add_argument("--task", action="append",
+                   help="a prompt. Repeatable. Always kind=start.")
+    b.add_argument("--tasks-file",
+                   help="JSONL, one task object per line, for long or "
+                        "heterogeneous tasks. Fields: " + ", ".join(TASK_FIELDS))
+    b.add_argument("--force", action="store_true",
+                   help="allow a resume task to start a second turn on a thread "
+                        "that already has a live one")
+    b.set_defaults(func=cmd_batch_start)
 
     p = sub.add_parser("doctor", help="diagnose the Codex environment")
     add_common(p)

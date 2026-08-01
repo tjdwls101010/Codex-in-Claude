@@ -124,8 +124,46 @@ PREAMBLE = (
 )
 
 
-def apply_preamble(prompt: str, enabled: bool) -> str:
-    return f"{PREAMBLE}\n\n{prompt}" if enabled else prompt
+# Situational facts again, and for the same reason — but these are facts Codex
+# has no way to observe from inside its own turn, and it does not hold back on
+# them. Measured (V-18), asked what tree it was in: without this paragraph a run
+# answered "it is the shared workspace with the person who started me, so we are
+# looking at the same tree" — wrong, and asserted rather than hedged. With it,
+# the same run answered correctly and propagated N-1 to reason about the others.
+# The failure this prevents is fabrication, not omission, which is why it is not
+# optional for batch runs. Cost: 113 input tokens.
+#
+# Facts only, no methodology (B19). Nothing here tells Codex how to cooperate
+# with the other runs; being told they exist is enough to stop it assuming they
+# do not.
+BATCH_PREAMBLE = (
+    "[Batch context: you are one of {n} Codex runs started together as group "
+    '"{group}". The others are running in parallel right now and may be editing '
+    "other paths.]"
+)
+
+WORKTREE_PREAMBLE = (
+    "[Working tree: yours is an isolated git worktree at {path}, created from "
+    "commit {base}. It is not the tree the person who started you is looking at, "
+    "and it does not contain the {uncommitted} uncommitted file(s) that exist in "
+    "theirs.]"
+)
+
+
+def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
+    """Prepend the run-context paragraphs. `--no-preamble` turns off all of them
+    together — a caller switching it off is saying it will brief Codex itself,
+    and half a briefing is worse than none."""
+    if not enabled:
+        return prompt
+    parts = [PREAMBLE]
+    if batch:
+        parts.append(BATCH_PREAMBLE.format(n=batch["n"], group=batch["group"]))
+        if batch.get("worktree"):
+            parts.append(WORKTREE_PREAMBLE.format(
+                path=batch["worktree"], base=(batch.get("base") or "?")[:12],
+                uncommitted=batch.get("uncommitted", 0)))
+    return "\n\n".join(parts + [prompt])
 
 
 # -- spawning ---------------------------------------------------------------

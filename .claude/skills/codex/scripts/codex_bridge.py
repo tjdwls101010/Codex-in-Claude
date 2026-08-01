@@ -45,8 +45,13 @@ from _events import (  # noqa: E402
     scan_progress, strip_wrapper,
 )
 from _batch import (  # noqa: E402
-    claim_group, group_path, list_groups, member_run_ids, read_group, valid_name,
-    write_members,
+    claim_group, derived_groups, group_path, list_groups, member_run_ids,
+    read_group, valid_name, write_members,
+)
+from _worktree import (  # noqa: E402
+    add as worktree_add, is_dirty as worktree_dirty, prune as worktree_prune,
+    registered as worktrees_registered, remove as worktree_remove,
+    resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
 )
 from _registry import (  # noqa: E402
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, find_run, iter_runs, read_meta,
@@ -136,7 +141,7 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
 
 
 def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
-               group=None):
+               group=None, batch=None, worktree_base=None):
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
 
@@ -174,6 +179,20 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     except FileExistsError as e:
         fail(str(e), runs_dir=str(runs_dir))
 
+    # The worktree can only be cut here: it lives at `<run_dir>/wt`, and the run
+    # id that names run_dir does not exist until the line above.
+    wt_info = None
+    if worktree_base:
+        source, wt = cwd, run_dir / "wt"
+        ok, err = worktree_add(source, wt, worktree_base)
+        if not ok:
+            fail(f"could not create the worktree for this member: {err}",
+                 base=worktree_base, path=str(wt))
+        wt_info = {"path": str(wt), "base": worktree_base,
+                   "uncommitted_in_caller_tree": worktree_uncommitted(source),
+                   "source": str(source)}
+        cwd = wt
+
     meta = {
         "run_id": run_id,
         "run_dir": str(run_dir),
@@ -210,6 +229,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         # a single run say which group it belongs to without one, so `status`
         # can still answer that after a manifest is lost or hand-deleted.
         "group": group,
+        "worktree": wt_info,
         "started_at": now_iso(),
         "ended_at": None, "exit_code": None, "state": "starting",
         "codex_pid": None, "supervisor_pid": None, "pgid": None,
@@ -225,7 +245,11 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         if not Path(img).exists():
             fail(f"image not found: {img}")
 
-    send = apply_preamble(prompt, meta["preamble"]) if prompt.strip() else None
+    if batch and wt_info:
+        batch = {**batch, "worktree": wt_info["path"], "base": wt_info["base"],
+                 "uncommitted": wt_info["uncommitted_in_caller_tree"]}
+    send = (apply_preamble(prompt, meta["preamble"], batch=batch)
+            if prompt.strip() else None)
     meta["argv"] = build_argv(meta, kind=kind, prompt=send,
                               thread_ref=thread_ref, review_args=review_args)
     write_meta(run_dir, meta)
@@ -259,6 +283,8 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
            "cwd": str(cwd), "sandbox": sandbox, "isolated": isolated}
     if group:
         out["group"] = group
+    if wt_info:
+        out["worktree"] = wt_info
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
     return out
@@ -394,6 +420,64 @@ def projected_cost(runs_dir: Path, n_runs: int):
                     "from this number — re-measure."}
 
 
+WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
+
+
+def wants_worktree(item, args):
+    """Whether this member would be isolated if the batch turns isolation on.
+
+    D35 assigns per member, not per batch, and each exclusion has its own
+    reason rather than a shared one:
+
+      * **`read-only`** has nothing to isolate — it cannot write.
+      * **`kind: review`** is excluded even though its sandbox defaults to
+        `workspace-write`, and this is the exclusion that matters most. A
+        freshly cut worktree has zero lines of `git diff HEAD` (measured,
+        V-15), so a reviewer inside one reviews nothing: the uncommitted work
+        it was started to look at exists only in the caller's tree.
+      * **an explicit `cwd`** was a decision the caller already made, and an
+        inferred default does not overrule a stated one.
+      * **`kind: resume`** continues a thread whose directory is inherited from
+        its parent run; `--cwd` is not even accepted on resume, so a new
+        worktree here would be a directory the thread has never seen.
+    """
+    if item["kind"] in ("review", "resume"):
+        return False
+    if item.get("cwd") or getattr(args, "cwd", None):
+        return False
+    sandbox = item.get("sandbox") or args.sandbox or "workspace-write"
+    return sandbox in WRITING_SANDBOXES
+
+
+def plan_worktrees(tasks, args, project):
+    """Decide isolation for the batch, then report why in the same breath.
+
+    Returns `(eligible_indices, base_sha, note)`. The threshold is two writing
+    members because one writer has nobody to collide with, and isolating it
+    would only put its results somewhere the caller has to go and fetch.
+    """
+    eligible = {i for i, t in enumerate(tasks) if wants_worktree(t, args)}
+    if getattr(args, "no_worktree", False):
+        return set(), None, "worktrees disabled by --no-worktree"
+    forced = getattr(args, "worktree", False)
+    if not eligible:
+        return set(), None, ("no member writes to the tree, so there is nothing "
+                             "to isolate" if forced else None)
+    if len(eligible) < 2 and not forced:
+        return set(), None, ("only one member writes to the tree; a lone writer "
+                             "has nobody to collide with. Pass --worktree to "
+                             "isolate it anyway.")
+    if git_toplevel(project) is None:
+        return set(), None, (f"{project} is not a git repository, so worktrees "
+                             "are unavailable; members share the caller's tree")
+    base = worktree_base_sha(project, getattr(args, "base", None))
+    if not base:
+        return set(), None, ("could not resolve a base commit (an empty "
+                             "repository has no HEAD); members share the "
+                             "caller's tree")
+    return eligible, base, None
+
+
 def cmd_batch_start(args):
     if not valid_name(args.group):
         fail("group name must be alphanumeric with . _ - and no path separators",
@@ -415,6 +499,9 @@ def cmd_batch_start(args):
              created_at=existing.get("created_at"),
              members=len(existing.get("members") or []))
 
+    isolated_idx, wt_base, wt_note = plan_worktrees(tasks, args, project)
+    batch_ctx = {"n": len(tasks), "group": args.group}
+
     members, results = [], []
     for index, item in enumerate(tasks):
         entry = {"index": index, "kind": item["kind"],
@@ -422,7 +509,10 @@ def cmd_batch_start(args):
         try:
             with failures_raise():
                 out = spawn_task(task_args(args, item), item, group=args.group,
-                                 runs_dir=runs_dir, project=project)
+                                 runs_dir=runs_dir, project=project,
+                                 batch=batch_ctx,
+                                 worktree_base=wt_base if index in isolated_idx
+                                 else None)
         except Exception as e:
             # D11: one member failing to spawn does not take the batch with it.
             # The failure is recorded in place so the caller sees which slot is
@@ -445,6 +535,8 @@ def cmd_batch_start(args):
         entry["thread_id"] = out.get("thread_id")
         entry["cwd"] = out.get("cwd")
         entry["sandbox"] = out.get("sandbox")
+        if out.get("worktree"):
+            entry["worktree"] = out["worktree"]["path"]
         members.append(entry)
         results.append({**entry, "state": out.get("state")})
         # After every member, not once at the end: see write_members. A member
@@ -452,28 +544,47 @@ def cmd_batch_start(args):
         # the group from the instant it exists.
         write_members(runs_dir, args.group, members)
     spawned = [m for m in members if m.get("run_id")]
-    emit({"group": args.group, "runs": results,
-          "spawned": len(spawned), "requested": len(tasks),
-          "projected_cost": projected_cost(runs_dir, len(spawned)),
-          "manifest": str(group_path(runs_dir, args.group))})
+    isolated = [m for m in members if m.get("worktree")]
+    out = {"group": args.group, "runs": results,
+           "spawned": len(spawned), "requested": len(tasks),
+           "projected_cost": projected_cost(runs_dir, len(spawned)),
+           "manifest": str(group_path(runs_dir, args.group))}
+    if isolated:
+        # D17: a dirty caller tree is stated, never refused. The number is what
+        # tells the caller their uncommitted work is not in what these runs see
+        # — and the same fact goes to Codex itself in the preamble.
+        out["worktrees"] = {
+            "count": len(isolated), "base": wt_base,
+            "uncommitted_files_in_caller_tree": worktree_uncommitted(project),
+            "note": "each writing member has its own checkout at "
+                    "<run_dir>/wt. Their changes are not in your tree; "
+                    "`result --group` reports which paths more than one wrote. "
+                    "`batch clean --group` removes them once you have collected."}
+    elif wt_note:
+        out["worktrees"] = {"count": 0, "note": wt_note}
+    emit(out)
 
 
-def spawn_task(ns, item, *, group, runs_dir, project):
+def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
+               worktree_base=None):
     """Start one member. Mirrors cmd_start/cmd_resume/cmd_review's dispatch,
     minus their argv parsing, which `task_args` has already done."""
     kind = item["kind"]
     if kind == "start":
-        return create_run(ns, kind="start", group=group)
+        return create_run(ns, kind="start", group=group, batch=batch,
+                          worktree_base=worktree_base)
     if kind == "resume":
         rd, base = find_run(runs_dir, item["resume"])
         if not base:
             # Not in the registry: it may still be a real Codex thread started
             # outside this skill, so pass the ref through rather than refusing.
-            return create_run(ns, kind="resume", thread_ref=item["resume"], group=group)
+            return create_run(ns, kind="resume", thread_ref=item["resume"],
+                              group=group, batch=batch)
         refuse_concurrent_turn(runs_dir, base.get("thread_id"),
                                getattr(ns, "force", False))
         return create_run(ns, kind="resume", base=base,
-                          thread_ref=base.get("thread_id"), group=group)
+                          thread_ref=base.get("thread_id"), group=group,
+                          batch=batch)
     review = item.get("review") or {}
     review_args = []
     if review.get("uncommitted"):
@@ -482,7 +593,81 @@ def spawn_task(ns, item, *, group, runs_dir, project):
         review_args += ["--base", str(review["base"])]
     if review.get("commit"):
         review_args += ["--commit", str(review["commit"])]
-    return create_run(ns, kind="review", review_args=review_args, group=group)
+    return create_run(ns, kind="review", review_args=review_args, group=group,
+                      batch=batch)
+
+
+def cmd_batch_clean(args):
+    """Remove a finished group's worktrees and release its name.
+
+    There is no automatic cleanup and no hook (D06, D23): a worktree holds the
+    only copy of what a run produced, and nothing should delete that on a
+    schedule the caller did not choose.
+
+    Four things stop a clean without `--force`, and only the first two are
+    checks this code performs. The other two are git's own refusal, and a fact
+    about groups that outlive each other.
+    """
+    project = resolve_project(args.project)
+    runs_dir = resolve_runs_dir(project, args.runs_dir)
+    manifest = read_group(runs_dir, args.group)
+    if manifest is None:
+        fail(f"no such group in this project: {args.group}",
+             known_groups=list_groups(runs_dir)[:20])
+
+    live, removed, kept = [], [], []
+    for rid in member_run_ids(runs_dir, args.group) or []:
+        rd, meta = find_run(runs_dir, rid)
+        if not meta:
+            continue
+        meta = reap(rd, meta)
+        if meta.get("state") not in TERMINAL_STATES:
+            live.append({"run_id": rid, "state": meta.get("state")})
+
+    # 1. A live member is still writing into the very directory being removed.
+    if live and not args.force:
+        fail(f"group {args.group!r} still has running members; stop them first "
+             f"or pass --force", running=live)
+
+    # 2. A group that another group resumed into. `--resume-from` puts phase 2
+    #    in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
+    #    under runs that are still using it. Free to detect thanks to the
+    #    manifest's `derived_from`.
+    children = derived_groups(runs_dir, args.group)
+    if children and not args.force:
+        fail(f"group {args.group!r} was resumed by another group, whose members "
+             f"are working in these worktrees", derived_groups=children)
+
+    worktree_prune(project)
+    for rid in member_run_ids(runs_dir, args.group) or []:
+        rd, meta = find_run(runs_dir, rid)
+        wt = (meta or {}).get("worktree")
+        if not wt:
+            continue
+        path = Path(wt["path"])
+        if not path.exists():
+            continue
+        # 3. Uncommitted changes in the worktree, i.e. results nobody collected.
+        #    Not implemented here: `git worktree remove` refuses a dirty tree by
+        #    itself (measured, V-13), and git's definition of dirty is the
+        #    correct one. Its refusal is reported as the reason.
+        ok, err = worktree_remove(project, path, force=args.force)
+        (removed if ok else kept).append(
+            {"run_id": rid, "path": str(path),
+             **({} if ok else {"reason": err, "dirty": worktree_dirty(path)})})
+
+    # The name is released only when nothing was left behind, so a caller who
+    # sees `cleaned: true` can reuse the name and one who does not still has a
+    # group to address the leftovers by. This is also the only way to reclaim a
+    # name from a `batch start` that died before it recorded any member.
+    released = not kept
+    if released:
+        group_path(runs_dir, args.group).unlink(missing_ok=True)
+    emit({"group": args.group, "removed": removed, "kept": kept,
+          "name_released": released,
+          "note": None if released else
+          "these worktrees hold uncommitted changes — collect them, or pass "
+          "--force to discard. The group name stays claimed until they are gone."})
 
 
 def cmd_resume(args):
@@ -1212,6 +1397,25 @@ def cmd_doctor(args):
         report["runs_dir_writable"] = False
         blockers.append(f"runs dir is not writable ({target}): {e}")
 
+    # Facts, not a policy. Nothing here deletes anything or nags about a
+    # threshold: the run directories hold event streams the caller may still
+    # want, and the worktrees hold results nothing else has a copy of. What the
+    # caller cannot see without being told is that batch runs leave both behind
+    # and that only `batch clean --group` removes them.
+    if runs_dir.is_dir():
+        total = sum(p.stat().st_size for p in runs_dir.rglob("*") if p.is_file())
+        report["runs_dir_bytes"] = total
+        report["runs_dir_runs"] = sum(1 for _ in iter_runs(runs_dir))
+        report["groups"] = list_groups(runs_dir)
+        live_wt = [p for p in worktrees_registered(project) if p.exists()]
+        report["worktrees"] = len(live_wt)
+        if live_wt:
+            warnings.append(
+                f"{len(live_wt)} git worktree(s) from batch runs are still "
+                f"checked out under {runs_dir}. Each is a full working copy and "
+                f"holds its run's uncommitted results; `batch clean --group "
+                f"<name>` removes a group's once you have collected them.")
+
     db = state_db_path()
     report["thread_db"] = str(db) if db else None
     report["thread_db_readable"] = bool(query_threads(limit=1)) if db else False
@@ -1356,7 +1560,24 @@ def build_parser():
     b.add_argument("--force", action="store_true",
                    help="allow a resume task to start a second turn on a thread "
                         "that already has a live one")
+    b.add_argument("--worktree", action="store_true",
+                   help="give every writing member its own git worktree even if "
+                        "there is only one of them")
+    b.add_argument("--no-worktree", action="store_true",
+                   help="never assign worktrees; every member shares the "
+                        "caller's tree")
+    b.add_argument("--base",
+                   help="commit or ref the worktrees are cut from (default HEAD)")
     b.set_defaults(func=cmd_batch_start)
+
+    b = bsub.add_parser("clean", help="remove a finished group's worktrees")
+    add_common(b)
+    b.add_argument("--group", required=True)
+    b.add_argument("--force", action="store_true",
+                   help="remove worktrees that still hold uncommitted changes, "
+                        "and ignore live members and dependent groups. This "
+                        "discards work nothing else has a copy of.")
+    b.set_defaults(func=cmd_batch_clean)
 
     p = sub.add_parser("doctor", help="diagnose the Codex environment")
     add_common(p)

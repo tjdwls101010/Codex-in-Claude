@@ -2,7 +2,7 @@
 
 ## Context
 
-This repository *is* the harness component it ships: a Claude Code plugin (`codex`) containing a single skill (`codex`) that lets Claude drive the OpenAI Codex CLI as a managed subagent. There is no application code to support — the skill, its Python CLI, and its `SessionEnd` hook are the entire product.
+This repository *is* the harness component it ships: a Claude Code plugin (`codex`) containing a single skill (`codex`) that lets Claude drive the OpenAI Codex CLI as a managed subagent. There is no application code to support — the skill and its Python CLI are the entire product.
 
 - Language / runtime: Python 3.10+, standard library only (no `jq`, no third-party packages).
 - External dependency: `codex-cli` (verified against **0.144.1**), authenticated via `CODEX_HOME`.
@@ -42,7 +42,7 @@ All 21 rows are **validated**. The evidence column names the specific check; ful
 | B5 | File contents and successful commands' stdout never reach Claude's context by default | skill+script | filter levels; `show --item` as the only escape hatch | validated | T1 `test_compact_never_leaks_command_output` against a real 22 KB `cat`; T3 measured 10–19% of raw on command-heavy workloads |
 | B6 | Inspect one specific event's full output on demand | skill+script | `codex_bridge.py show` | validated | T1 `LogAndShowEndToEnd` incl. loud truncation and per-run item scoping. Not exercised by T4 — no scenario needed it, which is the intended shape |
 | B7 | List runs for this project with state, elapsed, idle, tokens; detect stalls without auto-killing | skill+script | `codex_bridge.py status` | validated | T1 `StateReporting` (11 tests) incl. `stalled` with the process confirmed still alive, and `orphaned` |
-| B8 | Interrupt exactly one run without touching other concurrent runs | skill+script | `codex_bridge.py stop` (process group, never name matching) | validated | T1 `StopIsolation` (6 tests); T2 I3 with distinct process groups verified |
+| B8 | Interrupt one or more runs, by explicit selector, without touching other concurrent runs | skill+script | `codex_bridge.py stop --run <id>… \| --group <name> \| --all` (process group, never name matching) | validated | T1 `StopIsolation` (7 tests); T2 I3 with distinct process groups verified |
 | B9 | Collect a run's final message, usage, and schema-validated JSON when a schema was supplied | skill+script | `codex_bridge.py result`, `start --schema` | validated | T1 `Results` (7 tests) incl. loud failure on malformed JSON; T2 I5 |
 | B10 | Drive `codex exec review`'s distinct flag surface (`--uncommitted`/`--base`/`--commit`/prompt) | skill+script | `codex_bridge.py review` | validated | T1 `ReviewArgumentValidation` (5 tests); T2 I6; T4 E2 chose the review path unprompted; V-10 covers the clean-tree case |
 | B11 | Attach images to a Codex prompt | skill+script | `start --image` | validated | T2 I8 (model identified a generated crimson PNG) after R9; T1 adds three argv tests for the `-i`-eats-the-prompt trap |
@@ -51,7 +51,6 @@ All 21 rows are **validated**. The evidence column names the specific check; ful
 | B14 | Preserve the user's priority service tier despite isolation | skill+script | `-c service_tier="priority"` | validated | V-02 — a bogus tier produces an explicit error event, `priority` produces none, so it is parsed and sent; T1 `test_priority_can_be_forced_off_and_on` |
 | B15 | Persist run state (thread id, sandbox, pid, session id) durably across Claude context loss | script | `<project>/.codex-runs/<run_id>/meta.json` | validated | T1 `test_run_directory_contents`; T4 E4 resumed across a **separate session** using only what the registry held |
 | B16 | The run registry must never pollute the user's git history or `.gitignore` | script | `.codex-runs/.gitignore` containing `*` | validated | T1 `test_runs_dir_is_self_ignoring` asserts the file is exactly `*` and that `git status --porcelain` never mentions it |
-| B17 | Background Codex runs must not outlive the Claude session that started them, unless deliberately detached | hook | `SessionEnd` → `codex_session_cleanup.py`; `start --detach` exempts | validated | `test_hook.py` clean; 16 T1 hook tests over real process groups covering selection, both session-id sources, SIGINT-only vs SIGTERM escalation, and the 1.5 s budget |
 | B18 | Running the bridge must not raise an approval prompt on every poll | permissions | SKILL.md `allowed-tools` (plugin-portable); `settings.json` equivalent documented for symlink installs | validated | Headless session in **default** permission mode ran the bridge with no prompt; `${CLAUDE_PLUGIN_ROOT}` is expanded in permission matching even though it is absent from the process environment (R6) |
 | B19 | Prepend minimal situational facts to every Codex prompt (non-interactive, single turn, nobody to ask) — facts only, no methodology | script | `start`/`resume` preamble, `--no-preamble` disables | validated | T1 `test_prompt_is_last_and_carries_the_preamble`, `test_no_preamble_disables_it` |
 | B20 | Codex-CLI gotchas that cannot be derived from general competence | skill | SKILL.md gotcha section + `references/` | validated | Eight gotchas, each carrying the measurement that produced it; `validate_harness.py` 0 errors / 0 warnings; frontmatter re-verified to parse |
@@ -86,12 +85,6 @@ Split by the branch the model takes, not by volume:
 
 Launch/watch/interrupt/resume/collect deliberately stay in SKILL.md: a single invocation needs them together, so splitting them would add a routing decision with no payoff.
 
-### `hooks/codex_session_cleanup.py` + `hooks/hooks.json`
-
-`SessionEnd`, **1.5 s default timeout**. Immediate `exit 0` when `<project>/.codex-runs` is absent (the common case in every project that never uses Codex). Otherwise signals the process groups of runs matching `state == running AND claude_session_id == $CLAUDE_CODE_SESSION_ID AND NOT detached` (SIGINT then SIGTERM), records the outcome, and returns without waiting. Fires on `/clear` and `/resume` as well as real termination; the kill-unless-detached policy is deliberate (an unwatched background run keeps writing to the repo and burning tokens, and a killed run is resumable from its rollout).
-
-Not considered generated until `test_hook.py` passes against it.
-
 ## Design rationale
 
 **Why a run registry exists at all.** `codex exec resume` has no `-s/--sandbox` flag, so it falls back to `config.toml`'s `sandbox_mode`. Measured on this machine: a thread created `read-only` was resumed at `danger-full-access` and wrote a file its original policy forbade. The only way to hold a sandbox across turns is to remember the mode and re-assert it, which requires durable per-run state. Everything else the registry does (parallel-safe stop, stall detection, session-scoped cleanup) is a bonus on top of that one non-negotiable.
@@ -115,7 +108,7 @@ Four tiers, all approved (*"목적을 달성하는데 필요한 모든 테스트
 - **T3** — filter calibration measurement across read-heavy / write-heavy / review workloads; output to `docs/measurements/filter-calibration.md`, summary into `references/event-stream.md`, and the shipped default cites it.
 - **T4** — headless Claude e2e including a deliberate near-miss prompt that must **not** trigger the skill. Composed on the spot per `e2e-testing.md`; evidence-cited grading, surface compliance is a FAIL.
 
-Plus `validate_harness.py` clean and `test_hook.py` passing.
+Plus `validate_harness.py` clean.
 
 **Open verification items (V-01…V-10)** are listed in the plan §6 with a check recipe and a fallback each. V-03 (does `-c sandbox_mode=` genuinely constrain a resumed run?) is a blocker; the rest have documented degradations. Record every outcome here as it is resolved.
 

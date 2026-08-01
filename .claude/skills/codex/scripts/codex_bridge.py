@@ -138,7 +138,6 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
         "skip_git_repo_check": git_toplevel(cwd) is None,
         "preamble": not args.no_preamble,
         "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
-        "detached": bool(getattr(args, "detach", False)),
         "foreground": bool(getattr(args, "foreground", False)),
         "started_at": now_iso(),
         "ended_at": None, "exit_code": None, "state": "starting",
@@ -186,7 +185,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None)
     out = {"run_id": run_id, "thread_id": thread_id,
            "state": m.get("state", "starting"),
            "events": str(run_dir / "events.jsonl"), "project": str(project),
-           "sandbox": sandbox, "isolated": isolated, "detached": meta["detached"]}
+           "sandbox": sandbox, "isolated": isolated}
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
     return out
@@ -317,7 +316,7 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         "elapsed_seconds": elapsed, "idle_seconds": idle,
         "exit_code": meta.get("exit_code"), "sandbox": meta.get("sandbox"),
         "model": meta.get("model"), "effort": meta.get("effort"),
-        "isolated": meta.get("isolated"), "detached": meta.get("detached"),
+        "isolated": meta.get("isolated"),
         "cwd": meta.get("cwd"),
         "usage": None if review_zero else usage,
         "turns_completed": info["turns_completed"], "commands": info["commands"],
@@ -519,19 +518,26 @@ def cmd_stop(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     session = os.environ.get("CLAUDE_CODE_SESSION_ID")
     if args.run:
-        rd, m = find_run(runs_dir, args.run)
-        if not m:
-            fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
-        targets = [(rd, m)]
-    elif args.all_mine:
+        targets = []
+        for ref in args.run:
+            rd, m = find_run(runs_dir, ref)
+            if not m:
+                fail(f"no such run: {ref}", runs_dir=str(runs_dir))
+            targets.append((rd, m))
+    elif args.group:
+        # Not a name match on process/label (B8 forbids that) — this would
+        # resolve a recorded group id to run ids via the registry, then signal
+        # each run's pgid like every other selector. Not implemented until a
+        # group id exists to record (M4a).
+        fail(f"no group {args.group!r} recorded", runs_dir=str(runs_dir))
+    elif args.all:
         targets = []
         for rd, m in iter_runs(runs_dir):
             m = reap(rd, m)
-            if (m.get("state") in ("running", "starting", "stalled")
-                    and m.get("claude_session_id") == session):
+            if m.get("state") in ("running", "starting", "stalled"):
                 targets.append((rd, m))
     else:
-        fail("stop needs --run <id>, or --all-mine typed explicitly")
+        fail("stop needs --run <id> (repeatable), --group <name>, or --all")
     emit({"stopped": [signal_run(rd, m, grace=args.grace) for rd, m in targets],
           "claude_session_id": session})
 
@@ -684,14 +690,6 @@ def cmd_doctor(args):
             "version-stamped, so a Codex upgrade may have changed its schema; "
             "`--include-external` and a registry-less `--last` degrade, nothing else.")
 
-    orphans = [m.get("run_id") for rd, m0 in iter_runs(runs_dir)
-               for m in [reap(rd, m0)]
-               if m.get("state") in ("running", "stalled") and m.get("detached")]
-    report["detached_running"] = orphans
-    if orphans:
-        warnings.append("detached runs still marked running — these are exempt from "
-                        f"session-end cleanup and will outlive this session: {orphans}")
-
     report["blockers"] = blockers
     report["warnings"] = warnings
     report["ok"] = not blockers
@@ -720,7 +718,6 @@ def add_run_options(p, *, kind):
     p.add_argument("--config", action="append", metavar="k=v")
     p.add_argument("--foreground", action="store_true")
     p.add_argument("--timeout", type=float)
-    p.add_argument("--detach", action="store_true")
     p.add_argument("--no-preamble", action="store_true")
     if kind in ("start", "resume"):
         p.add_argument("--image", action="append")
@@ -787,8 +784,9 @@ def build_parser():
 
     p = sub.add_parser("stop", help="interrupt a run by process group")
     add_common(p)
-    p.add_argument("--run")
-    p.add_argument("--all-mine", action="store_true")
+    p.add_argument("--run", action="append")
+    p.add_argument("--group")
+    p.add_argument("--all", action="store_true")
     p.add_argument("--grace", type=float, default=5.0)
     p.set_defaults(func=cmd_stop)
 

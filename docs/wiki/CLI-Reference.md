@@ -28,7 +28,6 @@ Every subcommand accepts:
 | `--config k=v` | Append a raw `-c k="v"` passthrough (repeatable) |
 | `--foreground` | Block until the run finishes instead of returning immediately |
 | `--timeout <seconds>` | Only meaningful with `--foreground` — kill the run if it exceeds this |
-| `--detach` | Exempt this run from the `SessionEnd` cleanup hook |
 | `--no-preamble` | Disable the short situational preamble normally prepended to the prompt |
 
 Defaults across all of them: **background**, `workspace-write`, isolated from the user's own Codex config, `service_tier=priority` re-injected under isolation, no model or reasoning effort pinned, no hard timeout.
@@ -48,7 +47,7 @@ Starts a brand-new thread. The prompt can come from the positional argument, `--
 | `--image <path>` | Attach an image (repeatable) |
 | `--prompt-file <path>` | Read the prompt from a file instead of the command line |
 
-**Output** (background): `run_id`, `thread_id`, `state`, `events` (path to `events.jsonl`), `project`, `sandbox`, `isolated`, `detached`, and `sandbox_changed_from` if the sandbox differs from a prior run on the same thread.
+**Output** (background): `run_id`, `thread_id`, `state`, `events` (path to `events.jsonl`), `project`, `sandbox`, `isolated`, and `sandbox_changed_from` if the sandbox differs from a prior run on the same thread.
 
 **Output** (`--foreground`): the above plus `exit_code`, `last_agent_message`, `usage`.
 
@@ -94,7 +93,7 @@ Lists runs for the project. Without `--run`, shows up to the last 20 runs unless
 | `--all` | Don't cap the list at 20 |
 | `--include-external` | Also list threads Codex knows about for this directory that have no registry entry (e.g. started in the TUI) |
 
-**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `detached`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
+**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
 
 **Top level:** `project`, `runs_dir`, `runs`, `threads` (thread id → run ids), `running` (currently `running`/`stalled` run ids); with `--include-external`: `external_threads` and an explanatory `external_note`.
 
@@ -119,10 +118,10 @@ Returns one item's complete, unfiltered content — the only path by which full 
 ## 8. `stop`
 
 ```bash
-$CODEX stop (--run <ref> | --all-mine) [--grace <sec>]
+$CODEX stop (--run <ref>... | --group <name> | --all) [--grace <sec>]
 ```
 
-Interrupts a run by signaling its recorded process group directly (SIGINT → SIGTERM after `--grace` seconds, default `5.0` → SIGKILL shortly after) — never by matching a process name, so concurrent runs never interfere with each other. `--all-mine` stops every run this session started; there's no default target, so one of `--run`/`--all-mine` is required.
+Interrupts a run by signaling its recorded process group directly (SIGINT → SIGTERM after `--grace` seconds, default `5.0` → SIGKILL shortly after) — never by matching a process name, so concurrent runs never interfere with each other. `--run` is repeatable. `--all` stops every non-terminal run in this project's registry — scope is whatever's visible in the registry, not the invisible `claude_session_id` a subagent's runs may not even share with the top-level session. There's no default target, so one of `--run`/`--group`/`--all` is required. `--group` resolves a recorded group id to run ids and signals each one's pgid, same as `--run`; nothing records a group id yet, so it currently fails with "no group `<name>` recorded".
 
 **Output:** `stopped` (a list of `{run_id, pgid, signalled, signals_sent, state, thread_id, ...}`) and `claude_session_id`.
 
@@ -140,7 +139,7 @@ Returns a run's final message and usage. If `state` isn't terminal yet, the outp
 $CODEX doctor
 ```
 
-Diagnoses the environment in one call: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, whether Codex's thread database is readable, and any runs still marked `detached_running`.
+Diagnoses the environment in one call: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, and whether Codex's thread database is readable.
 
 Exits `0` when healthy, `2` when there's a **blocker** (missing `codex`, failed auth, missing `CODEX_HOME`, unwritable runs dir, Python below 3.10) — which makes it usable directly in a shell conditional. Non-fatal issues are reported separately as **warnings** (e.g. `config.toml` set to `danger-full-access`, a project `AGENTS.md` present, an unreadable thread database).
 

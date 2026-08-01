@@ -10,7 +10,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 
 **124 tests, passing in about 40 seconds**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
 
-This tier includes the single most load-bearing test in the suite: a regression assertion that a resumed run's *recorded argv* actually contains `-c sandbox_mode="read-only"` when its thread was created read-only — the specific defect described in [Sandbox Stability](Sandbox-Stability.md), caught at the argument-composition level before it ever reaches a real Codex process. It also covers Unicode/NFC path handling (Korean paths, spaces), the run registry's self-`.gitignore`ing behavior, cursor-exactness on partial trailing lines, all four filter levels, all four `doctor` failure modes, and 16 tests driving the `SessionEnd` hook against real process groups.
+This tier includes the single most load-bearing test in the suite: a regression assertion that a resumed run's *recorded argv* actually contains `-c sandbox_mode="read-only"` when its thread was created read-only — the specific defect described in [Sandbox Stability](Sandbox-Stability.md), caught at the argument-composition level before it ever reaches a real Codex process. It also covers Unicode/NFC path handling (Korean paths, spaces), the run registry's self-`.gitignore`ing behavior, cursor-exactness on partial trailing lines, all four filter levels, and all four `doctor` failure modes.
 
 Run this tier before opening any pull request — it's fast, free, and covers most of the codebase's actual logic.
 
@@ -65,7 +65,7 @@ E3 matters as much as the four that trigger the skill: a skill whose description
 python3 ~/.claude/skills/harness-creator/scripts/validate_harness.py --path .
 ```
 
-Checks the plugin and skill manifests against the structural conventions a Claude Code harness is expected to follow (frontmatter validity, manifest consistency, and similar static checks). Requires the `harness-creator` skill installed globally. There's also a standalone `test_hook.py` that must pass against the `SessionEnd` hook specifically before it's considered complete.
+Checks the plugin and skill manifests against the structural conventions a Claude Code harness is expected to follow (frontmatter validity, manifest consistency, and similar static checks). Requires the `harness-creator` skill installed globally.
 
 ---
 **Next:** [Troubleshooting](Troubleshooting.md) · [Architecture](Architecture.md)

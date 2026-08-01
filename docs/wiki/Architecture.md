@@ -11,7 +11,6 @@ How the plugin's pieces fit together: the components, the request flow through t
 | `_events.py` | Reads `events.jsonl` incrementally (cursor-based), and formats events per filter level (`compact`/`normal`/`full`/`raw`). |
 | `_registry.py` | Reads and writes the run registry (`.codex-runs/<run_id>/meta.json`) — the durable record of what a run was started with. |
 | `_util.py` | Bottom-of-the-dependency-graph helpers: JSON output, error formatting, NFC path normalization, `CODEX_HOME` resolution. Imports nothing from its siblings. |
-| `hooks/codex_session_cleanup.py` | A standalone `SessionEnd` hook that stops a session's own non-detached background runs. |
 
 ## 2. Request Flow
 
@@ -29,7 +28,6 @@ flowchart LR
     Reader -->|filtered text| Claude
     Claude -->|stop| Bridge3["codex_bridge.py"]
     Bridge3 -->|SIGINT → SIGTERM → SIGKILL on pgid| Supervisor
-    Hook["SessionEnd hook"] -->|SIGINT → SIGTERM| Supervisor
 ```
 
 **Starting a run.** `codex_bridge.py start` composes an argv via `_codex.py`'s `build_argv()`, writes the intended settings to a fresh `meta.json` via `_registry.py`, then spawns a detached supervisor process (`start_new_session=True`, so the supervisor and the `codex` process it launches share one process group). The supervisor waits briefly for a `thread.started` event to backfill `thread_id`, then returns control immediately — the caller doesn't block.
@@ -38,9 +36,7 @@ flowchart LR
 
 **Reading progress.** `log`, `status`, and `show` never touch the `codex` process directly — they read `events.jsonl` from the point a cursor left off (`_events.py`'s `read_events()`, which only ever consumes complete lines) and format it according to the requested filter level.
 
-**Stopping a run.** `stop` looks up the run's recorded process-group id (`pgid`) in the registry and signals that group directly — SIGINT, then SIGTERM after a grace period, then SIGKILL as a last resort — never by matching a process name. This is what keeps concurrent runs from interfering with each other.
-
-**Session cleanup.** Independently of the bridge, `hooks/codex_session_cleanup.py` runs on every `SessionEnd` (including `/clear` and `/resume`), reads the registry directly without importing any bridge code (to stay inside the hook's 1.5-second timeout), and signals the process groups of any of *that session's* non-detached, still-running runs. See [Session Cleanup Hook](Session-Cleanup-Hook.md).
+**Stopping a run.** `stop` looks up the run's recorded process-group id (`pgid`) in the registry and signals that group directly — SIGINT, then SIGTERM after a grace period, then SIGKILL as a last resort — never by matching a process name. This is what keeps concurrent runs from interfering with each other. Selection is explicit — `--run` (repeatable), `--group <name>`, or `--all` for every non-terminal run in the project's registry — and nothing stops a run automatically: cost and cleanup policy belong to the user, not the skill.
 
 ## 3. Module Map
 
@@ -57,10 +53,6 @@ flowchart LR
     ├── _events.py                # event filtering, cursor logic
     ├── _registry.py              # run registry read/write
     └── _util.py                  # low-level helpers
-
-hooks/
-├── hooks.json                  # wires codex_session_cleanup.py to SessionEnd
-└── codex_session_cleanup.py    # standalone cleanup script
 
 tests/                          # see Testing.md — T1 unit + T2 integration suites
 docs/

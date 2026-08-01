@@ -62,7 +62,6 @@ The property being sold is **stability of a run's settings across turns**. Preve
 | Interrupt a run and redirect it on the same thread | [CLI Reference § stop](CLI-Reference.md#8-stop) |
 | Resume a thread started in the Codex TUI | [CLI Reference § resume](CLI-Reference.md#3-resume) |
 | Schema-validated JSON results | [CLI Reference § result](CLI-Reference.md#9-result) |
-| Automatic cleanup of orphaned background runs | [Session Cleanup Hook](Session-Cleanup-Hook.md) |
 | One-command environment diagnostics | [CLI Reference § doctor](CLI-Reference.md#10-doctor) |
 
 ## 5. Non-Goals

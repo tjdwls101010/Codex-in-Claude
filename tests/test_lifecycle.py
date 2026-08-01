@@ -5,7 +5,9 @@ import time
 import unittest
 from pathlib import Path
 
-from helpers import BridgeTestCase, codex_bridge
+from helpers import BridgeTestCase   # puts the scripts dir on sys.path
+
+import _util                        # noqa: E402
 
 
 class StopIsolation(BridgeTestCase):
@@ -39,7 +41,7 @@ class StopIsolation(BridgeTestCase):
         after = self.bridge("status", "--run", b["run_id"])["runs"][0]
         self.assertEqual(after["state"], "running",
                          "stopping one run must not touch a concurrent one")
-        self.assertTrue(codex_bridge.pid_alive(brow["codex_pid"]))
+        self.assertTrue(_util.pid_alive(brow["codex_pid"]))
         self.bridge("stop", "--run", b["run_id"])
 
     def test_stop_escalates_to_sigterm_against_a_sigint_ignoring_child(self):
@@ -62,7 +64,7 @@ class StopIsolation(BridgeTestCase):
 
         out = self.bridge("stop", "--run", r["run_id"], "--grace", "0.5")
         self.assertEqual(out["stopped"][0]["signals_sent"], ["SIGINT", "SIGTERM"])
-        self.assertFalse(codex_bridge.pid_alive(row["codex_pid"]),
+        self.assertFalse(_util.pid_alive(row["codex_pid"]),
                          "SIGTERM must actually reap the SIGINT-ignoring child")
 
     def test_stop_marks_the_run_interrupted_and_keeps_the_thread(self):

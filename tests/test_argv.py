@@ -9,7 +9,10 @@ directory is never passed with `-C`.
 import json
 import unittest
 
-from helpers import BridgeTestCase, codex_bridge
+from helpers import BridgeTestCase   # puts the scripts dir on sys.path
+
+import _codex                        # noqa: E402
+import _util                         # noqa: E402
 
 
 class ArgvComposition(BridgeTestCase):
@@ -86,8 +89,8 @@ class ArgvComposition(BridgeTestCase):
         self.wait_for_state(r["run_id"])
         rec = self.argv_records()[-1]
         self.assertNoFlag(rec["argv"], "-C", "--cd")
-        self.assertEqual(str(codex_bridge.nfc(rec["cwd"])),
-                         str(codex_bridge.nfc(str(sub.resolve()))),
+        self.assertEqual(str(_util.nfc(rec["cwd"])),
+                         str(_util.nfc(str(sub.resolve()))),
                          "the child process must actually run in the requested cwd")
 
     def test_prompt_is_last_and_carries_the_preamble(self):
@@ -227,8 +230,8 @@ class SandboxDriftRegression(BridgeTestCase):
         self.wait_for_state(r2["run_id"])
         rec = self.argv_records()[1]
         self.assertNoFlag(rec["argv"], "-C", "--cd")
-        self.assertEqual(codex_bridge.nfc(rec["cwd"]),
-                         codex_bridge.nfc(str(sub.resolve())))
+        self.assertEqual(_util.nfc(rec["cwd"]),
+                         _util.nfc(str(sub.resolve())))
 
     def test_changing_the_sandbox_on_resume_is_explicit_and_recorded(self):
         r, r2 = self._start_and_resume(start_args=("--sandbox", "read-only"),
@@ -320,11 +323,11 @@ class PureArgvUnits(unittest.TestCase):
     def test_config_values_are_toml_quoted(self):
         """`-c` values parse as TOML, so a string value is quoted; an unquoted
         bare word only works through the raw-string fallback."""
-        argv = codex_bridge.build_argv(self.base(), kind="start", prompt="p")
+        argv = _codex.build_argv(self.base(), kind="start", prompt="p")
         self.assertIn('sandbox_mode="workspace-write"', argv)
 
     def test_raw_config_passthrough_is_verbatim(self):
-        argv = codex_bridge.build_argv(
+        argv = _codex.build_argv(
             self.base(extra_config=["tools.web_search=true", "num=3"]),
             kind="start", prompt="p")
         self.assertIn("tools.web_search=true", argv)
@@ -332,20 +335,20 @@ class PureArgvUnits(unittest.TestCase):
 
     def test_output_last_message_always_present(self):
         for kind in ("start", "resume", "review"):
-            argv = codex_bridge.build_argv(self.base(), kind=kind, prompt="p",
+            argv = _codex.build_argv(self.base(), kind=kind, prompt="p",
                                            thread_ref="t", review_args=["--uncommitted"])
             self.assertIn("-o", argv, f"{kind} must capture the final message")
 
     def test_add_dir_is_exec_only(self):
         meta = self.base(add_dirs=["/some/dir"])
-        self.assertIn("--add-dir", codex_bridge.build_argv(meta, kind="start", prompt="p"))
+        self.assertIn("--add-dir", _codex.build_argv(meta, kind="start", prompt="p"))
         self.assertNotIn("--add-dir",
-                         codex_bridge.build_argv(meta, kind="resume", prompt="p", thread_ref="t"))
+                         _codex.build_argv(meta, kind="resume", prompt="p", thread_ref="t"))
         self.assertNotIn("--add-dir",
-                         codex_bridge.build_argv(meta, kind="review", review_args=["--uncommitted"]))
+                         _codex.build_argv(meta, kind="review", review_args=["--uncommitted"]))
 
     def test_resume_last_uses_the_flag_not_a_positional(self):
-        argv = codex_bridge.build_argv(self.base(), kind="resume", prompt="p",
+        argv = _codex.build_argv(self.base(), kind="resume", prompt="p",
                                        thread_ref="--last")
         self.assertEqual(argv[:4], ["codex", "exec", "resume", "--last"])
 

@@ -7,7 +7,10 @@ import unicodedata
 import unittest
 from pathlib import Path
 
-from helpers import BRIDGE, BridgeTestCase, codex_bridge
+from helpers import BRIDGE, BridgeTestCase   # puts the scripts dir on sys.path
+
+import _run                                  # noqa: E402
+import _util                                 # noqa: E402
 
 
 class RegistryLayout(BridgeTestCase):
@@ -113,8 +116,8 @@ class UnicodePaths(BridgeTestCase):
         row = self.wait_for_state(r["run_id"])
         self.assertEqual(row["state"], "completed")
         rec = self.argv_records()[-1]
-        self.assertEqual(codex_bridge.nfc(rec["cwd"]),
-                         codex_bridge.nfc(str(self.project)))
+        self.assertEqual(_util.nfc(rec["cwd"]),
+                         _util.nfc(str(self.project)))
         self.assertIn("작업을 해줘", rec["argv"][-1])
 
     def test_relative_paths_render_correctly_under_nfd(self):
@@ -179,14 +182,14 @@ class StateReporting(BridgeTestCase):
         deadline = time.time() + 30
         while time.time() < deadline and (not events.exists() or events.stat().st_size == 0):
             time.sleep(0.1)
-        old = time.time() - (codex_bridge.STALL_SECONDS + 120)
+        old = time.time() - (_run.STALL_SECONDS + 120)
         os.utime(events, (old, old))
 
         row = self.bridge("status", "--run", r["run_id"])["runs"][0]
         self.assertEqual(row["state"], "stalled")
-        self.assertGreaterEqual(row["idle_seconds"], codex_bridge.STALL_SECONDS)
+        self.assertGreaterEqual(row["idle_seconds"], _run.STALL_SECONDS)
         # Advisory only: the process must still be alive.
-        self.assertTrue(codex_bridge.pid_alive(row["codex_pid"]),
+        self.assertTrue(_util.pid_alive(row["codex_pid"]),
                         "a stalled run must never be auto-killed")
         self.bridge("stop", "--run", r["run_id"])
 

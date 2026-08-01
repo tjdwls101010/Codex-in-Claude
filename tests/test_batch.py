@@ -16,7 +16,6 @@ import unittest
 from helpers import BRIDGE, BridgeTestCase   # puts the scripts dir on sys.path
 
 import _batch                                # noqa: E402
-import codex_bridge                          # noqa: E402
 
 
 class BatchStart(BridgeTestCase):
@@ -403,7 +402,7 @@ class GroupResults(BridgeTestCase):
         self.assertEqual(row["message_bytes"], 9000)
         self.assertTrue(row["message_truncated"])
         self.assertLessEqual(len(row["message"].encode("utf-8")),
-                             codex_bridge.GROUP_MESSAGE_CAP)
+                             _batch.GROUP_MESSAGE_CAP)
 
     def test_a_message_under_the_cap_is_not_reported_truncated(self):
         out = self.bridge("batch", "start", "--group", "p1", "--task", "a")

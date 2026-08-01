@@ -24,8 +24,11 @@ BRIDGE = REPO / ".claude" / "skills" / "codex" / "scripts" / "codex_bridge.py"
 FAKE_DIR = TESTS_DIR / "fake_codex"
 FIXTURES = TESTS_DIR / "fixtures"
 
+# Importing this module is what puts the skill's scripts on sys.path, so a test
+# that wants a pure function reaches for its own module (`_codex.build_argv`,
+# `_util.nfc`) after importing helpers — not through the entrypoint, which owns
+# only the CLI surface.
 sys.path.insert(0, str(BRIDGE.parent))
-import codex_bridge  # noqa: E402
 
 
 class BridgeTestCase(unittest.TestCase):

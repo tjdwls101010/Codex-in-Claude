@@ -200,16 +200,23 @@ class SandboxDriftRegression(BridgeTestCase):
         self.assertNotEqual(r["run_id"], r2["run_id"])
 
     def test_resume_reasserts_every_setting_not_only_sandbox(self):
+        # start_args deliberately use NON-default values for priority and
+        # extra_config: with defaults (isolated=True -> priority=True,
+        # extra_config=[]) this test would pass even if inheritance were
+        # broken, because start's own derivation happens to match.
         r, r2 = self._start_and_resume(
             start_args=("--sandbox", "read-only", "--model", "gpt-5.6-sol",
-                        "--effort", "low"))
+                        "--effort", "low", "--no-priority",
+                        "--config", "tools.web_search=true"))
         argv = self.argv_records()[1]["argv"]
         self.assertIn('sandbox_mode="read-only"', argv)
         self.assertIn('model_reasoning_effort="low"', argv,
                       "effort drifts to null on an unre-asserted resume")
         self.assertFlagPair(argv, "-m", "gpt-5.6-sol")
         self.assertIn("--ignore-user-config", argv)
-        self.assertIn('service_tier="priority"', argv)
+        self.assertFalse([a for a in argv if a.startswith("service_tier=")],
+                         "priority must not be re-derived from isolation on resume")
+        self.assertFlagPair(argv, "-c", "tools.web_search=true")
 
     def test_resume_keeps_the_parents_cwd(self):
         sub = self.project / "worktree"

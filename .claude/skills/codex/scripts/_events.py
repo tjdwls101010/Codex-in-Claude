@@ -68,6 +68,7 @@ def read_events(path: Path, since: int = 0):
     """
     if not path.exists():
         return [], since
+    since = max(0, since)
     size = path.stat().st_size
     if since > size:
         raise CursorOutOfRange(

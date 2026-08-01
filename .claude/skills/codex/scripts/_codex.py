@@ -20,6 +20,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 from _events import first_thread_id
@@ -269,22 +270,23 @@ def query_threads(cwd_filter=None, limit=50):
         try:
             cols = {r[1] for r in con.execute("PRAGMA table_info(threads)")}
             sel = [c for c in want if c in cols]
-            if not sel:
+            if not sel or "id" not in sel:
                 return []
             order = " ORDER BY updated_at DESC" if "updated_at" in cols else ""
+            params = [limit]
+            where = ""
+            if cwd_filter and "cwd" in cols:
+                # macOS stores non-ASCII filenames as NFD while argv/JSON carry
+                # NFC, so a Korean cwd never string-equals its own column value
+                # unless both normal forms are tried.
+                where = " WHERE cwd = ? OR cwd = ?"
+                params = [nfc(str(cwd_filter)),
+                          unicodedata.normalize("NFD", str(cwd_filter))] + params
             rows = con.execute(
-                f"SELECT {','.join(sel)} FROM threads{order} LIMIT ?",
-                (limit * 4,)).fetchall()
+                f"SELECT {','.join(sel)} FROM threads{where}{order} LIMIT ?",
+                params).fetchall()
         finally:
             con.close()
     except Exception:
         return []
-    out = []
-    for row in rows:
-        rec = dict(zip(sel, row))
-        if cwd_filter and nfc(str(rec.get("cwd") or "")) != nfc(str(cwd_filter)):
-            continue
-        out.append(rec)
-        if len(out) >= limit:
-            break
-    return out
+    return [dict(zip(sel, row)) for row in rows]

@@ -140,6 +140,62 @@ class Assignment(WorktreeTestCase):
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
+    def test_a_rejected_member_leaves_no_worktree_behind(self):
+        """The worktree is cut after every check that can still refuse the run.
+        Cutting it earlier leaked: a member rejected afterwards has no meta.json
+        and so no run_id, and `batch clean` resolves worktrees through the
+        manifest's run ids — the worktree survived every documented removal path
+        while `batch clean` reported the group fully cleaned."""
+        tf = self.tasks_file({"prompt": "a", "image": ["/nonexistent/x.png"]},
+                             {"prompt": "b"}, {"prompt": "c"})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        self.assertIn("image not found", out["runs"][0]["error"])
+        self.assertEqual(out["spawned"], 2)
+        for r in out["runs"][1:]:
+            self.wait_for_state(r["run_id"])
+
+        listed = self.git("worktree", "list", "--porcelain").stdout
+        cut = [ln for ln in listed.splitlines() if ln.startswith("worktree ")]
+        self.assertEqual(len(cut), 3, "main tree plus exactly the two members")
+        res = self.bridge("batch", "clean", "--group", "p1")
+        self.assertTrue(res["name_released"])
+        self.assertEqual(self.bridge("doctor")["worktrees"], 0,
+                         "'name_released' must mean nothing was left behind")
+
+    def test_an_unresolvable_base_fails_instead_of_silently_sharing_the_tree(self):
+        """A typo'd --base answered with a degrade note would produce the one
+        outcome the flag was used to avoid, and blame an empty repository."""
+        out = self.bridge("batch", "start", "--group", "p1", "--base", "no-such-ref",
+                          "--task", "a", "--task", "b", expect_rc=1)
+        self.assertIn("does not resolve", out["error"])
+        self.assertIn("no-such-ref", out["error"])
+        self.assertFalse((self.project / ".codex-runs").exists()
+                         and any((self.project / ".codex-runs").glob("2*")))
+
+    def test_instructions_missing_at_an_older_base_are_reported(self):
+        """V-14: project instructions do reach a worktree run, but only from a
+        base where the file exists."""
+        first = self.git("rev-parse", "HEAD").stdout.strip()
+        (self.project / "AGENTS.md").write_text("# project rules\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "add agents")
+        out = self.start_group("--base", first)
+        self.assertEqual(out["worktrees"]["missing_at_base"], ["AGENTS.md"])
+        self.assertIn("without the project instructions",
+                      out["worktrees"]["missing_note"])
+        for r in out["runs"]:
+            self.assertFalse((Path(r["worktree"]) / "AGENTS.md").exists())
+            self.wait_for_state(r["run_id"])
+
+    def test_nothing_is_reported_missing_when_the_base_is_head(self):
+        (self.project / "AGENTS.md").write_text("# project rules\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "add agents")
+        out = self.start_group()
+        self.assertNotIn("missing_at_base", out["worktrees"])
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
     def test_a_non_git_project_degrades_instead_of_failing(self):
         plain = self.tmp / "plain"
         plain.mkdir()
@@ -170,7 +226,7 @@ class Preamble(WorktreeTestCase):
     def test_a_batch_member_is_told_the_group_size_and_name(self):
         out = self.start_group(n=3)
         prompt = self.sent_prompt(out["runs"][0]["run_id"])
-        self.assertIn("one of 3 Codex runs", prompt)
+        self.assertIn("batch of 3 tasks", prompt)
         self.assertIn('group "p1"', prompt)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -188,7 +244,7 @@ class Preamble(WorktreeTestCase):
     def test_a_member_without_a_worktree_gets_no_worktree_paragraph(self):
         out = self.start_group("--no-worktree")
         prompt = self.sent_prompt(out["runs"][0]["run_id"])
-        self.assertIn("one of 2 Codex runs", prompt)
+        self.assertIn("batch of 2 tasks", prompt)
         self.assertNotIn("isolated git worktree", prompt)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -264,6 +320,25 @@ class Clean(WorktreeTestCase):
         self.assertIn("running members", res["error"])
         self.assertTrue(res["running"])
         self.bridge("stop", "--group", "p2")
+
+    def test_force_says_what_it_overrode(self):
+        """One flag lifts all three protections, and a caller usually reaches
+        for it to get past one. What it actually overrode has to be in the
+        result, not only in --help."""
+        out = self.finished_group()
+        (Path(out["runs"][0]["worktree"]) / "result.txt").write_text("work\n")
+        (self.project / ".codex-runs" / ".groups" / "p2.json").write_text(
+            json.dumps({"group": "p2", "derived_from": "p1", "members": []}))
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual(res["forced_past"]["derived_groups"], ["p2"])
+        self.assertEqual(res["forced_past"]["discarded_uncommitted"],
+                         [out["runs"][0]["worktree"]])
+        self.assertIn("not only the one you were after", res["forced_note"])
+
+    def test_a_clean_that_overrode_nothing_says_nothing(self):
+        self.finished_group()
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertNotIn("forced_past", res)
 
     def test_an_unknown_group_says_so(self):
         res = self.bridge("batch", "clean", "--group", "nope", expect_rc=1)

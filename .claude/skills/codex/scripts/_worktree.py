@@ -48,6 +48,26 @@ def resolve_base(cwd: Path, ref=None):
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def missing_at_base(cwd: Path, base: str, names=("AGENTS.md", "CLAUDE.md")):
+    """Instruction files that exist in the caller's tree but not at `base`.
+
+    V-14 measured that `AGENTS.md` does reach a run whose cwd is a worktree —
+    but only when the worktree was cut from a ref where the file exists. A
+    `--base` older than the commit that introduced it produces a run with no
+    project instructions at all, and nothing about that is visible from either
+    side: the caller sees a normal batch, and Codex cannot miss a file it was
+    never told about. Cheap to check, and it is the only way the gap ever
+    surfaces.
+    """
+    missing = []
+    for name in names:
+        if not (cwd / name).exists():
+            continue
+        if _git(cwd, "cat-file", "-e", f"{base}:{name}").returncode != 0:
+            missing.append(name)
+    return missing
+
+
 def uncommitted_count(cwd: Path) -> int:
     """Files that differ from HEAD in the caller's tree, tracked or not.
 

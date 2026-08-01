@@ -49,7 +49,8 @@ from _batch import (  # noqa: E402
     read_group, valid_name, write_members,
 )
 from _worktree import (  # noqa: E402
-    add as worktree_add, is_dirty as worktree_dirty, prune as worktree_prune,
+    add as worktree_add, is_dirty as worktree_dirty,
+    missing_at_base as worktree_missing_at_base, prune as worktree_prune,
     registered as worktrees_registered, remove as worktree_remove,
     resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
 )
@@ -179,20 +180,6 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     except FileExistsError as e:
         fail(str(e), runs_dir=str(runs_dir))
 
-    # The worktree can only be cut here: it lives at `<run_dir>/wt`, and the run
-    # id that names run_dir does not exist until the line above.
-    wt_info = None
-    if worktree_base:
-        source, wt = cwd, run_dir / "wt"
-        ok, err = worktree_add(source, wt, worktree_base)
-        if not ok:
-            fail(f"could not create the worktree for this member: {err}",
-                 base=worktree_base, path=str(wt))
-        wt_info = {"path": str(wt), "base": worktree_base,
-                   "uncommitted_in_caller_tree": worktree_uncommitted(source),
-                   "source": str(source)}
-        cwd = wt
-
     meta = {
         "run_id": run_id,
         "run_dir": str(run_dir),
@@ -229,7 +216,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         # a single run say which group it belongs to without one, so `status`
         # can still answer that after a manifest is lost or hand-deleted.
         "group": group,
-        "worktree": wt_info,
+        "worktree": None,       # filled in below, once nothing can still refuse
         "started_at": now_iso(),
         "ended_at": None, "exit_code": None, "state": "starting",
         "codex_pid": None, "supervisor_pid": None, "pgid": None,
@@ -244,6 +231,28 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     for img in meta["images"]:
         if not Path(img).exists():
             fail(f"image not found: {img}")
+
+    # Cut the worktree last, after every check that can still refuse this run.
+    # It cannot be cut before `claim_run_dir` — it lives at `<run_dir>/wt`, and
+    # the run id naming that directory does not exist until then — but cutting
+    # it any earlier than here leaks. A member rejected afterwards never gets a
+    # meta.json and so never gets a run_id, and `batch clean` resolves
+    # worktrees through the manifest's run ids: the worktree would survive
+    # every documented removal path while `batch clean` reported the group
+    # fully cleaned.
+    wt_info = None
+    if worktree_base:
+        source, wt = cwd, run_dir / "wt"
+        ok, err = worktree_add(source, wt, worktree_base)
+        if not ok:
+            fail(f"could not create the worktree for this member: {err}",
+                 base=worktree_base, path=str(wt))
+        cwd = wt
+        wt_info = {"path": str(wt), "base": worktree_base,
+                   "uncommitted_in_caller_tree": worktree_uncommitted(source),
+                   "source": str(source)}
+        meta["cwd"] = str(cwd)
+        meta["worktree"] = wt_info
 
     if batch and wt_info:
         batch = {**batch, "worktree": wt_info["path"], "base": wt_info["base"],
@@ -470,11 +479,18 @@ def plan_worktrees(tasks, args, project):
     if git_toplevel(project) is None:
         return set(), None, (f"{project} is not a git repository, so worktrees "
                              "are unavailable; members share the caller's tree")
-    base = worktree_base_sha(project, getattr(args, "base", None))
+    ref = getattr(args, "base", None)
+    base = worktree_base_sha(project, ref)
+    if not base and ref:
+        # An unresolvable --base was typed by the caller, so it is a mistake to
+        # report rather than a condition to degrade around. Silently sharing the
+        # caller's tree instead would answer a typo with the one outcome the
+        # flag was used to avoid.
+        fail(f"--base {ref!r} does not resolve to a commit in {project}")
     if not base:
-        return set(), None, ("could not resolve a base commit (an empty "
-                             "repository has no HEAD); members share the "
-                             "caller's tree")
+        return set(), None, ("this repository has no HEAD yet (nothing is "
+                             "committed), so there is no commit to cut a "
+                             "worktree from; members share the caller's tree")
     return eligible, base, None
 
 
@@ -560,6 +576,17 @@ def cmd_batch_start(args):
                     "<run_dir>/wt. Their changes are not in your tree; "
                     "`result --group` reports which paths more than one wrote. "
                     "`batch clean --group` removes them once you have collected."}
+        missing = worktree_missing_at_base(project, wt_base)
+        if missing:
+            # V-14: project instructions reach a worktree run, but only from a
+            # base where the file exists. A --base older than the commit that
+            # added AGENTS.md produces runs with no project guidance, and
+            # neither side can notice on its own.
+            out["worktrees"]["missing_at_base"] = missing
+            out["worktrees"]["missing_note"] = (
+                f"{', '.join(missing)} exists in your tree but not at the base "
+                f"these worktrees were cut from, so these runs start without "
+                f"the project instructions a HEAD-based run would have had.")
     elif wt_note:
         out["worktrees"] = {"count": 0, "note": wt_note}
     emit(out)
@@ -628,6 +655,13 @@ def cmd_batch_clean(args):
     if live and not args.force:
         fail(f"group {args.group!r} still has running members; stop them first "
              f"or pass --force", running=live)
+    # One flag lifts all three protections, and a caller usually reaches for it
+    # to get past one of them. What it actually overrode therefore has to be in
+    # the result, not only in --help: the caller who forced past a dependent
+    # group needs to see that a running member's directory went with it.
+    overrode = {}
+    if args.force and live:
+        overrode["running_members"] = live
 
     # 2. A group that another group resumed into. `--resume-from` puts phase 2
     #    in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
@@ -637,6 +671,8 @@ def cmd_batch_clean(args):
     if children and not args.force:
         fail(f"group {args.group!r} was resumed by another group, whose members "
              f"are working in these worktrees", derived_groups=children)
+    if args.force and children:
+        overrode["derived_groups"] = children
 
     worktree_prune(project)
     for rid in member_run_ids(runs_dir, args.group) or []:
@@ -651,10 +687,13 @@ def cmd_batch_clean(args):
         #    Not implemented here: `git worktree remove` refuses a dirty tree by
         #    itself (measured, V-13), and git's definition of dirty is the
         #    correct one. Its refusal is reported as the reason.
+        dirty = worktree_dirty(path)
         ok, err = worktree_remove(project, path, force=args.force)
+        if ok and dirty and args.force:
+            overrode.setdefault("discarded_uncommitted", []).append(str(path))
         (removed if ok else kept).append(
             {"run_id": rid, "path": str(path),
-             **({} if ok else {"reason": err, "dirty": worktree_dirty(path)})})
+             **({} if ok else {"reason": err, "dirty": dirty})})
 
     # The name is released only when nothing was left behind, so a caller who
     # sees `cleaned: true` can reuse the name and one who does not still has a
@@ -663,11 +702,18 @@ def cmd_batch_clean(args):
     released = not kept
     if released:
         group_path(runs_dir, args.group).unlink(missing_ok=True)
-    emit({"group": args.group, "removed": removed, "kept": kept,
-          "name_released": released,
-          "note": None if released else
-          "these worktrees hold uncommitted changes — collect them, or pass "
-          "--force to discard. The group name stays claimed until they are gone."})
+    out = {"group": args.group, "removed": removed, "kept": kept,
+           "name_released": released,
+           "note": None if released else
+           "these worktrees hold uncommitted changes — collect them, or pass "
+           "--force to discard. The group name stays claimed until they are gone."}
+    if overrode:
+        out["forced_past"] = overrode
+        out["forced_note"] = (
+            "--force lifted every protection at once, not only the one you were "
+            "after. What it overrode is listed above; none of it is recoverable "
+            "from here.")
+    emit(out)
 
 
 def cmd_resume(args):

@@ -136,10 +136,17 @@ PREAMBLE = (
 # Facts only, no methodology (B19). Nothing here tells Codex how to cooperate
 # with the other runs; being told they exist is enough to stop it assuming they
 # do not.
+# "may be running" rather than "are running right now", and "{n} tasks" rather
+# than "{n} runs". Both hedges are load-bearing. Members are spawned in
+# sequence, so by the time the last one reads this the first may already have
+# finished — and a member that failed to spawn was never a run at all, while it
+# was always a task. Asserting either as fact would make this paragraph commit
+# the exact error it exists to prevent: stating something unobservable without
+# hedging.
 BATCH_PREAMBLE = (
-    "[Batch context: you are one of {n} Codex runs started together as group "
-    '"{group}". The others are running in parallel right now and may be editing '
-    "other paths.]"
+    "[Batch context: you are one run in a batch of {n} tasks launched together "
+    'as group "{group}". Other runs from this batch may be executing alongside '
+    "you and editing other paths.]"
 )
 
 WORKTREE_PREAMBLE = (

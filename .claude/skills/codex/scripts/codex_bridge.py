@@ -324,6 +324,11 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         "files_changed": info["files_changed"], "config_error_events": info["errors"],
         "in_progress_item": info["in_progress_item"],
         "last_agent_message": clip(info["last_agent_message"] or "", 400) or None,
+        # F8: `turn.failed` was parsed by _events.py and never surfaced, so a
+        # failed run showed `message: null` and the reason needed a second
+        # `log` call. Clipped like the neighbouring `turn.failed` log line.
+        "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
+                        if info["turn_failed"] else None),
         "events": str(events_path),
     }
     if review_zero:
@@ -351,18 +356,35 @@ def cmd_status(args):
             if args.thread and m.get("thread_id") != args.thread:
                 continue
             rows.append(run_row(rd, m, project))
-        if not args.all:
-            rows = rows[-20:]
 
+    # F3: derive every summary from the FULL list before truncating for
+    # display. A phase gate is literally `len(running) == 0` — deriving it
+    # from an already-truncated `rows` let live runs older than the newest 20
+    # fall off the page, so the gate passed while they were still writing.
+    total_runs = len(rows)
     by_thread = {}
     for r in rows:
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
+    running = [r["run_id"] for r in rows if r["state"] in ("running", "stalled")]
+    done = [r["run_id"] for r in rows if r["state"] == "completed"]
+    failed = [r["run_id"] for r in rows if r["state"] in ("failed", "interrupted", "orphaned")]
+    known = {r["thread_id"] for r in rows}
 
-    out = {"project": str(project), "runs_dir": str(runs_dir), "runs": rows,
-           "threads": by_thread,
-           "running": [r["run_id"] for r in rows if r["state"] in ("running", "stalled")]}
+    display_rows = rows
+    runs_truncated = 0
+    if not args.run and not args.all and total_runs > 20:
+        tail = rows[-20:]
+        # Truncate the display list only — a non-terminal row must survive
+        # truncation no matter how old, or `running` above and `runs` below
+        # would disagree about which runs are still alive.
+        kept_live = [r for r in rows[:-20] if r["state"] not in TERMINAL_STATES]
+        display_rows = kept_live + tail
+        runs_truncated = total_runs - len(display_rows)
+
+    out = {"project": str(project), "runs_dir": str(runs_dir), "runs": display_rows,
+           "threads": by_thread, "running": running, "done": done, "failed": failed,
+           "total_runs": total_runs, "runs_truncated": runs_truncated}
     if args.include_external:
-        known = {r["thread_id"] for r in rows}
         out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]
         out["external_note"] = (
@@ -558,6 +580,10 @@ def cmd_result(args):
     out = {"run_id": meta["run_id"], "thread_id": meta.get("thread_id") or info["thread_id"],
            "state": meta.get("state"), "exit_code": meta.get("exit_code"),
            "message": message, "usage": None if review_zero else usage,
+           # F8: same clipped `turn.failed` error as `run_row`, so `result`
+           # doesn't force a second `log` call to learn why a run failed.
+           "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
+                          if info["turn_failed"] else None),
            "files_changed": info["files_changed"], "commands": info["commands"]}
     if review_zero:
         out["usage_note"] = "review runs report zero usage; unavailable, not free"

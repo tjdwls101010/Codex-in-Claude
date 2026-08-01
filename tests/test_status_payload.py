@@ -44,7 +44,7 @@ class StatusTruncation(BridgeTestCase):
             "run_id": run_id, "thread_id": f"thread-{index:04d}", "kind": "start",
             "label": None, "started_at": started_at,
             "cwd": str(self.project), "sandbox": "read-only", "model": None,
-            "effort": None, "isolated": False, "detached": False,
+            "effort": None, "isolated": False,
         }
         if alive:
             # A genuinely alive process, not the test runner's own pid: the

@@ -25,6 +25,17 @@ from _util import clip, nfc
 
 LEVELS = ("compact", "normal", "full", "raw")
 
+
+class CursorOutOfRange(ValueError):
+    """`--since` points past the end of the events file.
+
+    F11: the old guard (`since >= size`) accepted this silently, printed
+    nothing, and exited 0 — echoing the bad cursor straight back so the next
+    poll stays stuck forever, indistinguishable from "no new events yet". A
+    cursor this far out is almost always one fed back from a different run.
+    """
+
+
 # Chosen from the measured table in docs/measurements/filter-calibration.md.
 # The reasoning is recorded next to that table and restated in
 # references/event-stream.md; do not change this without re-running it.
@@ -58,7 +69,10 @@ def read_events(path: Path, since: int = 0):
     if not path.exists():
         return [], since
     size = path.stat().st_size
-    if since >= size:
+    if since > size:
+        raise CursorOutOfRange(
+            f"--since {since} is past the end of the events file ({size} bytes)")
+    if since == size:
         return [], since
     with path.open("rb") as fh:
         fh.seek(since)

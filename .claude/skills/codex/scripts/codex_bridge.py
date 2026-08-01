@@ -275,6 +275,17 @@ def cmd_start(args):
 TASK_FIELDS = ("prompt", "kind", "label", "model", "effort", "sandbox", "schema",
                "image", "cwd", "resume", "review")
 
+# Checking the field *names* is not enough. A value of the wrong type reaches
+# argv composition unexamined and surfaces as a Python error from deep inside
+# `create_run` — `{"prompt": 123}` becomes `AttributeError: 'int' object has no
+# attribute 'strip'`. The batch's own D11 net catches that now, but only after
+# the earlier members have already spawned; a tasks file this broken should
+# cost nothing, and the way to make it cost nothing is to read it fully before
+# starting anything.
+TASK_FIELD_TYPES = {"prompt": str, "kind": str, "label": str, "model": str,
+                    "effort": str, "sandbox": str, "schema": str, "cwd": str,
+                    "resume": str, "image": list, "review": dict}
+
 
 def load_tasks(args):
     """Build the ordered task list from `--task` and `--tasks-file`.
@@ -305,6 +316,14 @@ def load_tasks(args):
                 # a run that quietly used the group default instead.
                 fail(f"tasks file line {n} has unknown field(s): {sorted(unknown)}",
                      known_fields=list(TASK_FIELDS))
+            for field, want in TASK_FIELD_TYPES.items():
+                if field in item and not isinstance(item[field], want):
+                    fail(f"tasks file line {n}: {field!r} must be "
+                         f"{want.__name__}, got {type(item[field]).__name__}",
+                         line=clip(line, 200))
+            if any(not isinstance(i, str) for i in item.get("image") or []):
+                fail(f"tasks file line {n}: 'image' must be a list of paths",
+                     line=clip(line, 200))
             item.setdefault("kind", "start")
             if item["kind"] not in ("start", "resume", "review"):
                 fail(f"tasks file line {n}: kind must be start, resume or review",
@@ -404,14 +423,23 @@ def cmd_batch_start(args):
             with failures_raise():
                 out = spawn_task(task_args(args, item), item, group=args.group,
                                  runs_dir=runs_dir, project=project)
-        except BridgeError as e:
+        except Exception as e:
             # D11: one member failing to spawn does not take the batch with it.
             # The failure is recorded in place so the caller sees which slot is
             # missing rather than a shorter list than it asked for.
-            entry["error"] = e.msg
-            entry.update(e.extra)
+            #
+            # `Exception`, not `BridgeError`: a BridgeError is a refusal this
+            # code anticipated, but the failures that actually cost a batch are
+            # the ones it did not — a bad value in a tasks file reaching
+            # `prompt.strip()` as an AttributeError, an OSError from a full
+            # disk. Letting those escape aborts the batch *after* members are
+            # already running, which is the one outcome D11 exists to prevent.
+            entry["error"] = e.msg if isinstance(e, BridgeError) else str(e)
+            entry.update(e.extra if isinstance(e, BridgeError)
+                         else {"error_type": type(e).__name__})
             members.append(entry)
             results.append(entry)
+            write_members(runs_dir, args.group, members)
             continue
         entry["run_id"] = out["run_id"]
         entry["thread_id"] = out.get("thread_id")
@@ -419,8 +447,10 @@ def cmd_batch_start(args):
         entry["sandbox"] = out.get("sandbox")
         members.append(entry)
         results.append({**entry, "state": out.get("state")})
-
-    write_members(runs_dir, args.group, members)
+        # After every member, not once at the end: see write_members. A member
+        # that has spawned is a live process, and it must be reachable through
+        # the group from the instant it exists.
+        write_members(runs_dir, args.group, members)
     spawned = [m for m in members if m.get("run_id")]
     emit({"group": args.group, "runs": results,
           "spawned": len(spawned), "requested": len(tasks),
@@ -987,15 +1017,25 @@ def cmd_result_group(args, project, runs_dir):
         msg_path = rd / "last-message.txt"
         message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()
                    else info["last_agent_message"]) or ""
-        raw = message.encode("utf-8")
+        # Cut and measure in the same unit. Slicing characters while reporting
+        # bytes made a 3,000-character Korean message — 9,000 bytes, nothing
+        # actually removed — report `message_truncated: true`, which is exactly
+        # the guess D07's cap exists to replace with a fact.
+        raw = message.encode("utf-8", "replace")
+        truncated = len(raw) > GROUP_MESSAGE_CAP
         row = {"run_id": meta["run_id"], "label": meta.get("label"),
                "state": meta.get("state"), "exit_code": meta.get("exit_code"),
                # D07: capped per run, with the real size stated. Whether to pull
                # the full text is then a decision the caller makes, not a guess
                # — `result --run <id>` returns it whole.
-               "message": message[:GROUP_MESSAGE_CAP],
+               # "ignore", not "replace": a byte cut lands mid-character often
+               # in any non-ASCII text, and U+FFFD would both re-encode larger
+               # than the byte it replaced — pushing the payload back over the
+               # cap — and read as corruption in prose that is merely cut short.
+               "message": (raw[:GROUP_MESSAGE_CAP].decode("utf-8", "ignore")
+                           if truncated else message),
                "message_bytes": len(raw),
-               "message_truncated": len(raw) > GROUP_MESSAGE_CAP,
+               "message_truncated": truncated,
                "usage": info["usage"], "files_changed": info["files_changed"],
                "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
                                if info["turn_failed"] else None)}

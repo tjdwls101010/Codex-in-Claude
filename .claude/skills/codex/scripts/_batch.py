@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 
 from _util import now_iso
@@ -61,37 +62,63 @@ def list_groups(runs_dir: Path):
     return sorted(p.stem for p in d.glob("*.json"))
 
 
+def _tmp_path(path: Path) -> Path:
+    """A tmp name no other writer can be using. Same discipline as `write_meta`
+    (F1): a fixed name lets two writers truncate each other's file and lets a
+    reader see the result."""
+    return path.with_suffix(f".{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+
+
+def _write_atomic(path: Path, manifest: dict):
+    tmp = _tmp_path(path)
+    tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
 def claim_group(runs_dir: Path, name: str, derived_from=None) -> dict:
     """Take the name, atomically, before any run is spawned.
 
     Raises FileExistsError if the name is taken. Claiming first means a
     duplicate name costs nothing — no Codex process has started yet.
+
+    The claim is `os.link`, not `O_CREAT|O_EXCL` on the destination, and the
+    difference is not cosmetic. `O_EXCL` creates the file empty and fills it
+    afterwards, so a crash — or merely a concurrent reader arriving in that
+    window — sees a name that exists with no parsable content behind it, which
+    `read_group` cannot distinguish from a corrupt manifest. `link` publishes a
+    file that is already complete, and fails if the name is taken, so the name
+    and its content appear in the same instant.
     """
     d = groups_dir(runs_dir)
     d.mkdir(parents=True, exist_ok=True)
     manifest = {"group": name, "created_at": now_iso(),
                 "derived_from": derived_from, "members": []}
     path = group_path(runs_dir, name)
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2, ensure_ascii=False)
+    tmp = _tmp_path(path)
+    tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.link(tmp, path)   # raises FileExistsError if the name is taken
+    finally:
+        tmp.unlink(missing_ok=True)
     return manifest
 
 
 def write_members(runs_dir: Path, name: str, members: list) -> dict:
-    """Record the member list once, in start order, after the batch has spawned.
+    """Record the member list so far, in start order.
 
-    Written whole rather than appended per member: `batch start` is the only
-    writer and it knows the full list by the time it finishes, so there is no
-    concurrent-append problem to solve.
+    Called after **every** member rather than once at the end. Writing once was
+    the natural shape — `batch start` is the only writer and knows the full list
+    by the time it finishes — but it left a window with teeth: a batch killed
+    partway through had already spawned live Codex processes whose manifest
+    still said `members: []`, so `status/stop/result --group` could not see them
+    and nothing could stop them through the group. Rewriting a file of a few
+    hundred bytes N times is not a cost worth trading that for.
     """
     path = group_path(runs_dir, name)
     manifest = read_group(runs_dir, name) or {"group": name, "created_at": now_iso(),
                                               "derived_from": None}
     manifest["members"] = members
-    tmp = path.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    _write_atomic(path, manifest)
     return manifest
 
 

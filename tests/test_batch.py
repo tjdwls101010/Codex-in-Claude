@@ -6,9 +6,17 @@ The worktree half of `batch start` is M4b and is not exercised here.
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
+import sys
+import time
 import unittest
 
-from helpers import BridgeTestCase
+from helpers import BRIDGE, BridgeTestCase   # puts the scripts dir on sys.path
+
+import _batch                                # noqa: E402
+import codex_bridge                          # noqa: E402
 
 
 class BatchStart(BridgeTestCase):
@@ -124,6 +132,30 @@ class TasksFile(BridgeTestCase):
                           "--tasks-file", str(f), expect_rc=1)
         self.assertIn("line 2", out["error"])
 
+    def test_a_wrongly_typed_field_is_rejected_before_anything_spawns(self):
+        """Checking field names caught `sandox` but not `{"prompt": 123}`, which
+        reached `prompt.strip()` as an AttributeError — after the earlier members
+        of the batch had already started."""
+        tf = self.write_tasks({"prompt": "good"}, {"prompt": 123})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf,
+                          expect_rc=1)
+        self.assertIn("line 2", out["error"])
+        self.assertIn("'prompt'", out["error"])
+        self.assertIn("int", out["error"])
+        runs = self.project / ".codex-runs"
+        started = [p for p in runs.iterdir() if p.is_dir()] if runs.is_dir() else []
+        self.assertEqual(started, [], "a broken tasks file must cost nothing")
+
+    def test_a_wrongly_typed_review_or_image_field_is_rejected(self):
+        for item, want in (({"prompt": "a", "review": "uncommitted"}, "dict"),
+                           ({"prompt": "a", "image": "one.png"}, "list"),
+                           ({"prompt": "a", "image": [7]}, "list of paths")):
+            with self.subTest(item=item):
+                out = self.bridge("batch", "start", "--group", "g",
+                                  "--tasks-file", self.write_tasks(item),
+                                  expect_rc=1)
+                self.assertIn(want, out["error"])
+
     def test_a_resume_task_must_name_what_it_resumes(self):
         tf = self.write_tasks({"prompt": "a", "kind": "resume"})
         out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf,
@@ -176,6 +208,81 @@ class BatchFailureIsolation(BridgeTestCase):
             (self.project / ".codex-runs" / ".groups" / "p1.json").read_text())
         self.assertEqual(len(manifest["members"]), 1)
         self.assertNotIn("run_id", manifest["members"][0])
+
+
+class ManifestSurvivesAHalfFinishedBatch(BridgeTestCase):
+    """The manifest is what every `--group` selector resolves membership
+    through, so a member that has spawned must appear in it from the instant it
+    exists. Writing it once at the end of the spawn loop meant a batch killed
+    partway through left live Codex processes recorded nowhere: invisible to
+    `status --group`, and unreachable by `stop --group`."""
+
+    def test_members_that_spawned_are_recorded_even_if_the_batch_is_killed(self):
+        env = dict(self.env)
+        # Delay the first event line so each member sits in create_run's
+        # thread-id wait, giving a window wide enough to kill inside.
+        env["FAKE_CODEX_PRE_DELAY"] = "6"
+        proc = subprocess.Popen(
+            [sys.executable, str(BRIDGE), "batch", "start", "--group", "p1",
+             "--project", str(self.project),
+             "--task", "one", "--task", "two", "--task", "three"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+            start_new_session=True)
+        self.addCleanup(self._kill_tree, proc)
+
+        manifest = self.project / ".codex-runs" / ".groups" / "p1.json"
+        deadline = time.time() + 30
+        members = []
+        while time.time() < deadline:
+            if manifest.exists():
+                members = (json.loads(manifest.read_text()) or {}).get("members") or []
+                if members:
+                    break
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        self.assertTrue(members, "the first member must be in the manifest before "
+                                 "the batch finishes spawning the rest")
+        self.assertTrue(members[0].get("run_id"))
+
+        self._kill_tree(proc)
+        # What the manifest recorded is still there, and still resolves.
+        after = json.loads(manifest.read_text())["members"]
+        self.assertGreaterEqual(len(after), 1)
+        rid = after[0]["run_id"]
+        self.assertTrue((self.project / ".codex-runs" / rid / "meta.json").exists())
+        status = self.bridge("status", "--group", "p1")
+        self.assertIn(rid, [r["run_id"] for r in status["runs"]],
+                      "a spawned member must be reachable through its group")
+
+    def _kill_tree(self, proc):
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+            proc.wait(timeout=10)
+
+
+class GroupManifestAtomicity(BridgeTestCase):
+
+    def test_a_claimed_group_is_complete_the_instant_it_exists(self):
+        """`O_EXCL` created the file and filled it afterwards, so a reader
+        arriving in between saw a name that existed with nothing parsable behind
+        it — and `read_group` cannot tell that from corruption. The claim is a
+        link of an already-written file instead."""
+        runs_dir = self.project / ".codex-runs"
+        runs_dir.mkdir(exist_ok=True)
+        _batch.claim_group(runs_dir, "p1")
+        got = _batch.read_group(runs_dir, "p1")
+        self.assertEqual(got["group"], "p1")
+        self.assertEqual(got["members"], [])
+        with self.assertRaises(FileExistsError):
+            _batch.claim_group(runs_dir, "p1")
+        self.assertEqual(_batch.read_group(runs_dir, "p1")["members"], [],
+                         "a rejected claim must not disturb the existing manifest")
+        leftovers = list((runs_dir / ".groups").glob("*.tmp"))
+        self.assertEqual(leftovers, [], "no tmp file may survive a claim")
 
 
 class GroupSelectors(BridgeTestCase):
@@ -280,6 +387,35 @@ class GroupResults(BridgeTestCase):
             self.assertFalse(row["message_truncated"])
         self.assertEqual(res["group_state"], "completed")
         self.assertGreater(res["totals"]["input_tokens"], 0)
+
+    def test_the_cap_cuts_and_measures_in_the_same_unit(self):
+        """Slicing characters while reporting bytes made a 3,000-character
+        Korean message — 9,000 bytes, nothing removed — report itself
+        truncated, which is the guess the cap exists to replace with a fact."""
+        out = self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        rid = out["runs"][0]["run_id"]
+        self.wait_for_state(rid)
+        msg = "가" * 3000
+        (self.project / ".codex-runs" / rid / "last-message.txt").write_text(
+            msg, encoding="utf-8")
+
+        row = self.bridge("result", "--group", "p1")["results"][0]
+        self.assertEqual(row["message_bytes"], 9000)
+        self.assertTrue(row["message_truncated"])
+        self.assertLessEqual(len(row["message"].encode("utf-8")),
+                             codex_bridge.GROUP_MESSAGE_CAP)
+
+    def test_a_message_under_the_cap_is_not_reported_truncated(self):
+        out = self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        rid = out["runs"][0]["run_id"]
+        self.wait_for_state(rid)
+        msg = "가" * 1000          # 3,000 bytes, under the 4,000-byte cap
+        (self.project / ".codex-runs" / rid / "last-message.txt").write_text(
+            msg, encoding="utf-8")
+
+        row = self.bridge("result", "--group", "p1")["results"][0]
+        self.assertFalse(row["message_truncated"])
+        self.assertEqual(row["message"], msg)
 
     def test_overlaps_reports_only_paths_more_than_one_member_wrote(self):
         """D30. A full path list per run inverts the context discipline the skill

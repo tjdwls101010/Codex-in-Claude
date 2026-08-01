@@ -84,7 +84,7 @@ Drives `codex exec review`'s own distinct flag surface. Exactly one of `--uncomm
 $CODEX status [--run <ref>] [--thread <thread_id>] [--all] [--include-external]
 ```
 
-Lists runs for the project. Without `--run`, shows the non-terminal runs plus `total_runs`, and sets `runs_truncated` when it withheld any; the list is capped at 20 rows in every mode.
+Lists runs for the project. The default view — no `--run`, `--group` or `--all` — keeps every non-terminal run plus a tail of recent ones, capped at 20 rows, and reports `total_runs` with `runs_truncated` saying how many it withheld. `--group` never truncates: a group you started is bounded by definition, so `runs_truncated` is always `0` there.
 
 | Flag | Meaning |
 |---|---|

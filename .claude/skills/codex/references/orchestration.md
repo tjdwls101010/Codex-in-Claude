@@ -79,11 +79,19 @@ Process groups isolate *signals*, not files. Two runs in one directory edit the 
 
 For one member's full message, `result --run <id>`.
 
+## What a batch member is told, and why `--no-preamble` is not free here
+
+A batch member's prompt carries an extra paragraph: that it is one run in a batch of N launched together under a group name, that other runs may be executing alongside it, and — when isolated — its worktree's path, that worktree's base commit, and how many uncommitted files exist in the caller's tree that it does not have.
+
+Measured, and the measurement is the reason this matters more than it sounds. Asked what tree it was in, a run **without** that paragraph answered *"it is the shared workspace with the person who started me, so we are looking at the same tree"* — wrong, and asserted rather than hedged. **With** it, the same run answered correctly and reasoned about the others from N−1. Cost: 113 input tokens against a ~16k context.
+
+So the failure it prevents is **fabrication, not omission**. A run that merely lacked the fact could say it did not know; what actually happens is that it fills the gap confidently, and every conclusion downstream of that is built on a false premise about which tree it is looking at. `--no-preamble` removes this along with the base preamble — reach for it only when you are supplying these facts yourself.
+
 ## What it costs
 
 Each run pays Codex's isolation floor separately. **N parallel runs pay N floors**, where N turns on one thread pay one floor plus a replay that grows every turn. Neither is always cheaper: parallel wins when the work is genuinely independent, one thread wins when each step needs what the last one learned.
 
-`batch start` reports a `projected_cost` computed from this project's own recent completed isolated runs — the median of their input tokens, times the number of members, `null` until there are three samples. It is a **floor, and it is reported rather than enforced**. Real cost is higher and grows with each resume. Do not budget from it; re-measure. A constant measured at design time in this project moved by a factor of 2.7 within two weeks, which is why there is no constant here.
+`batch start` reports a `projected_cost` computed from this project's own recent completed isolated runs — the median of their input tokens, times the number of members. It is `null` below three samples, because a median of one or two runs is not a median, it is one run's number wearing the word; three is the smallest sample where an outlier does not become the answer. It looks at the last ten, so it tracks the project as it is now rather than as it was. It is a **floor, and it is reported rather than enforced**. Real cost is higher and grows with each resume. Do not budget from it; re-measure. A constant measured at design time in this project moved by a factor of 2.7 within two weeks, which is why there is no constant here.
 
 Concurrency up to 8 was measured with no sqlite contention, no thread-id collisions, and wall-clock flat from N=2 to N=8. Above 8 is unmeasured — that is not a ceiling that was found, it is a range that was not tested.
 

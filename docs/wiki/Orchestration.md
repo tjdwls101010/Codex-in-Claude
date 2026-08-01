@@ -94,7 +94,7 @@ Everything that could go wrong here is a refusal rather than a guess:
 
 ## 7. Watching and collecting
 
-`status --group <name> --follow` prints a line per tick and always ends with a terminal line — `group.completed`, `group.partial`, or `group.still-running` if `--follow-timeout` expires first — so a group can never end in silence. Pair it with Claude Code's **Monitor** tool rather than a foreground Bash call: Bash caps out at 600 seconds and a batch can outlive that.
+`status --group <name>` returns every member — a group you started is bounded by definition, so unlike the default `status` view it never truncates. `status --group <name> --follow` prints a line per tick and always ends with a terminal line — `group.completed`, `group.partial`, or `group.still-running` if `--follow-timeout` expires first — so a group can never end in silence. Pair it with Claude Code's **Monitor** tool rather than a foreground Bash call: Bash caps out at 600 seconds and a batch can outlive that.
 
 `--follow` holds no state; everything it prints is re-derived from the registry, so a follower that dies loses nothing.
 
@@ -106,7 +106,7 @@ Everything that could go wrong here is a refusal rather than a guess:
 
 Each run pays Codex's isolation floor separately. **N parallel runs pay N floors**, where N turns on one thread pay one floor plus a replay that grows every turn. Neither is always cheaper: parallel wins when the work is genuinely independent, one thread wins when each step needs what the last one learned.
 
-`batch start` reports a `projected_cost` computed from *this project's* recent completed isolated runs — the median of their input tokens, times the number of members, `null` until there are three samples. It's a floor, and it's reported rather than enforced. Real cost is higher and grows with each resume, so don't budget from it; re-measure. A constant measured at design time in this project moved by a factor of 2.7 within two weeks, which is exactly why there's no constant here.
+`batch start` reports a `projected_cost` computed from *this project's* recent completed isolated runs — the median of their input tokens, times the number of members. It's `null` below three samples, because a median of one or two runs is just one run's number wearing the word; three is the smallest sample where an outlier doesn't become the answer. It's a floor, and it's reported rather than enforced. Real cost is higher and grows with each resume, so don't budget from it; re-measure. A constant measured at design time in this project moved by a factor of 2.7 within two weeks, which is exactly why there's no constant here.
 
 Concurrency up to 8 was measured with no sqlite contention, no thread-id collisions, and wall clock flat from N=2 to N=8. Above 8 is unmeasured — that's not a ceiling that was found, it's a range that wasn't tested.
 

@@ -49,7 +49,7 @@ Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,
 
 `--timeout` works in the background too: at the deadline the run's process group gets SIGINT and the run is recorded `timed_out` — a state of its own, distinct from `interrupted` (you stopped it) and `failed` (Codex did), because only the third is answered by raising the timeout. The thread stays resumable across it, with the pre-timeout turn's context intact.
 
-`status` truncates. Without `--all` it reports the non-terminal runs plus `total_runs`, and sets `runs_truncated` when it withheld some; `threads` groups runs that share one. The list is capped at 20 rows in every mode. A group's own summary reports `running`, `done`, `failed` and a `group_state` of `running`, `completed` or `partial`.
+`status` truncates its default view — the one that answers "what is going on here", where a project with 200 old runs would otherwise cost more context than the answer is worth. Without `--run`, `--group` or `--all` it keeps every non-terminal run plus a tail of recent ones, capped at 20 rows, and reports `total_runs` with `runs_truncated` saying how many it withheld; `threads` groups runs that share one. **`--group` never truncates** — you named the members yourself, and a group you started is bounded by definition. Its summary reports `running`, `done`, `failed` and a `group_state` of `running`, `completed` or `partial`.
 
 ## The loop
 

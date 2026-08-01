@@ -3,3 +3,4 @@
 .codex-runs/
 __pycache__/
 *.py[cod]
+.wt/

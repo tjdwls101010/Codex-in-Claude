@@ -15,7 +15,6 @@ This is the full documentation for **Codex in Claude**, a Claude Code plugin tha
 | [CLI Reference](CLI-Reference.md) | Every subcommand and flag: `start`, `resume`, `review`, `status`, `log`, `show`, `stop`, `result`, `doctor` |
 | [Sandbox Stability](Sandbox-Stability.md) | The measured sandbox-drift defect this plugin exists to fix, and exactly how the fix works |
 | [Context Discipline & Event Log Levels](Context-Discipline.md) | The four-level output filter, the measurements behind the default, and its one known limitation |
-| [Session Cleanup Hook](Session-Cleanup-Hook.md) | What happens to background runs when a Claude session ends, and the `--detach` exemption |
 | [Testing](Testing.md) | The four test tiers (unit, integration, filter calibration, headless e2e) and how to run each one |
 | [Troubleshooting](Troubleshooting.md) | Symptom → cause → fix, what's not actually broken, and what's deliberately out of scope |
 

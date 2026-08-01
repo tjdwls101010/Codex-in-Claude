@@ -21,8 +21,7 @@ Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a
 | `usage` is `null` on a review run | Review runs genuinely report zero usage | Not a bug and not free — the tokens were spent, Codex just does not report them |
 | `status` shows `orphaned` | The supervisor was killed without recording an outcome — often a machine sleep or a hard kill | The thread survives; `resume` it. `events.jsonl` up to that point is intact |
 | `status` shows `stalled` | No events for a while. Advisory only | Check `in_progress_item`: with one, it is inside a long command; without one, investigate |
-| A run vanished when the session ended | Session-end cleanup, which is the intended default | `resume` it — a SIGINT-stopped thread is resumable. Use `--detach` next time if it should outlive the session |
-| A background run is still going and nothing knows about it | A `--detach`ed run outliving its session | `status --all` finds it; `stop --run <id>`. `doctor` lists them under `detached_running` |
+| A background run is still going from an earlier session and nothing knows about it | Nothing stops a run on its own — the skill holds capability, not cleanup policy | `status --all` finds it; `stop --run <id>` when you are done with it |
 | `stop` reports `no process group recorded` | The run never got far enough to spawn, or its meta predates the pgid | Check `state` and `stderr.log`; nothing is running to stop |
 | `resume --last` says no thread found | Empty registry and no Codex thread recorded for this cwd | Pass a thread id explicitly. `status --include-external` lists threads Codex knows about for this directory |
 | `--include-external` returns nothing, `doctor` says `thread_db_readable: false` | A Codex upgrade changed the version-stamped sqlite schema | Degraded, not broken: only `--include-external` and a registry-less `--last` use it. Resume by explicit thread id |

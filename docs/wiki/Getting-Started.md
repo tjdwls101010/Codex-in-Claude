@@ -84,7 +84,7 @@ python3 "<base directory>/scripts/codex_bridge.py" start --label first-task "Exp
 This returns immediately with JSON like:
 
 ```json
-{"run_id": "20260726-120000-first-task-a1b2", "thread_id": "019f...", "state": "starting", "events": "…/.codex-runs/20260726-120000-first-task-a1b2/events.jsonl", "project": "…", "sandbox": "workspace-write", "isolated": true, "detached": false}
+{"run_id": "20260726-120000-first-task-a1b2", "thread_id": "019f...", "state": "starting", "events": "…/.codex-runs/20260726-120000-first-task-a1b2/events.jsonl", "project": "…", "sandbox": "workspace-write", "isolated": true}
 ```
 
 Note the `run_id` — every subsequent command needs it.

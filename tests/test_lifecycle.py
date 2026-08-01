@@ -53,24 +53,41 @@ class StopIsolation(BridgeTestCase):
 
     def test_stop_requires_an_explicit_target(self):
         out = self.bridge("stop", expect_rc=1)
-        self.assertIn("--all-mine", out["error"])
+        self.assertIn("--run", out["error"])
+        self.assertIn("--group", out["error"])
+        self.assertIn("--all", out["error"])
 
-    def test_all_mine_only_touches_this_session(self):
+    def test_stop_run_is_repeatable(self):
+        a, arow = self._long_run("a")
+        b, brow = self._long_run("b")
+        out = self.bridge("stop", "--run", a["run_id"], "--run", b["run_id"])
+        stopped = {s["run_id"] for s in out["stopped"]}
+        self.assertEqual(stopped, {a["run_id"], b["run_id"]})
+
+    def test_stop_all_touches_every_non_terminal_run_in_the_project(self):
         mine, _ = self._long_run("mine")
-        # A run recorded as belonging to a different Claude session.
+        # A run recorded under a different Claude session — claude_session_id
+        # is no longer a selector (audit F5: unreliable from a subagent), so
+        # --all must still stop it.
         other, orow = self._long_run("other")
         meta_path = self.project / ".codex-runs" / other["run_id"] / "meta.json"
         meta = json.loads(meta_path.read_text())
         meta["claude_session_id"] = "some-other-session"
         meta_path.write_text(json.dumps(meta))
 
-        out = self.bridge("stop", "--all-mine")
+        out = self.bridge("stop", "--all")
         stopped = {s["run_id"] for s in out["stopped"]}
         self.assertIn(mine["run_id"], stopped)
-        self.assertNotIn(other["run_id"], stopped,
-                         "--all-mine must mean this session's runs, not everyone's")
-        self.assertTrue(codex_bridge.pid_alive(orow["codex_pid"]))
-        self.bridge("stop", "--run", other["run_id"])
+        self.assertIn(other["run_id"], stopped,
+                       "--all is every non-terminal run in this project, "
+                       "not scoped by claude_session_id")
+
+    def test_stop_group_not_yet_implemented(self):
+        # --group resolves a recorded group id from meta, not a name/label
+        # match (B8 forbids that) -- but nothing records a group id until
+        # batch start exists, so this must fail loudly rather than no-op.
+        out = self.bridge("stop", "--group", "somegroup", expect_rc=1)
+        self.assertIn("somegroup", out["error"])
 
     def test_stopping_an_already_finished_run_is_harmless(self):
         r = self.start("quick")
@@ -78,13 +95,6 @@ class StopIsolation(BridgeTestCase):
         out = self.bridge("stop", "--run", r["run_id"])
         self.assertEqual(out["stopped"][0]["state"], "completed",
                          "a finished run must not be re-marked as interrupted")
-
-    def test_detached_runs_are_flagged(self):
-        r = self.start("bg", "--detach", env_extra={"FAKE_CODEX_HANG": "60"})
-        self.assertTrue(r["detached"])
-        row = self.bridge("status", "--run", r["run_id"])["runs"][0]
-        self.assertTrue(row["detached"])
-        self.bridge("stop", "--run", r["run_id"])
 
 
 class Results(BridgeTestCase):

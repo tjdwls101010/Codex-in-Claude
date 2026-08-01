@@ -20,7 +20,7 @@ Whether a run loads the user's own `$CODEX_HOME/config.toml` — their plugins, 
 
 ## 5. The Run Registry
 
-The durable record this plugin keeps of every run it starts, at `<project>/.codex-runs/<run_id>/`. This is the mechanism that makes sandbox stability possible at all: since Codex itself doesn't remember a thread's settings across turns, the registry does, storing `meta.json` (settings and lifecycle state), `events.jsonl` (Codex's raw event stream), `stderr.log`, and `last-message.txt`. See [Architecture](Architecture.md) for how it's used and [Session Cleanup Hook](Session-Cleanup-Hook.md) for how it's cleaned up.
+The durable record this plugin keeps of every run it starts, at `<project>/.codex-runs/<run_id>/`. This is the mechanism that makes sandbox stability possible at all: since Codex itself doesn't remember a thread's settings across turns, the registry does, storing `meta.json` (settings and lifecycle state), `events.jsonl` (Codex's raw event stream), `stderr.log`, and `last-message.txt`. See [Architecture](Architecture.md) for how it's used. Nothing cleans it up automatically — `stop` is explicit, and the skill never kills a run on the user's behalf.
 
 ## 6. Event / Item
 

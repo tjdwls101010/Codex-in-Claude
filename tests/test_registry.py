@@ -37,7 +37,7 @@ class RegistryLayout(BridgeTestCase):
             self.assertTrue((d / name).is_file(), f"missing {name}")
         meta = json.loads((d / "meta.json").read_text())
         for key in ("run_id", "thread_id", "cwd", "project", "sandbox", "isolated",
-                    "argv", "claude_session_id", "detached", "started_at", "state"):
+                    "argv", "claude_session_id", "started_at", "state"):
             self.assertIn(key, meta)
         self.assertEqual(meta["claude_session_id"], "test-session-aaaa")
 

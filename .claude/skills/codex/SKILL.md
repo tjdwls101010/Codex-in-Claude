@@ -39,11 +39,11 @@ Every subcommand prints **one line of JSON**, except `log`, which prints text pl
 | `status [--run <id>] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
 | `log --run <id> [--since <n>] [--level …] [--follow]` | Filtered events, incrementally |
 | `show --run <id> --item <item_id> [--max-bytes N]` | One item's full output |
-| `stop --run <id> \| --all-mine` | Interrupt by process group |
+| `stop --run <id>… \| --group <name> \| --all` | Interrupt by process group |
 | `result --run <id>` | Final message, usage, parsed JSON when `--schema` was used |
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, resolved paths, runs dir |
 
-Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--foreground [--timeout <sec>]`, `--detach`, `--no-preamble`, `--config k=v`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
+Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--foreground [--timeout <sec>]`, `--no-preamble`, `--config k=v`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
 
 ## The loop
 
@@ -107,8 +107,6 @@ $CODEX log --run <id> --follow --level compact
 `--follow` emits a terminal line (`run.completed` / `run.failed` / `run.interrupted` with the exit code) before exiting, so a crashed run never looks like a quiet one.
 
 **Silence is not failure.** A run producing no events for minutes may be inside one long `command_execution` — legitimately silent. `status` gives you `idle_seconds` *and* `in_progress_item`; silence with an in-progress item is work, silence with none is a problem worth investigating. The `stalled` state is advisory and nothing is ever auto-killed.
-
-Background runs are stopped when the Claude session ends, including on `/clear` and `/resume`, unless started with `--detach`. An unwatched run keeps writing to the repo and burning tokens, and a stopped one is resumable — so the default favours stopping. `--detach` is for when outliving the session is the point, and a detached run can outlive every session that knows about it; `status --all` and `doctor` will still find it.
 
 ## Structured output
 

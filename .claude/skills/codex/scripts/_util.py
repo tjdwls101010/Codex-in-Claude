@@ -116,6 +116,19 @@ def codex_home() -> Path:
     return Path(v).expanduser() if v else Path.home() / ".codex"
 
 
+def is_within(path, parent) -> bool:
+    """Whether `path` is `parent` or lives inside it. NFC-normalised on both
+    sides, because macOS stores non-ASCII filenames as NFD while argv and JSON
+    carry NFC — a Korean path never equals itself across that boundary."""
+    if not path:
+        return False
+    try:
+        p, q = Path(nfc(str(path))), Path(nfc(str(parent)))
+        return p == q or q in p.parents
+    except Exception:
+        return False
+
+
 def git_toplevel(path: Path):
     try:
         r = subprocess.run(

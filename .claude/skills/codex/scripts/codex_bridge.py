@@ -59,8 +59,8 @@ from _registry import (  # noqa: E402
     reap, resolve_project, resolve_runs_dir, update_meta, update_meta_if, write_meta,
 )
 from _util import (  # noqa: E402
-    BridgeError, clip, codex_home, emit, fail, failures_raise, git_toplevel, nfc,
-    now_iso, pid_alive,
+    BridgeError, clip, codex_home, emit, fail, failures_raise, git_toplevel,
+    is_within, nfc, now_iso, pid_alive,
 )
 
 # `show --item` default cap. A silently truncated blob is worse than a loud one,
@@ -154,6 +154,16 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     prompt = read_prompt(args)
     if kind != "review" and not prompt.strip():
         fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
+
+    if kind == "resume" and not thread_ref:
+        # `build_argv` omits the ref when there is none, producing a bare
+        # `codex exec resume` that fails asynchronously — after this command
+        # has already reported a run started. A run whose Codex process died
+        # before emitting `thread.started` has a run id and a terminal state
+        # but no conversation, and that is the usual way to get here.
+        fail("nothing to resume: that run never recorded a thread id, so there "
+             "is no conversation to continue",
+             run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
     isolated = base["isolated"] if base else True
     if getattr(args, "inherit_config", False):
@@ -363,7 +373,10 @@ def load_tasks(args):
             if item["kind"] not in ("start", "resume", "review"):
                 fail(f"tasks file line {n}: kind must be start, resume or review",
                      got=item["kind"])
-            if item["kind"] == "resume" and not item.get("resume"):
+            if (item["kind"] == "resume" and not item.get("resume")
+                    and not getattr(args, "resume_from", None)):
+                # --resume-from supplies the target positionally, so under it
+                # an unnamed resume is the normal form rather than an omission.
                 fail(f"tasks file line {n}: kind 'resume' needs a 'resume' field "
                      f"naming a run id or thread id")
             tasks.append(item)
@@ -510,10 +523,24 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     if manifest is None:
         fail(f"no such group to resume from: {previous}",
              known_groups=list_groups(runs_dir)[:20])
-    prior = [m for m in manifest.get("members") or [] if m.get("run_id")]
-    if not prior:
+    started = [m for m in manifest.get("members") or [] if m.get("run_id")]
+    if not started:
         fail(f"group {previous!r} has no members that started, so there is "
              f"nothing to resume")
+    # A run id is not a thread. A member whose Codex process died before
+    # emitting `thread.started` — an early crash, a failed login — has a run
+    # directory and a terminal state but no thread, and `codex exec resume`
+    # with nothing to resume is not an error Codex reports back here: it
+    # produces a ref-less argv that fails asynchronously, long after this
+    # command has already told the caller it spawned fine.
+    threadless = [m["run_id"] for m in started
+                  if not (find_run(runs_dir, m["run_id"])[1] or {}).get("thread_id")]
+    if threadless:
+        fail(f"{len(threadless)} member(s) of {previous!r} never recorded a "
+             f"thread id, so there is no conversation to continue for them — "
+             f"they failed before Codex started one",
+             members=threadless)
+    prior = started
     if len(tasks) != len(prior):
         # Loud, because the failure mode of pairing a short list is a phase-2
         # task silently landing on the wrong phase-1 thread — every member
@@ -536,8 +563,25 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
              f"mid-turn would run two turns on it at once", running=live)
 
     paired = []
-    for task, prev in zip(tasks, prior):
-        if task.get("resume"):
+    for slot, (task, prev) in enumerate(zip(tasks, prior)):
+        kind, named = task["kind"], task.get("resume")
+        if kind == "review":
+            # Rewriting it would turn a read-only review into a full agentic
+            # turn on someone else's thread, which is a larger authority than
+            # the caller asked for and is invisible in the output.
+            fail(f"task {slot} is a review, but every task in a --resume-from "
+                 f"batch continues one member of {previous!r}; a review cannot "
+                 f"be that continuation")
+        if kind != "resume" and named:
+            # Neither reading is safe to pick silently: honouring `resume`
+            # leaves this member's phase-1 counterpart unresumed while the
+            # output still claims it was paired, and ignoring it discards a
+            # target the caller wrote down.
+            fail(f"task {slot} names a thread to resume but its kind is "
+                 f"{kind!r}; under --resume-from, set kind to 'resume' to keep "
+                 f"that target or drop the 'resume' field to be paired with "
+                 f"{prev['run_id']}")
+        if named:
             paired.append(task)
             continue
         paired.append({**task, "kind": "resume", "resume": prev["run_id"]})
@@ -747,6 +791,25 @@ def cmd_batch_clean(args):
         #    Not implemented here: `git worktree remove` refuses a dirty tree by
         #    itself (measured, V-13), and git's definition of dirty is the
         #    correct one. Its refusal is reported as the reason.
+        # Who is actually living here, asked of the registry rather than of the
+        # group graph. The `derived_from` check above is a better error message
+        # when the chain is intact, but it is only one hop and it evaporates the
+        # moment an intermediate manifest is cleaned: p1 -> p2 -> p3, clean p2,
+        # and p1 looks unreferenced while p3 is still running in p1's worktree.
+        # A run's own recorded cwd cannot go stale that way.
+        occupants = [m for _rd, m in iter_runs(runs_dir)
+                     if m.get("state") not in TERMINAL_STATES
+                     and m.get("run_id") != rid
+                     and is_within(m.get("cwd"), path)]
+        if occupants and not args.force:
+            kept.append({"run_id": rid, "path": str(path),
+                         "reason": "another run is still working in this "
+                                   "worktree",
+                         "occupied_by": [m["run_id"] for m in occupants]})
+            continue
+        if occupants:
+            overrode.setdefault("removed_under_live_runs", []).extend(
+                m["run_id"] for m in occupants)
         dirty = worktree_dirty(path)
         ok, err = worktree_remove(project, path, force=args.force)
         if ok and dirty and args.force:
@@ -821,6 +884,15 @@ def cmd_resume(args):
         if not args.ref:
             fail("resume needs a run id, thread id, thread name, or --last")
         _, base = find_run(runs_dir, args.ref)
+        if base and not base.get("thread_id"):
+            # The pass-through below exists for refs this registry has never
+            # seen. This one it has, and it has no thread: the run's Codex
+            # process died before emitting `thread.started`. Handing the run id
+            # to Codex as if it were a thread name only moves the failure
+            # somewhere the caller cannot read it.
+            fail("nothing to resume: that run never recorded a thread id, so "
+                 "there is no conversation to continue",
+                 run_id=base.get("run_id"), state=base.get("state"))
         # An unknown ref is not an error: `codex exec resume` also accepts a
         # thread name, so pass it through.
         thread_ref = (base or {}).get("thread_id") or args.ref

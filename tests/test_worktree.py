@@ -340,6 +340,48 @@ class Clean(WorktreeTestCase):
         res = self.bridge("batch", "clean", "--group", "p1", "--force")
         self.assertNotIn("forced_past", res)
 
+    def test_a_run_still_living_in_a_worktree_stops_the_clean(self):
+        """Asked of the registry, not of the group graph. `derived_from` is one
+        hop and evaporates when an intermediate manifest is cleaned: p1 -> p2 ->
+        p3, clean p2, and p1 looks unreferenced while p3 is still running in
+        p1's worktree. A run's own recorded cwd cannot go stale that way."""
+        one = self.finished_group()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "a", "--task", "b")
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+        three = self.bridge("batch", "start", "--group", "p3", "--resume-from", "p2",
+                            "--task", "a", "--task", "b",
+                            env_extra={"FAKE_CODEX_HANG": "60"})
+        self.wait_for_state(three["runs"][0]["run_id"], ("running",), timeout=30)
+
+        # Break the chain exactly the way the reviewer did.
+        self.bridge("batch", "clean", "--group", "p2", "--force")
+        self.assertEqual(derived_of(self.project, "p1"), [],
+                         "the group graph now says p1 is unreferenced")
+
+        res = self.bridge("batch", "clean", "--group", "p1")
+        self.assertEqual(res["removed"], [])
+        self.assertFalse(res["name_released"])
+        occupants = {r for k in res["kept"] for r in k["occupied_by"]}
+        self.assertTrue(occupants & {r["run_id"] for r in three["runs"]},
+                        "the live phase-3 members must be named as occupants")
+        for r in one["runs"]:
+            self.assertTrue(Path(r["worktree"]).exists())
+        self.bridge("stop", "--group", "p3")
+
+    def test_forcing_past_a_live_occupant_says_so(self):
+        one = self.finished_group()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "a", "--task", "b",
+                          env_extra={"FAKE_CODEX_HANG": "60"})
+        self.wait_for_state(two["runs"][0]["run_id"], ("running",), timeout=30)
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertIn(two["runs"][0]["run_id"],
+                      res["forced_past"]["removed_under_live_runs"])
+        self.bridge("stop", "--group", "p2")
+        del one
+
     def test_an_unknown_group_says_so(self):
         res = self.bridge("batch", "clean", "--group", "nope", expect_rc=1)
         self.assertIn("no such group", res["error"])
@@ -453,6 +495,75 @@ class ResumeFrom(WorktreeTestCase):
         for r in two["runs"]:
             self.wait_for_state(r["run_id"])
 
+    def test_a_stray_resume_field_on_a_start_task_is_refused(self):
+        """Neither reading is safe to pick silently: honouring it leaves the
+        paired member unresumed while the output still claims it was paired,
+        and ignoring it discards a target the caller wrote down."""
+        self.phase_one()
+        tf = self.tasks_file({"prompt": "a", "kind": "start", "resume": "stale-id"},
+                             {"prompt": "b"})
+        out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--tasks-file", tf, expect_rc=1)
+        self.assertIn("names a thread to resume but its kind is 'start'",
+                      out["error"])
+
+    def test_a_review_task_cannot_be_a_continuation(self):
+        """Rewriting it would turn a read-only review into a full agentic turn
+        on someone else's thread — a larger authority than was asked for, and
+        invisible in the output."""
+        self.phase_one()
+        tf = self.tasks_file({"prompt": "look", "kind": "review",
+                              "review": {"uncommitted": True}},
+                             {"prompt": "b"})
+        out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--tasks-file", tf, expect_rc=1)
+        self.assertIn("a review cannot be that continuation", out["error"])
+
+    def test_an_unnamed_resume_task_is_paired_rather_than_rejected(self):
+        """--resume-from supplies the target positionally, so under it an
+        unnamed `kind: resume` is the normal form, not an omission."""
+        one = self.phase_one()
+        tf = self.tasks_file({"prompt": "a", "kind": "resume"},
+                             {"prompt": "b", "kind": "resume"})
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--tasks-file", tf)
+        for prev, now in zip(one["runs"], two["runs"]):
+            meta = json.loads((self.project / ".codex-runs" / now["run_id"]
+                               / "meta.json").read_text())
+            self.assertEqual(meta["parent_run_id"], prev["run_id"])
+            self.wait_for_state(now["run_id"])
+
+    def test_a_member_that_never_got_a_thread_cannot_be_resumed(self):
+        """A run id is not a thread. A member whose Codex died before emitting
+        `thread.started` has a directory and a terminal state but nothing to
+        continue, and a ref-less `codex exec resume` fails asynchronously —
+        after this command has already said it started fine."""
+        grp = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b",
+                          env_extra={"FAKE_CODEX_EXIT": "1",
+                                     "FAKE_CODEX_FIXTURE": str(self.empty_stream())})
+        for r in grp["runs"]:
+            self.wait_for_state(r["run_id"])
+            meta = json.loads((self.project / ".codex-runs" / r["run_id"]
+                               / "meta.json").read_text())
+            self.assertIsNone(meta["thread_id"])
+        out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "x", "--task", "y", expect_rc=1)
+        self.assertIn("never recorded a thread id", out["error"])
+        self.assertEqual(len(out["members"]), 2)
+
+    def test_resuming_a_threadless_run_directly_is_refused_too(self):
+        run = self.bridge("start", "a", env_extra={
+            "FAKE_CODEX_EXIT": "1", "FAKE_CODEX_FIXTURE": str(self.empty_stream())})
+        self.wait_for_state(run["run_id"])
+        out = self.bridge("resume", run["run_id"], "more", expect_rc=1)
+        self.assertIn("nothing to resume", out["error"])
+
+    def empty_stream(self):
+        f = self.tmp / "empty.jsonl"
+        f.write_text("")
+        return f
+
     def test_an_unknown_previous_group_says_so(self):
         out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "nope",
                           "--task", "a", expect_rc=1)
@@ -462,6 +573,12 @@ class ResumeFrom(WorktreeTestCase):
 def read_group_file(project, name):
     p = project / ".codex-runs" / ".groups" / f"{name}.json"
     return json.loads(p.read_text()) if p.exists() else None
+
+
+def derived_of(project, name):
+    d = project / ".codex-runs" / ".groups"
+    return [p.stem for p in sorted(d.glob("*.json"))
+            if json.loads(p.read_text()).get("derived_from") == name]
 
 
 class DoctorReportsTheCost(WorktreeTestCase):

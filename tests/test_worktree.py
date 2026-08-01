@@ -365,6 +365,105 @@ class Clean(WorktreeTestCase):
         self.assertEqual(len(res["removed"]), 2)
 
 
+class ResumeFrom(WorktreeTestCase):
+    """M4c. Phase 2 continues phase 1 member for member, keeping each thread
+    and the worktree that thread already lives in."""
+
+    def phase_one(self, n=2):
+        out = self.start_group(n=n)
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        return out
+
+    def test_each_task_resumes_the_member_in_the_same_position(self):
+        one = self.phase_one()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "keep going a", "--task", "keep going b")
+        self.assertEqual(two["resumed_from"]["group"], "p1")
+        self.assertEqual(two["resumed_from"]["members"],
+                         [r["run_id"] for r in one["runs"]])
+        for prev, now in zip(one["runs"], two["runs"]):
+            meta = json.loads((self.project / ".codex-runs" / now["run_id"]
+                               / "meta.json").read_text())
+            self.assertEqual(meta["kind"], "resume")
+            self.assertEqual(meta["parent_run_id"], prev["run_id"])
+            self.wait_for_state(now["run_id"])
+
+    def test_phase_two_inherits_the_worktree_rather_than_getting_a_new_one(self):
+        one = self.phase_one()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "a", "--task", "b")
+        for prev, now in zip(one["runs"], two["runs"]):
+            self.assertEqual(now["cwd"], prev["worktree"],
+                             "the thread continues where it already lives")
+            self.assertIsNone(now.get("worktree"))
+            self.wait_for_state(now["run_id"])
+        self.assertEqual(self.bridge("doctor")["worktrees"], 2,
+                         "resuming must not cut a second checkout per member")
+
+    def test_a_count_mismatch_fails_before_anything_starts(self):
+        """Pairing a short list lands a phase-2 task on the wrong phase-1
+        thread, and every member after the mismatch continues work it was not
+        written for."""
+        self.phase_one()
+        out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "only one", expect_rc=1)
+        self.assertIn("one task to one member", out["error"])
+        self.assertIn("2 started member", out["error"])
+        self.assertIsNone(read_group_file(self.project, "p2"),
+                          "a rejected pairing must not claim the new name")
+
+    def test_a_live_phase_one_member_stops_the_whole_pairing(self):
+        grp = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b",
+                          env_extra={"FAKE_CODEX_HANG": "60"})
+        self.wait_for_state(grp["runs"][0]["run_id"], ("running",), timeout=30)
+        out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "a", "--task", "b", expect_rc=1)
+        self.assertIn("still has members running", out["error"])
+        self.assertTrue(out["running"])
+        self.bridge("stop", "--group", "p1")
+
+    def test_the_new_group_records_where_it_came_from(self):
+        self.phase_one()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--task", "a", "--task", "b")
+        self.assertEqual(read_group_file(self.project, "p2")["derived_from"], "p1")
+        # Which is exactly what makes phase 1 un-cleanable while phase 2 lives.
+        res = self.bridge("batch", "clean", "--group", "p1", expect_rc=1)
+        self.assertEqual(res["derived_groups"], ["p2"])
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_a_task_that_names_its_own_thread_keeps_it(self):
+        """Explicit beats inferred, the same rule that governs a per-item cwd."""
+        one = self.phase_one()
+        outsider = self.start("a thread that was never in the group")
+        self.wait_for_state(outsider["run_id"])
+        tf = self.tasks_file(
+            {"prompt": "a", "kind": "resume", "resume": outsider["run_id"]},
+            {"prompt": "b"})
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                          "--tasks-file", tf)
+        parents = [json.loads((self.project / ".codex-runs" / r["run_id"]
+                               / "meta.json").read_text())["parent_run_id"]
+                   for r in two["runs"]]
+        self.assertEqual(parents, [outsider["run_id"], one["runs"][1]["run_id"]],
+                         "slot 0 keeps what it named; slot 1 still pairs")
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_an_unknown_previous_group_says_so(self):
+        out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "nope",
+                          "--task", "a", expect_rc=1)
+        self.assertIn("no such group to resume from", out["error"])
+
+
+def read_group_file(project, name):
+    p = project / ".codex-runs" / ".groups" / f"{name}.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
 class DoctorReportsTheCost(WorktreeTestCase):
 
     def test_doctor_counts_residual_worktrees_and_says_what_removes_them(self):

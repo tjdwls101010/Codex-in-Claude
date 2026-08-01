@@ -494,6 +494,56 @@ def plan_worktrees(tasks, args, project):
     return eligible, base, None
 
 
+def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
+    """Turn each task into a resume of the corresponding member of `previous`.
+
+    The pairing is positional against the manifest's member list, and that is
+    the whole reason the manifest records start order (D36). The alternative —
+    ordering by run id or timestamp — is a coin flip precisely here: a batch
+    starts its members within the same second and usually under the same label,
+    which audit F15 recorded as the normal case rather than the unlucky one.
+
+    A task that already names what it resumes keeps it. Explicit beats inferred,
+    the same rule that governs a per-item `cwd`.
+    """
+    manifest = read_group(runs_dir, previous)
+    if manifest is None:
+        fail(f"no such group to resume from: {previous}",
+             known_groups=list_groups(runs_dir)[:20])
+    prior = [m for m in manifest.get("members") or [] if m.get("run_id")]
+    if not prior:
+        fail(f"group {previous!r} has no members that started, so there is "
+             f"nothing to resume")
+    if len(tasks) != len(prior):
+        # Loud, because the failure mode of pairing a short list is a phase-2
+        # task silently landing on the wrong phase-1 thread — every member
+        # after the mismatch continues work it was not written for.
+        fail(f"--resume-from pairs one task to one member in order, but "
+             f"{previous!r} has {len(prior)} started member(s) and this batch "
+             f"has {len(tasks)} task(s)",
+             previous_members=[m["run_id"] for m in prior])
+    # Checked for the whole group before a single member starts, rather than
+    # left to `refuse_concurrent_turn` per member. Per member it would still
+    # refuse — but only after the earlier tasks had already resumed, leaving a
+    # phase 2 that is half started against a phase 1 that is half finished.
+    live = []
+    for m in prior:
+        rd, meta = find_run(runs_dir, m["run_id"])
+        if meta and reap(rd, meta).get("state") not in TERMINAL_STATES:
+            live.append({"run_id": m["run_id"], "state": meta.get("state")})
+    if live and not force:
+        fail(f"group {previous!r} still has members running; resuming a thread "
+             f"mid-turn would run two turns on it at once", running=live)
+
+    paired = []
+    for task, prev in zip(tasks, prior):
+        if task.get("resume"):
+            paired.append(task)
+            continue
+        paired.append({**task, "kind": "resume", "resume": prev["run_id"]})
+    return paired, [m["run_id"] for m in prior]
+
+
 def cmd_batch_start(args):
     if not valid_name(args.group):
         fail("group name must be alphanumeric with . _ - and no path separators",
@@ -502,12 +552,17 @@ def cmd_batch_start(args):
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args)
 
+    previous = getattr(args, "resume_from", None)
+    if previous:
+        tasks, paired_with = pair_with_previous(
+            tasks, runs_dir, previous, force=getattr(args, "force", False))
+
     # Claim the name before spawning anything. D36: a reused group name would
     # make "the members of p1" ambiguous, and --resume-from pairs positionally
     # against exactly that list. Failing here costs nothing — no Codex process
     # has started yet.
     try:
-        claim_group(runs_dir, args.group)
+        claim_group(runs_dir, args.group, derived_from=previous)
     except FileExistsError:
         existing = read_group(runs_dir, args.group) or {}
         fail(f"group {args.group!r} already exists in this project; group names "
@@ -565,6 +620,11 @@ def cmd_batch_start(args):
            "spawned": len(spawned), "requested": len(tasks),
            "projected_cost": projected_cost(runs_dir, len(spawned)),
            "manifest": str(group_path(runs_dir, args.group))}
+    if previous:
+        # Phase 2 works in phase 1's worktrees — it inherits each thread's cwd
+        # rather than being given a new one. That is also why `batch clean` now
+        # refuses to clean phase 1: the manifest records this link.
+        out["resumed_from"] = {"group": previous, "members": paired_with}
     if isolated:
         # D17: a dirty caller tree is stated, never refused. The number is what
         # tells the caller their uncommitted work is not in what these runs see
@@ -1614,6 +1674,10 @@ def build_parser():
                         "caller's tree")
     b.add_argument("--base",
                    help="commit or ref the worktrees are cut from (default HEAD)")
+    b.add_argument("--resume-from", metavar="GROUP",
+                   help="continue an earlier group: task i resumes member i of "
+                        "that group, in its start order, keeping its thread and "
+                        "its working directory. One task per started member.")
     b.set_defaults(func=cmd_batch_start)
 
     b = bsub.add_parser("clean", help="remove a finished group's worktrees")

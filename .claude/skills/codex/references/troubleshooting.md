@@ -6,8 +6,8 @@ Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `python3: can't open file '/scripts/codex_bridge.py'` | `${CLAUDE_SKILL_DIR}` does not exist in the Bash environment and expanded to nothing | Use the resolution snippet in SKILL.md. `doctor`'s `bridge_path` shows what actually resolved |
-| `no such file or directory` on the bridge, plugin install | `CLAUDE_PLUGIN_ROOT` not set in this context | The snippet's fallback covers the symlink install; check `doctor`'s `plugin_root_env` to see which branch you are on |
+| `python3: can't open file '/scripts/codex_bridge.py'` | A path was built from `${CLAUDE_SKILL_DIR}` or `${CLAUDE_PLUGIN_ROOT}`, which are empty in the Bash environment and expanded to nothing | Never build the path from a variable. Use the literal directory from the `Base directory for this skill:` line in your context, double-quoted |
+| `no such file or directory` on the bridge | The base directory is wrong. `doctor` cannot diagnose this — it is the same script | `ls "<base directory>/scripts/"` to confirm where the file is. Once any call runs, `doctor`'s `bridge_path` and `plugin_root_env` describe the install |
 | Every bridge call raises a permission prompt | The `allowed-tools` pattern is not matching — commonly a symlink install, where `CLAUDE_PLUGIN_ROOT` is empty | Add the `settings.json` equivalent from the README |
 | `codex` is not on PATH | Codex not installed, or installed for a different shell | Install it; `doctor` reports `codex_path` and `codex_version` |
 | `codex login status` exits non-zero | Not authenticated | `codex login`. Nothing else is worth debugging until this is clean — an unauthenticated run fails in ways that look like other problems |
@@ -16,7 +16,7 @@ Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a
 | A resumed turn did something the sandbox should have prevented | A bare `codex exec resume` typed by hand, not through the bridge | `resume` has no `-s` flag and falls back to `config.toml`. Use the bridge, which re-asserts `-c sandbox_mode=` every time. See `environment.md` |
 | A resumed turn refuses something the first turn could do | Same mechanism, opposite direction — the sandbox drifted *down* | The bridge prevents this too. If you changed it deliberately, `status` shows `sandbox_changed_from` |
 | Codex behaves oddly in a way the prompt does not explain | The project's `AGENTS.md` is injected into every run, even under isolation | Read it. `doctor` reports `project_agents_md` |
-| Huge input token counts on a simple task | `--inherit-config`, loading the user's plugins, MCP servers and agent roles | Drop it — measured 46,238 vs 15,863 input tokens for the same trivial prompt |
+| Huge input token counts on a simple task | `--inherit-config`, loading the user's plugins, MCP servers and agent roles | Drop it. The size of the delta is whatever the user's config happens to load and is not a stable number — measure your own rather than quoting one (see `environment.md`) |
 | Many `error` events about duplicate agent roles | Inherited config with a malformed user config | Informational, not fatal. Isolation removes them |
 | `usage` is `null` on a review run | Review runs genuinely report zero usage | Not a bug and not free — the tokens were spent, Codex just does not report them |
 | `status` shows `orphaned` | The supervisor was killed without recording an outcome — often a machine sleep or a hard kill | The thread survives; `resume` it. `events.jsonl` up to that point is intact |
@@ -30,6 +30,14 @@ Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a
 | stderr contains `Reading additional input from stdin...` | Codex writes this on every non-TTY run | Normal output, not failure. `status` filters this line and shows the rest |
 | A run in a Korean or spaced path behaves strangely | APFS returns NFD while argv carries NFC | The bridge normalises at every boundary. If you see it elsewhere, that is a bug worth reporting |
 | Two runs seem to interfere | They should not — each has its own process group and its own event log | Never kill by process name; `pgrep -f "codex exec"` matches everyone's runs |
+| Two runs overwrote each other's file edits | Process groups isolate signals, not files. Same directory, same files | Start them with `batch start`, which gives two or more writing members a worktree each. `result --group`'s `overlaps` reports which paths more than one wrote |
+| A group finished `partial` | Some member did not reach a terminal state successfully — including because you stopped it | `status --group <name>` names which; `result --group` carries each one's `turn_failed`. `partial` after `stop --group` is expected, not a Codex failure |
+| `batch clean` refuses | A live member, another run still working inside a worktree, a group derived from this one, or uncommitted changes git will not discard | Collect first. `--force` lifts **all four** at once and the result says what it overrode; none of it is recoverable |
+| A worktree member is looking at code you do not recognise | It was cut from `--base`, not from your working tree, and a fresh worktree has none of your uncommitted changes | Intended. `batch start` reports the base sha, and warns when `AGENTS.md` exists in your tree but not at that base |
+| `review --uncommitted` inside a batch found nothing | A freshly cut worktree has zero uncommitted changes | This is why review members never get a worktree. If you forced one with `--worktree`, do not |
+| `--resume-from` fails on a count mismatch | It pairs one task to one started member, in order | Deliberate: a short list would land a phase-2 task on the wrong phase-1 thread. The error names both counts and lists the members |
+| `--resume-from` says a member never recorded a thread id | That member's Codex died before opening a thread — usually an early crash or an auth failure | There is nothing to continue. Check that run's `stderr.log`, and start a fresh task for that slot |
+| `batch start` says the group already exists | Group names are single-use per project | Pick another name, or `batch clean --group <name>` if you are done with it — that releases the name |
 
 ## Things that are not broken
 

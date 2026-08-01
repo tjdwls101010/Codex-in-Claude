@@ -1,0 +1,94 @@
+# Running several Codex runs as one group
+
+This file is mechanics and traps. It does not say which work to parallelise, how many ways to split it, or what shape the phases should take — you decide that per task, with more context about the task than this file could ever have. What it can tell you is what the commands actually do, what they cost, and which of their behaviours will surprise you.
+
+## The group
+
+A group is a set of runs started by one `batch start` and addressable afterwards as one thing:
+
+```bash
+$CODEX batch start --group review-p1 --task "audit the parser" --task "audit the lexer"
+$CODEX status --group review-p1
+$CODEX result --group review-p1
+$CODEX stop   --group review-p1
+$CODEX batch clean --group review-p1
+```
+
+**A group name is single-use within a project.** A second `batch start --group review-p1` fails rather than adding to the group, and it fails before starting anything. The reason is that "the members of review-p1" has to mean one list in one order — `--resume-from` pairs against exactly that list positionally, and a name that accumulated members across two invocations would silently pair the wrong ones. The name is released by `batch clean` once nothing is left behind, and that is also how you reclaim a name from a `batch start` that died partway through.
+
+Membership is recorded in `.codex-runs/.groups/<name>.json` in start order, and each member's own `meta.json` records its group as a fallback. A member that failed to spawn keeps its slot in the manifest with an `error` and no `run_id`, so the caller sees which task is missing rather than a shorter list than they asked for.
+
+**One failing member does not take the batch down.** Whatever the failure — a schema path that does not exist, a bad value in a tasks file, a full disk — it is recorded in that member's slot and the rest still start.
+
+## Tasks
+
+`--task "<prompt>"` is repeatable and always starts a new thread. `--tasks-file <jsonl>` takes one JSON object per line for anything a bare prompt cannot express; both may be given, and `--task` entries come first because that is the order they were typed.
+
+Per-item fields: `prompt`, `kind` (`start`, `resume`, `review`), `label`, `model`, `effort`, `sandbox`, `schema`, `image`, `cwd`, `resume`, `review`. Group-level options are **defaults, not constraints** — a batch is usually the same thing N ways, and the per-item fields are how the exceptions get said:
+
+```jsonl
+{"prompt": "audit the parser", "label": "parser"}
+{"prompt": "audit the lexer",  "label": "lexer", "sandbox": "read-only"}
+{"kind": "review", "review": {"uncommitted": true}}
+```
+
+An unknown field name, or a field with the wrong type, fails the whole command **before anything starts** rather than being ignored. A silently ignored field means a run that quietly used the group default instead, and nothing downstream could notice.
+
+## Phases: `--resume-from`
+
+```bash
+$CODEX batch start --group p2 --resume-from p1 --task "now write the fix" --task "now write the fix"
+```
+
+Task *i* continues member *i* of `p1`, in the manifest's start order, keeping that thread and the directory it already lives in. The rules, all of which are refusals rather than guesses:
+
+- **One task per started member.** A count mismatch fails before anything starts, because pairing a short list lands a phase-2 task on the wrong phase-1 thread and every member after the mismatch continues work it was not written for.
+- **Every member must be resumable.** A phase-1 member whose Codex died before opening a thread has a run id and a terminal state but no conversation; it is refused by name rather than producing a `codex exec resume` with nothing to resume.
+- **No live members.** Two turns on one thread race on the same rollout file. Checked for the whole group up front, so you never get a phase 2 half-started against a phase 1 half-finished.
+- **A task may name its own target** with `kind: resume` and a `resume` field, and keeps it. A `resume` field on a `kind: start` task is a contradiction and is refused; so is a `kind: review` task, which cannot be a continuation.
+
+Phase 2 inherits phase 1's worktrees — it does not get new ones — and the new group records `derived_from`, which is what makes `batch clean --group p1` refuse while phase 2 is still living there.
+
+## Worktrees
+
+**Two or more members that can write get a git worktree each**, at `.codex-runs/<run_id>/wt`, detached at HEAD (or `--base <ref>`). `--worktree` forces it for a lone writer, `--no-worktree` turns it off.
+
+Process groups isolate *signals*, not files. Two runs in one directory edit the same files and neither can tell another agent's change from its own; a worktree is what turns that from corruption into a merge you do later. The traps:
+
+- **A fresh worktree has zero uncommitted changes.** This is measured, and it is why `read-only` members and `kind: review` members never get one: the uncommitted work a reviewer was started to look at lives only in your tree, so a reviewer inside a worktree reviews nothing.
+- **Members' results are not in your tree.** They are uncommitted changes inside each worktree. `result --group` reports `files_changed` per member and `overlaps` across them; collecting the actual content is yours to do.
+- **`--base` older than HEAD can drop your project instructions.** `AGENTS.md` reaches a worktree run, but only from a base where the file exists. `batch start` compares and says so when they differ.
+- **An explicit `cwd` wins.** A per-item `cwd` is a decision you already made, and an inferred default does not overrule it. `kind: resume` members inherit their thread's directory.
+- **Your own tree is untouched.** `.codex-runs/.gitignore` is `*`, so `git status` in the main tree stays clean even while eight worktrees hold modified files.
+
+`batch clean --group <name>` removes them, and refuses without `--force` if the group has live members, if another run is still working inside one of the worktrees, if a group derived from this one exists, or if a worktree holds uncommitted changes — that last one is git's own refusal, reported back to you. **`--force` lifts all of them at once**, not only the one you were after; the result says what it overrode, and none of it is recoverable.
+
+## Watching a group
+
+`status --group <name> --follow` prints one line per tick and a terminal line — `group.completed`, `group.partial`, or `group.still-running` if `--follow-timeout` expires first. Pair it with the **Monitor** tool rather than a foreground Bash call: Bash caps out at 600 seconds and a batch can outlive that, and Monitor turns each line into a notification instead of a poll.
+
+`--follow` is a pure view. It holds no state, and everything it prints is re-derived from the registry — a follower that dies loses nothing, and `status --group` answers the same question at any time.
+
+`group_state` is `completed` when every member reached a terminal state successfully, `partial` when some did not, `running` otherwise. Note that `partial` is also what you get after `stop --group`: it means "not all members succeeded", not "Codex failed".
+
+## Collecting
+
+`result --group <name>` returns each member's final message capped at 4,000 bytes with the true size stated, plus `usage`, `files_changed`, and **`overlaps`** — the paths that more than one member wrote, keyed by run.
+
+`overlaps` is the intersection only, deliberately. A full path list per run inverts the context discipline this skill exists for, and `log` already prints `file_change` paths for anyone who wants them; what nobody can derive cheaply is which paths two runs both touched. Under worktree isolation an overlap is **a merge conflict ahead, not damage already done** — the runs wrote to separate checkouts. Without worktrees, it is damage already done.
+
+For one member's full message, `result --run <id>`.
+
+## What it costs
+
+Each run pays Codex's isolation floor separately. **N parallel runs pay N floors**, where N turns on one thread pay one floor plus a replay that grows every turn. Neither is always cheaper: parallel wins when the work is genuinely independent, one thread wins when each step needs what the last one learned.
+
+`batch start` reports a `projected_cost` computed from this project's own recent completed isolated runs — the median of their input tokens, times the number of members, `null` until there are three samples. It is a **floor, and it is reported rather than enforced**. Real cost is higher and grows with each resume. Do not budget from it; re-measure. A constant measured at design time in this project moved by a factor of 2.7 within two weeks, which is why there is no constant here.
+
+Concurrency up to 8 was measured with no sqlite contention, no thread-id collisions, and wall-clock flat from N=2 to N=8. Above 8 is unmeasured — that is not a ceiling that was found, it is a range that was not tested.
+
+## From a dynamic workflow
+
+A workflow's `agent()` can drive these commands directly with Bash; a subagent does **not** need to load this skill first, and that is measured. Give the agent the absolute bridge path in its prompt, since a subagent has no `Base directory for this skill:` line of its own.
+
+Workflow scripts cannot run shell commands themselves — only agents can. So one Codex run per workflow agent means paying for a Claude agent and a Codex run per worker. `batch start` from a single agent starts N Codex runs for one Claude agent, which is usually what you want; reach for one-agent-per-run when each run needs a Claude in the loop reading its output as it goes.

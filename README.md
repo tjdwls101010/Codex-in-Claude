@@ -36,7 +36,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 - **Stop, then redirect** — interrupt a run mid-task and continue it on the same thread with new instructions. `stop` always targets a run's own process group, never a process by name, so concurrent runs never interfere with each other.
 - **Resume any thread** — including ones started outside this plugin, directly in the Codex TUI.
 - **Schema-validated results** — pass `--schema` and get back parsed, validated JSON instead of a message you have to eyeball.
-- **Automatic cleanup** — a `SessionEnd` hook stops a Claude session's own background runs when that session ends (`/clear` and `/resume` included), unless the run was started with `--detach`. See [Session Cleanup Hook](docs/wiki/Session-Cleanup-Hook.md).
+- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Two or more members that can write get a git worktree each, so they can't edit each other's files mid-edit. See [Orchestration](docs/wiki/Orchestration.md).
 - **Built-in diagnostics** — `doctor` checks your PATH, Codex auth, config, and the run registry in a single call.
 
 ## 3. Quick Start
@@ -155,7 +155,7 @@ This README gets you running. Everything else lives in [`docs/wiki/`](docs/wiki/
 - **[CLI Reference](docs/wiki/CLI-Reference.md)** — every subcommand and flag, in full
 - **[Sandbox Stability](docs/wiki/Sandbox-Stability.md)** — the measured defect this project exists to fix
 - **[Context Discipline & Event Log Levels](docs/wiki/Context-Discipline.md)** — the filtering system and its measurements
-- **[Session Cleanup Hook](docs/wiki/Session-Cleanup-Hook.md)** — what happens to background runs when a session ends
+- **[Orchestration](docs/wiki/Orchestration.md)** — running several Codex runs as one group: batches, worktrees, phases
 - **[Testing](docs/wiki/Testing.md)** — the three test tiers and how to run each one
 - **[Troubleshooting](docs/wiki/Troubleshooting.md)** — known failure modes and their fixes
 

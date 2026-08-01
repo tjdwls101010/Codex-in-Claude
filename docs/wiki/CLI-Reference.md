@@ -27,7 +27,7 @@ Every subcommand accepts:
 | `--schema <path>` | Path to a JSON schema file; the run's final message must validate against it |
 | `--config k=v` | Append a raw `-c k="v"` passthrough (repeatable) |
 | `--foreground` | Block until the run finishes instead of returning immediately |
-| `--timeout <seconds>` | Only meaningful with `--foreground` — kill the run if it exceeds this |
+| `--timeout <seconds>` | Give the run this long, then SIGINT its process group and record `timed_out`. Works in the background too |
 | `--no-preamble` | Disable the short situational preamble normally prepended to the prompt |
 
 Defaults across all of them: **background**, `workspace-write`, isolated from the user's own Codex config, `service_tier=priority` re-injected under isolation, no model or reasoning effort pinned, no hard timeout.
@@ -84,13 +84,15 @@ Drives `codex exec review`'s own distinct flag surface. Exactly one of `--uncomm
 $CODEX status [--run <ref>] [--thread <thread_id>] [--all] [--include-external]
 ```
 
-Lists runs for the project. Without `--run`, shows up to the last 20 runs unless `--all` is given.
+Lists runs for the project. Without `--run`, shows the non-terminal runs plus `total_runs`, and sets `runs_truncated` when it withheld any; the list is capped at 20 rows in every mode.
 
 | Flag | Meaning |
 |---|---|
 | `--run <ref>` | Show just one run (by id, prefix, or thread id) |
 | `--thread <thread_id>` | Filter to runs on one thread |
-| `--all` | Don't cap the list at 20 |
+| `--group <name>` | Show one batch group's members, with a `group_state` of `running`, `completed`, or `partial` |
+| `--follow` | With `--group`: print one line per tick until the group ends, then a terminal `group.completed` / `group.partial` / `group.still-running` line. Pair with the Monitor tool |
+| `--all` | Include terminal runs too |
 | `--include-external` | Also list threads Codex knows about for this directory that have no registry entry (e.g. started in the TUI) |
 
 **Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
@@ -121,19 +123,56 @@ Returns one item's complete, unfiltered content — the only path by which full 
 $CODEX stop (--run <ref>... | --group <name> | --all) [--grace <sec>]
 ```
 
-Interrupts a run by signaling its recorded process group directly (SIGINT → SIGTERM after `--grace` seconds, default `5.0` → SIGKILL shortly after) — never by matching a process name, so concurrent runs never interfere with each other. `--run` is repeatable. `--all` stops every non-terminal run in this project's registry — scope is whatever's visible in the registry, not the invisible `claude_session_id` a subagent's runs may not even share with the top-level session. There's no default target, so one of `--run`/`--group`/`--all` is required. `--group` resolves a recorded group id to run ids and signals each one's pgid, same as `--run`; nothing records a group id yet, so it currently fails with "no group `<name>` recorded".
+Interrupts a run by signaling its recorded process group directly (SIGINT → SIGTERM after `--grace` seconds, default `5.0` → SIGKILL shortly after) — never by matching a process name, so concurrent runs never interfere with each other. `--run` is repeatable. `--all` stops every non-terminal run in this project's registry — scope is whatever's visible in the registry, not the invisible `claude_session_id` a subagent's runs may not even share with the top-level session. There's no default target, so one of `--run`/`--group`/`--all` is required. `--group` resolves a group's manifest to run ids and signals each one's pgid, same as `--run`.
 
 **Output:** `stopped` (a list of `{run_id, pgid, signalled, signals_sent, state, thread_id, ...}`) and `claude_session_id`.
 
 ## 9. `result`
 
 ```bash
-$CODEX result --run <ref>
+$CODEX result (--run <ref> | --group <name>)
 ```
 
-Returns a run's final message and usage. If `state` isn't terminal yet, the output includes a `note` saying the result is partial. If the run used `--schema`, the output includes `schema_path` and a parsed `json` field — and fails loudly if the final message isn't valid JSON, rather than returning a malformed object shaped like the schema.
+Returns a run's final message and usage. With `--group`, returns every member's message capped at 4,000 bytes with the true size stated, plus `overlaps` — the paths more than one member wrote, keyed by run. Under worktree isolation an overlap is a merge conflict ahead rather than damage already done; without worktrees it is damage already done. If `state` isn't terminal yet, the output includes a `note` saying the result is partial. If the run used `--schema`, the output includes `schema_path` and a parsed `json` field — and fails loudly if the final message isn't valid JSON, rather than returning a malformed object shaped like the schema.
 
-## 10. `doctor`
+## 10. `batch start`
+
+```bash
+$CODEX batch start --group <name> (--task "<prompt>"... | --tasks-file <jsonl>)
+                   [--resume-from <group>] [--worktree | --no-worktree] [--base <ref>]
+                   [any start/resume/review flag as a group-wide default]
+```
+
+Starts N runs as one addressable group and returns every handle at once.
+
+| Flag | Meaning |
+|---|---|
+| `--group <name>` | The group's name. **Single-use per project** — a second `batch start` with the same name fails rather than adding to it |
+| `--task "<prompt>"` | One member, always `kind: start`. Repeatable |
+| `--tasks-file <path>` | JSONL, one task object per line. Fields: `prompt`, `kind`, `label`, `model`, `effort`, `sandbox`, `schema`, `image`, `cwd`, `resume`, `review` |
+| `--resume-from <group>` | Task *i* continues member *i* of that group, in its recorded start order |
+| `--worktree` / `--no-worktree` | Force worktree isolation on for a lone writer, or off entirely |
+| `--base <ref>` | Commit the worktrees are cut from (default `HEAD`) |
+
+Group-level flags are **defaults**, not constraints; a per-item field overrides them. An unknown field name or a wrongly-typed value fails the command before anything starts. One member failing to spawn does not take the batch with it — the failure is recorded in that member's slot.
+
+**Worktrees** are assigned when two or more members can write (`workspace-write` or `danger-full-access`), one per member at `.codex-runs/<run_id>/wt`, detached. `read-only` members, `kind: review` members, `kind: resume` members, and any member with an explicit `cwd` never get one. See [Orchestration](Orchestration.md) for why each exclusion exists.
+
+**Output:** `group`, `runs` (one entry per task, in order, each with `run_id`/`thread_id`/`cwd`/`sandbox` or an `error`), `spawned`, `requested`, `projected_cost`, `manifest`; plus `worktrees` when any were cut (or a `note` saying why none were), and `resumed_from` under `--resume-from`.
+
+## 11. `batch clean`
+
+```bash
+$CODEX batch clean --group <name> [--force]
+```
+
+Removes a group's worktrees and, if nothing is left behind, releases the group name for reuse. There is no automatic cleanup — a worktree holds the only copy of what its run produced.
+
+Refuses without `--force` when the group still has running members, when another run is still working inside one of the worktrees, when a group derived from this one exists, or when a worktree holds uncommitted changes (that last one is git's own refusal, reported back). **`--force` lifts all four at once**; the result's `forced_past` says what it overrode, and none of it is recoverable.
+
+**Output:** `removed`, `kept` (each with the reason and whether it was dirty), `name_released`, and `forced_past` when `--force` overrode something.
+
+## 12. `doctor`
 
 ```bash
 $CODEX doctor

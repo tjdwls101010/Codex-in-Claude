@@ -12,7 +12,8 @@ This is the full documentation for **Codex in Claude**, a Claude Code plugin tha
 | [Getting Started](Getting-Started.md) | Prerequisites, installation (plugin, local, or symlink), and a full first-run walkthrough |
 | [Architecture](Architecture.md) | The components, the request-flow diagram, the module map, and the key design decisions |
 | [Concepts](Concepts.md) | The vocabulary — threads, runs, sandbox modes, isolation, the run registry, filter levels, cursors |
-| [CLI Reference](CLI-Reference.md) | Every subcommand and flag: `start`, `resume`, `review`, `status`, `log`, `show`, `stop`, `result`, `doctor` |
+| [CLI Reference](CLI-Reference.md) | Every subcommand and flag: `start`, `resume`, `review`, `batch start`, `batch clean`, `status`, `log`, `show`, `stop`, `result`, `doctor` |
+| [Orchestration](Orchestration.md) | Running several runs as one group: batches, git-worktree isolation, phases with `--resume-from`, and how cost multiplies |
 | [Sandbox Stability](Sandbox-Stability.md) | The measured sandbox-drift defect this plugin exists to fix, and exactly how the fix works |
 | [Context Discipline & Event Log Levels](Context-Discipline.md) | The four-level output filter, the measurements behind the default, and its one known limitation |
 | [Testing](Testing.md) | The four test tiers (unit, integration, filter calibration, headless e2e) and how to run each one |

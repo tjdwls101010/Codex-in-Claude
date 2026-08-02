@@ -333,6 +333,17 @@ def run_row(run_dir: Path, meta: dict, project: Path):
                         if info["turn_failed"] else None),
         "events": str(events_path),
     }
+    if meta.get("group"):
+        # A run's group is the one fact a later session cannot re-derive.
+        # `create_run` records it here precisely so `status` can answer it, and
+        # for a while `status` did not: a session recovering a batch it did not
+        # start saw N unrelated runs, concluded they were individual `start`s,
+        # and had no group name to give `--resume-from`. Measured in an e2e
+        # session, which then reasoned correctly from that false premise and
+        # continued three writers into one shared directory.
+        row["group"] = meta["group"]
+    if meta.get("worktree"):
+        row["worktree"] = meta["worktree"]["path"]
     if review_zero:
         row["usage_note"] = "review runs report zero usage; unavailable, not free"
     if meta.get("sandbox_changed_from"):

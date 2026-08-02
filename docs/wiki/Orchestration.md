@@ -83,7 +83,7 @@ $CODEX batch start --group fix --resume-from audit \
        --task "now fix what you found" --task "now fix what you found"
 ```
 
-Task *i* continues member *i* of `audit`, keeping that thread and the directory it already lives in. Phase 2 inherits phase 1's worktrees rather than getting new ones, and the new group records where it came from — which is what makes cleaning phase 1 refuse while phase 2 is still there.
+Task *i* continues member *i* of `audit`, keeping that thread and the directory it already lives in. Note that continuing several writing threads with individual `resume` calls is **not** equivalent: `resume` has no `--worktree` and takes its directory from its thread, so three of them put three writers in one directory at once. Only `batch start` assigns worktrees, which makes `--resume-from` the only isolated way to continue a group. Phase 2 inherits phase 1's worktrees rather than getting new ones, and the new group records where it came from — which is what makes cleaning phase 1 refuse while phase 2 is still there.
 
 Everything that could go wrong here is a refusal rather than a guess:
 
@@ -97,6 +97,8 @@ Everything that could go wrong here is a refusal rather than a guess:
 `status --group <name>` returns every member — a group you started is bounded by definition, so unlike the default `status` view it never truncates. `status --group <name> --follow` prints a line per tick and always ends with a terminal line — `group.completed`, `group.partial`, or `group.still-running` if `--follow-timeout` expires first — so a group can never end in silence. Pair it with Claude Code's **Monitor** tool rather than a foreground Bash call: Bash caps out at 600 seconds and a batch can outlive that.
 
 `--follow` holds no state; everything it prints is re-derived from the registry, so a follower that dies loses nothing.
+
+Which way to wait depends on whether the session gets another turn. Monitor is right when it does — the follower runs alongside and each line becomes a notification. It's wrong when this is the only turn, because the follower dies with the turn; there, run `--follow` in the foreground so the call blocks until the group ends. And note that `batch start` returning is not the batch being done, and the group finishing is not the results being collected: `result --group` is a separate call.
 
 `group_state` is `completed` when every member succeeded, `partial` when some didn't, `running` otherwise. Note that `partial` is also what you get after `stop --group` — it means "not all members succeeded", not "Codex failed".
 

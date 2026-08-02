@@ -16,7 +16,11 @@ $CODEX batch clean --group review-p1
 
 **A group name is single-use within a project.** A second `batch start --group review-p1` fails rather than adding to the group, and it fails before starting anything. The reason is that "the members of review-p1" has to mean one list in one order — `--resume-from` pairs against exactly that list positionally, and a name that accumulated members across two invocations would silently pair the wrong ones. The name is released by `batch clean` once nothing is left behind, and that is also how you reclaim a name from a `batch start` that died partway through.
 
-Membership is recorded in `.codex-runs/.groups/<name>.json` in start order, and each member's own `meta.json` records its group as a fallback. A member that failed to spawn keeps its slot in the manifest with an `error` and no `run_id`, so the caller sees which task is missing rather than a shorter list than they asked for.
+Membership is recorded in `.codex-runs/.groups/<name>.json` in start order, and each member's own `meta.json` records its group as a fallback.
+
+**A later session can find a batch it did not start**, which is the case that matters — a group's whole value is being addressable after the context that created it is gone. `status` lists the project's `groups`, and every run row carries the `group` it belongs to (and its `worktree`, when it has one). That is what makes `status --group` and `--resume-from` reachable from a cold start; without it a recovering session sees N unrelated runs and no name to pass.
+
+A member that failed to spawn keeps its slot in the manifest with an `error` and no `run_id`, so the caller sees which task is missing rather than a shorter list than they asked for. Those slots stay visible afterwards too: `status --group` and `result --group` list them under `unstarted`, and they make the group `partial` rather than `completed`.
 
 **One failing member does not take the batch down.** Whatever the failure — a schema path that does not exist, a bad value in a tasks file, a full disk — it is recorded in that member's slot and the rest still start.
 
@@ -49,6 +53,8 @@ Task *i* continues member *i* of `p1`, in the manifest's start order, keeping th
 
 Phase 2 inherits phase 1's worktrees — it does not get new ones — and the new group records `derived_from`, which is what makes `batch clean --group p1` refuse while phase 2 is still living there.
 
+**Continuing several writing threads with individual `resume` calls is not the same thing, and it is not safe.** `resume` has no `--worktree`, and a resumed run takes its directory from its thread — so three `resume` calls put three writers in one directory, editing at once, which is the collision worktrees exist to prevent. `--resume-from` is the only path that can isolate them, because only `batch start` assigns worktrees. Measured: an e2e session continued three threads this way and escaped damage only because the three edits happened to land in three different files.
+
 ## Worktrees
 
 **Two or more members that can write get a git worktree each**, at `.codex-runs/<run_id>/wt`, detached at HEAD (or `--base <ref>`). `--worktree` forces it for a lone writer, `--no-worktree` turns it off.
@@ -68,6 +74,10 @@ Process groups isolate *signals*, not files. Two runs in one directory edit the 
 `status --group <name> --follow` prints one line per tick and a terminal line — `group.completed`, `group.partial`, or `group.still-running` if `--follow-timeout` expires first. Pair it with the **Monitor** tool rather than a foreground Bash call: Bash caps out at 600 seconds and a batch can outlive that, and Monitor turns each line into a notification instead of a poll.
 
 `--follow` is a pure view. It holds no state, and everything it prints is re-derived from the registry — a follower that dies loses nothing, and `status --group` answers the same question at any time.
+
+**Which way you wait depends on whether you get another turn.** Pairing with Monitor is right when more turns are coming: the follower runs beside you and each line becomes a notification. It is wrong when this is your only turn, because the follower dies with the turn and nothing arrives. Two measured e2e sessions failed exactly there — both started their batch correctly, launched a background wait, then ended the turn saying they would report back, and nothing resumed them to do it. With one turn, run `status --group --follow --follow-timeout <sec>` in the **foreground** so the call blocks until the group ends; the Bash tool's 600-second ceiling is the real limit on that, and `group.still-running` is what you get if the deadline arrives first.
+
+Either way, **`batch start` returning is not the batch being done, and the group finishing is not the results being collected.** `result --group` is a separate call. Ending a turn on "I'll report when it finishes" produces nothing at all.
 
 `group_state` is `completed` when every member reached a terminal state successfully, `partial` when some did not, `running` otherwise. Note that `partial` is also what you get after `stop --group`: it means "not all members succeeded", not "Codex failed".
 

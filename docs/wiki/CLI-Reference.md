@@ -97,7 +97,7 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 
 **Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
 
-**Top level:** `project`, `runs_dir`, `runs`, `threads` (thread id → run ids), `running` (currently `running`/`stalled` run ids); with `--include-external`: `external_threads` and an explanatory `external_note`.
+**Top level:** `project`, `runs_dir`, `runs`, `threads` (thread id → run ids), `groups` (every batch group in this project), `running` (currently `running`/`stalled` run ids); with `--include-external`: `external_threads` and an explanatory `external_note`. A run that belongs to a group carries `group`, and one with a worktree carries `worktree` — together these are what let a session find and address a batch it did not start.
 
 ## 6. `log`
 

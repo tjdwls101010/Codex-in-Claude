@@ -230,9 +230,14 @@ def cmd_status(args):
         display_rows = kept_live + tail
         runs_truncated = total_runs - len(display_rows)
 
+    # Groups are listed even when no run in the (truncated) view belongs to one:
+    # discovering that this project has batches at all is the step that makes
+    # `status --group` and `--resume-from` reachable.
+    known = list_groups(runs_dir)
     out = {"project": str(project), "runs_dir": str(runs_dir), "runs": display_rows,
            "threads": by_thread, "running": running, "done": done, "failed": failed,
-           "total_runs": total_runs, "runs_truncated": runs_truncated}
+           "total_runs": total_runs, "runs_truncated": runs_truncated,
+           "groups": known}
     if args.include_external:
         out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]

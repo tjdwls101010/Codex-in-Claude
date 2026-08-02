@@ -339,6 +339,40 @@ class AMemberThatNeverStartedIsStillAMember(BridgeTestCase):
         self.assertNotIn("unstarted", st)
 
 
+class AGroupIsDiscoverableFromStatus(BridgeTestCase):
+    """A later session has to be able to find a batch it did not start.
+
+    That is the recovery case the registry exists for, and it was broken: no
+    run row said which group it belonged to and nothing listed the project's
+    groups, so `status` showed N unrelated runs. Measured in an e2e session,
+    which concluded they had been individual `start`s — correct reasoning from
+    a false premise the tool handed it — and therefore never reached
+    `--resume-from`. `create_run` had been recording the group in meta.json all
+    along, with a comment saying it was there so `status` could answer this."""
+
+    def test_a_run_says_which_group_it_belongs_to(self):
+        out = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b")
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        rows = self.bridge("status", "--all")["runs"]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["group"], "p1")
+
+    def test_the_project_lists_its_groups(self):
+        self.bridge("batch", "start", "--group", "alpha", "--task", "a")
+        self.bridge("batch", "start", "--group", "bravo", "--task", "b")
+        self.assertEqual(self.bridge("status")["groups"], ["alpha", "bravo"])
+
+    def test_a_run_outside_any_group_says_nothing_about_one(self):
+        run = self.start("solo")
+        self.wait_for_state(run["run_id"])
+        row = self.bridge("status", "--run", run["run_id"])["runs"][0]
+        self.assertNotIn("group", row)
+        self.assertEqual(self.bridge("status")["groups"], [])
+
+
 class GroupSelectors(BridgeTestCase):
 
     def start_group(self, *extra, name="p1", n=2, **kw):

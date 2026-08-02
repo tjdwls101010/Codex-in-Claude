@@ -30,7 +30,38 @@ from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
     resolve_project, resolve_runs_dir, write_meta,
 )
-from _util import clip, fail, git_toplevel, now_iso
+from _util import clip, fail, git_toplevel, is_within, now_iso
+
+WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
+
+
+def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
+    """Other live runs that can write to this same directory.
+
+    Compared on each run's recorded `cwd`, never on its git top level: every
+    worktree of one repository shares a top level, so that comparison would
+    warn about the very isolation that makes the situation safe.
+
+    Reported, never refused (D17). Concurrency here is sometimes exactly what
+    the caller wants — but it is never something they can see, and a session
+    that cannot see it will not go looking. Measured: an e2e session continued
+    three writing threads with three `resume` calls into one directory and
+    escaped damage only because the three edits landed in three different
+    files. `resume` has no worktree option, so nothing but this could have
+    told it.
+    """
+    out = []
+    for rd, m in iter_runs(runs_dir):
+        if m.get("run_id") == exclude_run_id:
+            continue
+        if m.get("state") in TERMINAL_STATES:
+            continue
+        if m.get("sandbox") not in WRITING_SANDBOXES:
+            continue
+        if is_within(m.get("cwd"), cwd) or is_within(cwd, m.get("cwd")):
+            out.append({"run_id": m.get("run_id"), "state": m.get("state"),
+                        "sandbox": m.get("sandbox"), "group": m.get("group")})
+    return out
 from _worktree import (
     add as worktree_add, uncommitted_count as worktree_uncommitted,
 )
@@ -270,6 +301,16 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         out["worktree"] = wt_info
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
+    if sandbox in WRITING_SANDBOXES and not wt_info:
+        others = concurrent_writers(runs_dir, cwd, exclude_run_id=run_id)
+        if others:
+            out["concurrent_writers"] = others
+            out["concurrent_writers_note"] = (
+                f"{len(others)} other live run(s) can write to {cwd}. None of you "
+                "can tell another agent's change from your own. `batch start` "
+                "assigns a worktree per writing member — including when "
+                "continuing an earlier group with --resume-from, which is the "
+                "only isolated way to resume several writers at once.")
     return out
 
 

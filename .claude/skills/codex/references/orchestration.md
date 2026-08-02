@@ -55,6 +55,8 @@ Phase 2 inherits phase 1's worktrees — it does not get new ones — and the ne
 
 **Continuing several writing threads with individual `resume` calls is not the same thing, and it is not safe.** `resume` has no `--worktree`, and a resumed run takes its directory from its thread — so three `resume` calls put three writers in one directory, editing at once, which is the collision worktrees exist to prevent. `--resume-from` is the only path that can isolate them, because only `batch start` assigns worktrees. Measured: an e2e session continued three threads this way and escaped damage only because the three edits happened to land in three different files.
 
+You do not have to notice this yourself. A writing run started into a directory another live writing run already occupies comes back with `concurrent_writers` naming them and `concurrent_writers_note` pointing here, and `doctor` reports the same across the registry. It is a report and never a refusal (D17) — sharing a directory is sometimes exactly what you meant — but it is a fact the caller otherwise has no way to see.
+
 ## Worktrees
 
 **Two or more members that can write get a git worktree each**, at `.codex-runs/<run_id>/wt`, detached at HEAD (or `--base <ref>`). `--worktree` forces it for a lone writer, `--no-worktree` turns it off.

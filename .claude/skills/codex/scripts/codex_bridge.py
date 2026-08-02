@@ -591,6 +591,24 @@ def cmd_doctor(args):
         report["runs_dir_bytes"] = total
         report["runs_dir_runs"] = sum(1 for _ in iter_runs(runs_dir))
         report["groups"] = list_groups(runs_dir)
+        # §1.7. Grouped by recorded cwd, never by git top level — one
+        # repository's worktrees all share a top level, so that comparison
+        # would warn on exactly the arrangement that makes it safe.
+        by_cwd = {}
+        for _rd, m in iter_runs(runs_dir):
+            if m.get("state") in TERMINAL_STATES:
+                continue
+            by_cwd.setdefault(m.get("cwd"), []).append(m)
+        for cwd, ms in sorted(by_cwd.items(), key=lambda kv: str(kv[0])):
+            writers = [m for m in ms if m.get("sandbox") in ("workspace-write",
+                                                             "danger-full-access")]
+            if len(ms) > 1 and writers:
+                warnings.append(
+                    f"{len(ms)} live runs share {cwd}, {len(writers)} of which can "
+                    f"write to it: {', '.join(m.get('run_id') for m in ms)}. None of "
+                    f"them can tell another agent's change from its own. Runs in "
+                    f"their own worktrees are exempt and will not appear here.")
+
         live_wt = [p for p in worktrees_registered(project) if p.exists()]
         report["worktrees"] = len(live_wt)
         if live_wt:

@@ -178,7 +178,7 @@ Refuses without `--force` when the group still has running members, when another
 $CODEX doctor
 ```
 
-Diagnoses the environment in one call: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, and whether Codex's thread database is readable.
+Diagnoses the environment in one call, including what batches leave behind — registry size and run count, the project's groups, residual worktrees, and any set of live runs sharing one directory where at least one can write. It also covers: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, and whether Codex's thread database is readable.
 
 Exits `0` when healthy, `2` when there's a **blocker** (missing `codex`, failed auth, missing `CODEX_HOME`, unwritable runs dir, Python below 3.10) — which makes it usable directly in a shell conditional. Non-fatal issues are reported separately as **warnings** (e.g. `config.toml` set to `danger-full-access`, a project `AGENTS.md` present, an unreadable thread database).
 

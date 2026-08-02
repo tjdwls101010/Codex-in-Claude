@@ -634,6 +634,59 @@ def derived_of(project, name):
             if json.loads(p.read_text()).get("derived_from") == name]
 
 
+class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
+    """Reported, never refused (D17) — concurrency in one directory is sometimes
+    what the caller wants, but it is never something they can see.
+
+    Measured in an e2e session: told to continue three writing threads, it used
+    three `resume` calls into one directory and escaped damage only because the
+    three edits landed in three different files. `resume` has no worktree
+    option, so nothing but this could have told it."""
+
+    def hanging_writer(self, label):
+        r = self.bridge("start", "keep going", "--label", label,
+                        "--sandbox", "workspace-write",
+                        env_extra={"FAKE_CODEX_HANG": "60"})
+        self.wait_for_state(r["run_id"], ("running",), timeout=30)
+        return r
+
+    def test_a_second_writer_in_the_same_directory_is_named(self):
+        first = self.hanging_writer("one")
+        second = self.bridge("start", "also going", "--sandbox", "workspace-write",
+                             env_extra={"FAKE_CODEX_HANG": "60"})
+        self.assertEqual([w["run_id"] for w in second["concurrent_writers"]],
+                         [first["run_id"]])
+        self.assertIn("--resume-from", second["concurrent_writers_note"])
+        self.bridge("stop", "--all")
+
+    def test_a_read_only_run_is_not_a_writer_and_is_not_warned_about(self):
+        self.bridge("start", "just looking", "--sandbox", "read-only",
+                    env_extra={"FAKE_CODEX_HANG": "60"})
+        out = self.bridge("start", "also looking", "--sandbox", "read-only",
+                          env_extra={"FAKE_CODEX_HANG": "60"})
+        self.assertNotIn("concurrent_writers", out)
+        self.bridge("stop", "--all")
+
+    def test_members_in_their_own_worktrees_are_exempt(self):
+        """The warning must not fire on the arrangement that makes it safe."""
+        out = self.start_group()
+        for r in out["runs"]:
+            self.assertIsNotNone(r["worktree"])
+            self.assertNotIn("concurrent_writers", r)
+            self.wait_for_state(r["run_id"])
+        self.assertFalse(any("share" in w for w in self.bridge("doctor")["warnings"]))
+
+    def test_doctor_groups_live_runs_by_their_recorded_cwd(self):
+        self.hanging_writer("one")
+        self.hanging_writer("two")
+        rep = self.bridge("doctor")
+        shared = [w for w in rep["warnings"] if "live runs share" in w]
+        self.assertEqual(len(shared), 1, rep["warnings"])
+        self.assertIn("2 of which can write", shared[0])
+        self.assertTrue(rep["ok"], "sharing a directory is not a blocker")
+        self.bridge("stop", "--all")
+
+
 class DoctorReportsTheCost(WorktreeTestCase):
 
     def test_doctor_counts_residual_worktrees_and_says_what_removes_them(self):

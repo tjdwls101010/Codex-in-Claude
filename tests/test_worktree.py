@@ -659,6 +659,22 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
         self.assertIn("--resume-from", second["concurrent_writers_note"])
         self.bridge("stop", "--all")
 
+    def test_resuming_into_an_occupied_directory_is_named_too(self):
+        """The measured failure was on the resume path, not the start path: a
+        session continuing several writing threads at once has no worktree
+        option to reach for, so this warning is the only thing that can tell
+        it."""
+        first = self.hanging_writer("one")
+        second = self.bridge("start", "elsewhere", "--sandbox", "workspace-write",
+                             env_extra={"FAKE_CODEX_HANG": "60"})
+        out = self.bridge("resume", first["run_id"], "keep going", "--force",
+                          "--sandbox", "workspace-write",
+                          env_extra={"FAKE_CODEX_HANG": "60"})
+        named = {w["run_id"] for w in out["concurrent_writers"]}
+        self.assertIn(second["run_id"], named)
+        self.assertIn("--resume-from", out["concurrent_writers_note"])
+        self.bridge("stop", "--all")
+
     def test_a_read_only_run_is_not_a_writer_and_is_not_warned_about(self):
         self.bridge("start", "just looking", "--sandbox", "read-only",
                     env_extra={"FAKE_CODEX_HANG": "60"})

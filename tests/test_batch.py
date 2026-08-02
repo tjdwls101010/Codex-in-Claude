@@ -473,7 +473,12 @@ class GroupResults(BridgeTestCase):
 
     def test_overlaps_reports_only_paths_more_than_one_member_wrote(self):
         """D30. A full path list per run inverts the context discipline the skill
-        exists for; the intersection is the part nobody can derive cheaply."""
+        exists for; the intersection is the part nobody can derive cheaply.
+
+        This plants repo-relative paths, which is the shape only when members
+        share a directory. The realistic shape — absolute, one prefix per
+        worktree — is covered in test_worktree.OverlapsUnderIsolation, and this
+        test passing while that case was broken is why it lives there too."""
         out = self.bridge("batch", "start", "--group", "p1",
                           "--task", "a", "--task", "b")
         run_ids = [r["run_id"] for r in out["runs"]]

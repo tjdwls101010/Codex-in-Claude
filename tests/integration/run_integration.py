@@ -497,10 +497,14 @@ def I14(project):
     and `failed` would say Codex broke, and only "it ran out of the time I gave
     it" is answered by raising the timeout. V-16 measured resumability in the
     foreground; this is the background path the batch actually uses."""
-    r = bridge(project, "start", "--label", "i14", "--sandbox", "read-only",
-               "--timeout", "20",
-               "Count slowly from 1 to 40, writing one number per line, thinking "
-               "carefully about each one before you write it.")
+    # A prompt that is merely "long" is not a deadline test: the first attempt
+    # asked Codex to count to 40 and it answered in 9 seconds, so the timeout
+    # never fired and the case passed nothing. A shell sleep is the only way to
+    # make the duration a fact rather than a hope.
+    r = bridge(project, "start", "--label", "i14", "--sandbox", "workspace-write",
+               "--timeout", "25",
+               "Run this exact command and wait for it to finish: sleep 90. "
+               "Then reply with exactly: SLEPT")
     row = wait_done(project, r["run_id"], timeout=300)
     assert row["state"] == "timed_out", f"expected timed_out, got {row['state']}: {row}"
 
@@ -544,11 +548,14 @@ def I15(project):
     assert not any(p.exists() for p in paths), "worktrees survived --force"
     assert forced["forced_past"]["discarded_uncommitted"], forced
 
+    # Scoped to this case's own worktrees. The scratch repo is shared across
+    # every case in the run, and I10 deliberately leaves its three behind —
+    # there is no automatic cleanup, which is the point of D06.
     listed = subprocess.run(["git", "-C", str(project), "worktree", "list", "--porcelain"],
                             capture_output=True, text=True).stdout
-    left = [ln for ln in listed.splitlines() if ln.startswith("worktree ")]
-    assert len(left) == 1, f"worktrees left registered with git: {left}"
-    return "refused while dirty, --force removed both, git's list back to just the main tree"
+    still = [str(p) for p in paths if f"worktree {p}" in listed]
+    assert not still, f"i15's worktrees are still registered with git: {still}"
+    return "refused while dirty, --force removed both, git no longer lists them"
 
 
 CASES = {name: fn for name, fn in sorted(globals().items())

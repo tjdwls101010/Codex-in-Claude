@@ -214,6 +214,59 @@ class Assignment(WorktreeTestCase):
                 time.sleep(0.1)
 
 
+class OverlapsUnderIsolation(WorktreeTestCase):
+    """Codex reports ABSOLUTE paths, and under worktree isolation every member
+    has a different absolute prefix.
+
+    The T1 test that already covered `overlaps` planted repo-relative paths,
+    which is not the shape real events have — so it passed while the feature was
+    blind in the only situation it exists for. Found by running a real batch:
+    three members each creating `shared.txt` in their own worktree produced
+    `overlaps: {}`. The cleaner the isolation, the more reliably it lied."""
+
+    def plant(self, run_id, abs_paths):
+        ev = self.project / ".codex-runs" / run_id / "events.jsonl"
+        with ev.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "type": "item.completed",
+                "item": {"id": f"fc-{run_id}", "type": "file_change",
+                         "changes": [{"path": p, "kind": "modify"} for p in abs_paths]},
+            }) + "\n")
+
+    def test_the_same_repo_path_in_two_worktrees_is_an_overlap(self):
+        out = self.start_group()
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        for r in out["runs"]:
+            self.plant(r["run_id"], [str(Path(r["worktree"]) / "src" / "shared.py")])
+        res = self.bridge("result", "--group", "p1")
+        self.assertEqual(list(res["overlaps"]), ["src/shared.py"],
+                         "absolute per-worktree paths must be compared relative "
+                         "to each run's own root")
+        self.assertEqual(sorted(res["overlaps"]["src/shared.py"]),
+                         sorted(r["run_id"] for r in out["runs"]))
+
+    def test_different_paths_in_two_worktrees_are_not_an_overlap(self):
+        out = self.start_group()
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        for r, name in zip(out["runs"], ("alpha.py", "bravo.py")):
+            self.plant(r["run_id"], [str(Path(r["worktree"]) / "src" / name)])
+        self.assertEqual(self.bridge("result", "--group", "p1")["overlaps"], {})
+
+    def test_a_path_outside_the_run_root_keeps_its_absolute_form(self):
+        """`../../elsewhere` compares no better than the absolute path and reads
+        worse, so a path that escapes the root is left alone."""
+        out = self.start_group()
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        outside = str(self.tmp / "outside.py")
+        for r in out["runs"]:
+            self.plant(r["run_id"], [outside])
+        res = self.bridge("result", "--group", "p1")
+        self.assertEqual(list(res["overlaps"]), [outside])
+
+
 class Preamble(WorktreeTestCase):
     """§4.4 / D20. Facts Codex cannot observe from inside its own turn, and
     which it otherwise asserts wrongly rather than hedging (V-18)."""

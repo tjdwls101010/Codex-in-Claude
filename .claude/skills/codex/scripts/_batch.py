@@ -39,7 +39,8 @@ from _registry import (
 )
 from _run import create_run, refuse_concurrent_turn, run_row
 from _util import (
-    BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, now_iso,
+    BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,
+    now_iso,
 )
 from _worktree import (
     is_dirty as worktree_dirty, missing_at_base as worktree_missing_at_base,
@@ -795,17 +796,41 @@ def follow_group(args, project, runs_dir):
 GROUP_MESSAGE_CAP = 4000
 
 
-def changed_paths(events_path: Path):
-    """Paths a run wrote, from its `file_change` events."""
+def changed_paths(events_path: Path, root=None):
+    """Paths a run wrote, relative to that run's own root.
+
+    Relative, and that is the whole point. Codex reports absolute paths, and
+    under worktree isolation every member has a different absolute prefix — so
+    comparing them as written, three members all editing `src/parser.py` produce
+    three distinct strings and intersect to nothing. `overlaps` would report a
+    clean run in exactly the situation it exists to warn about, and the cleaner
+    the isolation the more reliably it would lie.
+
+    Reproduced before this was fixed: two members each modifying `src/shared.py`
+    in their own worktree, `overlaps: {}`.
+
+    `root` is the run's own cwd — its worktree when it has one. A path outside
+    that root keeps its absolute form rather than being forced into a relative
+    one, since `../../elsewhere` compares no better than the absolute path and
+    reads worse.
+    """
     paths = set()
+    root = Path(nfc(str(root))) if root else None
     for ev in read_events(events_path, 0)[0]:
         item = ev.get("item") or {}
         if item.get("type") != "file_change":
             continue
         for ch in item.get("changes") or []:
             p = ch.get("path") if isinstance(ch, dict) else ch
-            if p:
-                paths.add(str(p))
+            if not p:
+                continue
+            p = Path(nfc(str(p)))
+            if root:
+                try:
+                    p = p.relative_to(root)
+                except ValueError:
+                    pass
+            paths.add(str(p))
     return paths
 
 
@@ -847,7 +872,8 @@ def cmd_result_group(args, project, runs_dir):
         # Keyed by run, never by worktree: with --resume-from a phase-2 member
         # inherits its predecessor's worktree, so a worktree-keyed set would
         # report every member as overlapping with its own past self.
-        per_run_paths[meta["run_id"]] = changed_paths(rd / "events.jsonl")
+        per_run_paths[meta["run_id"]] = changed_paths(
+            rd / "events.jsonl", (meta.get("worktree") or {}).get("path") or meta.get("cwd"))
         for key in totals:
             totals[key] += int((info["usage"] or {}).get(key) or 0)
 

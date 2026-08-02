@@ -6,6 +6,7 @@ dependency graph and imports nothing from its siblings.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import json
 import os
@@ -53,9 +54,45 @@ def emit(obj, code: int = 0):
     sys.exit(code)
 
 
+class BridgeError(Exception):
+    """A `fail()` raised instead of emitted. See `failures_raise`."""
+
+    def __init__(self, msg: str, extra: dict):
+        super().__init__(msg)
+        self.msg = msg
+        self.extra = extra
+
+    def as_dict(self) -> dict:
+        return {"error": self.msg, **self.extra}
+
+
+_FAIL_RAISES = False
+
+
+@contextlib.contextmanager
+def failures_raise():
+    """Inside this block, `fail()` raises `BridgeError` instead of printing and
+    exiting.
+
+    `batch start` needs it: one member failing to spawn must not take the other
+    members with it (D11), and it must not print a second line of JSON either,
+    since the one-line-per-invocation contract is what every caller parses
+    against. Reentrant so a nested helper cannot switch it back off.
+    """
+    global _FAIL_RAISES
+    prev = _FAIL_RAISES
+    _FAIL_RAISES = True
+    try:
+        yield
+    finally:
+        _FAIL_RAISES = prev
+
+
 def fail(msg: str, **extra):
     """Errors are JSON too — the caller parses stdout either way, and a plain
     text error would force it to branch on whether parsing worked."""
+    if _FAIL_RAISES:
+        raise BridgeError(msg, extra)
     emit({"error": msg, **extra}, code=1)
 
 
@@ -77,6 +114,19 @@ def codex_home() -> Path:
     then sessions, config and auth all live somewhere else entirely."""
     v = os.environ.get("CODEX_HOME")
     return Path(v).expanduser() if v else Path.home() / ".codex"
+
+
+def is_within(path, parent) -> bool:
+    """Whether `path` is `parent` or lives inside it. NFC-normalised on both
+    sides, because macOS stores non-ASCII filenames as NFD while argv and JSON
+    carry NFC — a Korean path never equals itself across that boundary."""
+    if not path:
+        return False
+    try:
+        p, q = Path(nfc(str(path))), Path(nfc(str(parent)))
+        return p == q or q in p.parents
+    except Exception:
+        return False
 
 
 def git_toplevel(path: Path):

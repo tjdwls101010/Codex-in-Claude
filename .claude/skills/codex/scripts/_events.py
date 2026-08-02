@@ -25,6 +25,17 @@ from _util import clip, nfc
 
 LEVELS = ("compact", "normal", "full", "raw")
 
+
+class CursorOutOfRange(ValueError):
+    """`--since` points past the end of the events file.
+
+    F11: the old guard (`since >= size`) accepted this silently, printed
+    nothing, and exited 0 — echoing the bad cursor straight back so the next
+    poll stays stuck forever, indistinguishable from "no new events yet". A
+    cursor this far out is almost always one fed back from a different run.
+    """
+
+
 # Chosen from the measured table in docs/measurements/filter-calibration.md.
 # The reasoning is recorded next to that table and restated in
 # references/event-stream.md; do not change this without re-running it.
@@ -57,8 +68,12 @@ def read_events(path: Path, since: int = 0):
     """
     if not path.exists():
         return [], since
+    since = max(0, since)
     size = path.stat().st_size
-    if since >= size:
+    if since > size:
+        raise CursorOutOfRange(
+            f"--since {since} is past the end of the events file ({size} bytes)")
+    if since == size:
         return [], since
     with path.open("rb") as fh:
         fh.seek(since)
@@ -77,6 +92,31 @@ def read_events(path: Path, since: int = 0):
         except json.JSONDecodeError:
             events.append({"type": "_unparsed", "raw": line})
     return events, cursor
+
+
+def final_usage(events_path: Path):
+    """The last `usage` object in the stream, or None.
+
+    Codex reports usage cumulatively per turn, so the last one wins. Read from
+    the end rather than parsed with `scan_progress`, which builds the whole
+    progress summary — this is called once per run at completion and only needs
+    one field.
+    """
+    try:
+        lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            u = json.loads(line).get("usage")
+        except json.JSONDecodeError:
+            continue
+        if u:
+            return u
+    return None
 
 
 def first_thread_id(events_path: Path):

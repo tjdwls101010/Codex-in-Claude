@@ -122,13 +122,6 @@ class Doctor(BridgeTestCase):
         rep = self.doctor(env_extra={"CLAUDE_PLUGIN_ROOT": "/some/plugin/root"})
         self.assertEqual(rep["plugin_root_env"], "/some/plugin/root")
 
-    def test_detached_running_runs_are_called_out(self):
-        r = self.start("bg", "--detach", env_extra={"FAKE_CODEX_HANG": "60"})
-        rep = self.doctor()
-        self.assertIn(r["run_id"], rep["detached_running"])
-        self.assertTrue(any("outlive this session" in w for w in rep["warnings"]))
-        self.bridge("stop", "--run", r["run_id"])
-
     def test_missing_thread_db_degrades_quietly(self):
         home = self.tmp / "no-db-home"
         home.mkdir()

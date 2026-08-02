@@ -5,7 +5,9 @@ import time
 import unittest
 from pathlib import Path
 
-from helpers import BridgeTestCase, codex_bridge
+from helpers import BridgeTestCase   # puts the scripts dir on sys.path
+
+import _util                        # noqa: E402
 
 
 class StopIsolation(BridgeTestCase):
@@ -32,15 +34,38 @@ class StopIsolation(BridgeTestCase):
 
         out = self.bridge("stop", "--run", a["run_id"])
         self.assertTrue(out["stopped"][0]["signalled"])
-        self.assertIn("SIGINT", out["stopped"][0]["signals_sent"],
-                      "SIGINT first: Codex flushes its rollout and stays resumable")
+        self.assertEqual(out["stopped"][0]["signals_sent"], ["SIGINT"],
+                         "SIGINT first: Codex flushes its rollout and stays resumable")
 
         self.wait_for_state(a["run_id"], states=("interrupted", "failed", "completed"))
         after = self.bridge("status", "--run", b["run_id"])["runs"][0]
         self.assertEqual(after["state"], "running",
                          "stopping one run must not touch a concurrent one")
-        self.assertTrue(codex_bridge.pid_alive(brow["codex_pid"]))
+        self.assertTrue(_util.pid_alive(brow["codex_pid"]))
         self.bridge("stop", "--run", b["run_id"])
+
+    def test_stop_escalates_to_sigterm_against_a_sigint_ignoring_child(self):
+        """The fake shim normally dies on SIGINT, so the ladder's later rungs
+        never run and `assertIn("SIGINT", …)` can't tell a lone SIGINT from a
+        full escalation. FAKE_CODEX_IGNORE_SIGINT forces the shim to sit through
+        SIGINT so SIGTERM has to be sent too."""
+        r = self.start("long", "--label", "ignores-sigint",
+                       env_extra={"FAKE_CODEX_HANG": "120",
+                                  "FAKE_CODEX_IGNORE_SIGINT": "1"})
+        deadline = time.time() + 30
+        row = None
+        while time.time() < deadline:
+            row = self.bridge("status", "--run", r["run_id"])["runs"][0]
+            if row["state"] == "running" and row["codex_pid"]:
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("run never reached running")
+
+        out = self.bridge("stop", "--run", r["run_id"], "--grace", "0.5")
+        self.assertEqual(out["stopped"][0]["signals_sent"], ["SIGINT", "SIGTERM"])
+        self.assertFalse(_util.pid_alive(row["codex_pid"]),
+                         "SIGTERM must actually reap the SIGINT-ignoring child")
 
     def test_stop_marks_the_run_interrupted_and_keeps_the_thread(self):
         a, _ = self._long_run("a")
@@ -53,24 +78,41 @@ class StopIsolation(BridgeTestCase):
 
     def test_stop_requires_an_explicit_target(self):
         out = self.bridge("stop", expect_rc=1)
-        self.assertIn("--all-mine", out["error"])
+        self.assertIn("--run", out["error"])
+        self.assertIn("--group", out["error"])
+        self.assertIn("--all", out["error"])
 
-    def test_all_mine_only_touches_this_session(self):
+    def test_stop_run_is_repeatable(self):
+        a, arow = self._long_run("a")
+        b, brow = self._long_run("b")
+        out = self.bridge("stop", "--run", a["run_id"], "--run", b["run_id"])
+        stopped = {s["run_id"] for s in out["stopped"]}
+        self.assertEqual(stopped, {a["run_id"], b["run_id"]})
+
+    def test_stop_all_touches_every_non_terminal_run_in_the_project(self):
         mine, _ = self._long_run("mine")
-        # A run recorded as belonging to a different Claude session.
+        # A run recorded under a different Claude session — claude_session_id
+        # is no longer a selector (audit F5: unreliable from a subagent), so
+        # --all must still stop it.
         other, orow = self._long_run("other")
         meta_path = self.project / ".codex-runs" / other["run_id"] / "meta.json"
         meta = json.loads(meta_path.read_text())
         meta["claude_session_id"] = "some-other-session"
         meta_path.write_text(json.dumps(meta))
 
-        out = self.bridge("stop", "--all-mine")
+        out = self.bridge("stop", "--all")
         stopped = {s["run_id"] for s in out["stopped"]}
         self.assertIn(mine["run_id"], stopped)
-        self.assertNotIn(other["run_id"], stopped,
-                         "--all-mine must mean this session's runs, not everyone's")
-        self.assertTrue(codex_bridge.pid_alive(orow["codex_pid"]))
-        self.bridge("stop", "--run", other["run_id"])
+        self.assertIn(other["run_id"], stopped,
+                       "--all is every non-terminal run in this project, "
+                       "not scoped by claude_session_id")
+
+    def test_stop_group_not_yet_implemented(self):
+        # --group resolves a recorded group id from meta, not a name/label
+        # match (B8 forbids that) -- but nothing records a group id until
+        # batch start exists, so this must fail loudly rather than no-op.
+        out = self.bridge("stop", "--group", "somegroup", expect_rc=1)
+        self.assertIn("somegroup", out["error"])
 
     def test_stopping_an_already_finished_run_is_harmless(self):
         r = self.start("quick")
@@ -78,13 +120,6 @@ class StopIsolation(BridgeTestCase):
         out = self.bridge("stop", "--run", r["run_id"])
         self.assertEqual(out["stopped"][0]["state"], "completed",
                          "a finished run must not be re-marked as interrupted")
-
-    def test_detached_runs_are_flagged(self):
-        r = self.start("bg", "--detach", env_extra={"FAKE_CODEX_HANG": "60"})
-        self.assertTrue(r["detached"])
-        row = self.bridge("status", "--run", r["run_id"])["runs"][0]
-        self.assertTrue(row["detached"])
-        self.bridge("stop", "--run", r["run_id"])
 
 
 class Results(BridgeTestCase):
@@ -188,12 +223,51 @@ class ForegroundMode(BridgeTestCase):
         self.assertEqual(out["exit_code"], 0)
         self.assertEqual(out["last_agent_message"], "OK")
 
-    def test_foreground_timeout_interrupts(self):
+    def test_foreground_timeout_records_timed_out_not_interrupted(self):
+        """`timed_out` is its own terminal state so a caller can tell "I stopped
+        it" from "Codex failed" from "it ran out of the time I gave it". Only
+        the third is answered by raising --timeout."""
         out = self.bridge("start", "--foreground", "--timeout", "2", "x",
                           env_extra={"FAKE_CODEX_HANG": "60"})
-        self.assertEqual(out["state"], "interrupted")
+        self.assertEqual(out["state"], "timed_out")
         row = self.bridge("status", "--run", out["run_id"])["runs"][0]
         self.assertIn("timed out", row["error"])
+
+
+class BackgroundTimeout(BridgeTestCase):
+    """D26. `--timeout` used to be accepted in the background, recorded nowhere,
+    and silently do nothing — the deadline only worked with --foreground. With
+    the SessionEnd hook gone it is the only automatic bound left on a run, and
+    unlike the hook it is a per-call value the caller picks rather than a policy
+    the skill imposes."""
+
+    def test_background_timeout_fires_and_records_timed_out(self):
+        r = self.start("x", "--timeout", "2", env_extra={"FAKE_CODEX_HANG": "60"})
+        row = self.wait_for_state(r["run_id"], ("timed_out",), timeout=30)
+        self.assertEqual(row["state"], "timed_out")
+        self.assertIn("timed out", row["error"])
+
+    def test_the_deadline_travels_through_meta(self):
+        """A background run re-execs `__supervise --run-dir`, so nothing reaches
+        the supervisor on the command line. meta.json is the only channel that
+        survives that hop."""
+        r = self.start("x", "--timeout", "45")
+        self.wait_for_state(r["run_id"])
+        meta = json.loads(
+            (self.project / ".codex-runs" / r["run_id"] / "meta.json").read_text())
+        self.assertEqual(meta["timeout_seconds"], 45)
+
+    def test_stopping_a_timed_run_still_records_interrupted(self):
+        """The trap this guards: giving Codex its own session so a timeout can
+        kill its tree would put the supervisor outside the group `stop` signals,
+        so its handler would never fire and a deliberately stopped run would be
+        recorded `failed`. Background runs therefore keep sharing the
+        supervisor's group, and only the foreground path splits them."""
+        r = self.start("x", "--timeout", "600", env_extra={"FAKE_CODEX_HANG": "60"})
+        self.wait_for_state(r["run_id"], ("running",), timeout=30)
+        self.bridge("stop", "--run", r["run_id"])
+        row = self.wait_for_state(r["run_id"], ("interrupted",), timeout=30)
+        self.assertEqual(row["state"], "interrupted")
 
 
 class PromptSources(BridgeTestCase):

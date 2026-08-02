@@ -7,7 +7,10 @@ import unicodedata
 import unittest
 from pathlib import Path
 
-from helpers import BRIDGE, BridgeTestCase, codex_bridge
+from helpers import BRIDGE, BridgeTestCase   # puts the scripts dir on sys.path
+
+import _run                                  # noqa: E402
+import _util                                 # noqa: E402
 
 
 class RegistryLayout(BridgeTestCase):
@@ -37,7 +40,7 @@ class RegistryLayout(BridgeTestCase):
             self.assertTrue((d / name).is_file(), f"missing {name}")
         meta = json.loads((d / "meta.json").read_text())
         for key in ("run_id", "thread_id", "cwd", "project", "sandbox", "isolated",
-                    "argv", "claude_session_id", "detached", "started_at", "state"):
+                    "argv", "claude_session_id", "started_at", "state"):
             self.assertIn(key, meta)
         self.assertEqual(meta["claude_session_id"], "test-session-aaaa")
 
@@ -113,8 +116,8 @@ class UnicodePaths(BridgeTestCase):
         row = self.wait_for_state(r["run_id"])
         self.assertEqual(row["state"], "completed")
         rec = self.argv_records()[-1]
-        self.assertEqual(codex_bridge.nfc(rec["cwd"]),
-                         codex_bridge.nfc(str(self.project)))
+        self.assertEqual(_util.nfc(rec["cwd"]),
+                         _util.nfc(str(self.project)))
         self.assertIn("작업을 해줘", rec["argv"][-1])
 
     def test_relative_paths_render_correctly_under_nfd(self):
@@ -179,14 +182,14 @@ class StateReporting(BridgeTestCase):
         deadline = time.time() + 30
         while time.time() < deadline and (not events.exists() or events.stat().st_size == 0):
             time.sleep(0.1)
-        old = time.time() - (codex_bridge.STALL_SECONDS + 120)
+        old = time.time() - (_run.STALL_SECONDS + 120)
         os.utime(events, (old, old))
 
         row = self.bridge("status", "--run", r["run_id"])["runs"][0]
         self.assertEqual(row["state"], "stalled")
-        self.assertGreaterEqual(row["idle_seconds"], codex_bridge.STALL_SECONDS)
+        self.assertGreaterEqual(row["idle_seconds"], _run.STALL_SECONDS)
         # Advisory only: the process must still be alive.
-        self.assertTrue(codex_bridge.pid_alive(row["codex_pid"]),
+        self.assertTrue(_util.pid_alive(row["codex_pid"]),
                         "a stalled run must never be auto-killed")
         self.bridge("stop", "--run", r["run_id"])
 
@@ -236,6 +239,67 @@ class StateReporting(BridgeTestCase):
     def test_status_of_unknown_run_fails_cleanly(self):
         out = self.bridge("status", "--run", "nope", expect_rc=1)
         self.assertIn("no such run", out["error"])
+
+
+class ImplicitTargetResolution(BridgeTestCase):
+    """F4: `resume --last` used to pick `runs[-1]` project-wide, no filter on
+    cwd, label or kind — a read-only caller could inherit another run's label
+    AND its danger-full-access sandbox. D27 replaces that with: exactly one
+    non-terminal run wins unambiguously, zero falls back to the newest (and
+    says so), two or more fails loud with the candidate list."""
+
+    def _running(self, label):
+        r = self.start(f"long {label}", "--label", label,
+                       env_extra={"FAKE_CODEX_HANG": "120"})
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            row = self.bridge("status", "--run", r["run_id"])["runs"][0]
+            if row["state"] == "running" and row["codex_pid"]:
+                return r
+            time.sleep(0.1)
+        self.fail(f"run {label} never reached running")
+
+    def test_exactly_one_non_terminal_run_wins_even_if_not_the_newest(self):
+        stale_live = self._running("stale-live")
+        r_newer = self.start("newer, but terminal", "--label", "newer")
+        self.wait_for_state(r_newer["run_id"])
+
+        out = self.bridge("resume", "--last", "--force", "continue")
+        self.assertEqual(out["resolved_from_run_id"], stale_live["run_id"],
+                         "the only non-terminal run must win over a newer terminal one")
+        self.assertEqual(out["thread_id"], stale_live["thread_id"])
+        self.assertEqual(out["label"], "stale-live")
+        self.bridge("stop", "--run", stale_live["run_id"])
+
+    def test_zero_non_terminal_runs_falls_back_to_newest_and_says_so(self):
+        r1 = self.start("first", "--label", "a")
+        self.wait_for_state(r1["run_id"])
+        r2 = self.start("second", "--label", "b")
+        self.wait_for_state(r2["run_id"])
+
+        out = self.bridge("resume", "--last", "continue")
+        self.assertEqual(out["resolved_from_run_id"], r2["run_id"])
+        self.assertEqual(out["label"], "b")
+        self.assertIn("newest", out["resolved_from"])
+
+    def test_two_or_more_non_terminal_runs_fails_loud(self):
+        a = self._running("a")
+        b = self._running("b")
+
+        out = self.bridge("resume", "--last", "continue", expect_rc=1)
+        self.assertIn("multiple non-terminal", out["error"])
+        ids = {c["run_id"] for c in out["candidates"]}
+        self.assertEqual(ids, {a["run_id"], b["run_id"]})
+
+        self.bridge("stop", "--run", a["run_id"])
+        self.bridge("stop", "--run", b["run_id"])
+
+    def test_a_second_turn_on_a_live_thread_is_refused_without_force(self):
+        a = self._running("a")
+        out = self.bridge("resume", a["run_id"], "second turn", expect_rc=1)
+        self.assertIn("live turn", out["error"])
+        self.assertEqual(out["thread_id"], a["thread_id"])
+        self.bridge("stop", "--run", a["run_id"])
 
 
 if __name__ == "__main__":

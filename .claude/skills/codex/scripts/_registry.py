@@ -18,6 +18,8 @@ on top of that one non-negotiable.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -28,7 +30,7 @@ from pathlib import Path
 
 from _util import git_toplevel, nfc, now_iso, pid_alive
 
-TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned")
+TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned", "timed_out")
 
 
 # -- locating things --------------------------------------------------------
@@ -55,10 +57,36 @@ def ensure_runs_dir(d: Path) -> Path:
 
 
 def new_run_id(label=None) -> str:
-    """Sortable, human-readable, and collision-free under parallel starts."""
+    """Sortable, human-readable, and collision-resistant under parallel starts.
+
+    Resistant, not free: the stamp has one-second resolution and the suffix is
+    16 bits, so two runs started in the same second under the same label collide
+    about once in 65,536. `batch start` makes same-second same-label starts the
+    normal case rather than a freak one, so callers go through `claim_run_dir`,
+    which retries.
+    """
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-")[:32] if label else ""
     return f"{stamp}-{slug or 'run'}-{uuid.uuid4().hex[:4]}"
+
+
+def claim_run_dir(runs_dir: Path, label=None, attempts: int = 5):
+    """Generate a run id and take exclusive ownership of its directory.
+
+    `mkdir` without `exist_ok` is the claim: it either creates the directory or
+    raises, atomically, so two processes racing on the same id cannot both
+    believe they own it. Returns (run_id, run_dir).
+    """
+    for _ in range(attempts):
+        run_id = new_run_id(label)
+        run_dir = runs_dir / run_id
+        try:
+            run_dir.mkdir(parents=True)
+        except FileExistsError:
+            continue
+        return run_id, run_dir
+    raise FileExistsError(
+        f"could not claim a free run id under {runs_dir} in {attempts} attempts")
 
 
 # -- meta.json --------------------------------------------------------------
@@ -70,19 +98,80 @@ def read_meta(run_dir: Path):
         return None
 
 
+@contextlib.contextmanager
+def _meta_lock(run_dir: Path):
+    """Serialise read-modify-write on one run's meta.json.
+
+    `os.replace` makes the *swap* atomic, which is enough for a reader — but not
+    for two writers merging fields, because each reads a base the other is about
+    to invalidate and the loser's field vanishes. The lock file is separate from
+    meta.json on purpose: locking the file being replaced would leave each writer
+    holding a lock on an inode that is no longer the current one.
+    """
+    lock = run_dir / ".meta.lock"
+    fh = None
+    try:
+        fh = lock.open("a+")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
+    except OSError:
+        # A registry we cannot lock (read-only mount, exotic filesystem) must
+        # still be usable: fall back to unserialised access rather than failing
+        # the run outright. Unique tmp names below keep this from corrupting
+        # anything; the only loss is the merge guarantee.
+        yield
+    finally:
+        if fh is not None:
+            with contextlib.suppress(Exception):
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            with contextlib.suppress(Exception):
+                fh.close()
+
+
 def write_meta(run_dir: Path, meta: dict):
     """Atomic: a concurrent reader sees the old file or the new one, never a
-    half-written one."""
-    tmp = run_dir / ".meta.json.tmp"
-    tmp.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(run_dir / "meta.json")
+    half-written one.
+
+    The tmp name carries pid and a random suffix because the *rename* being
+    atomic does not make a *shared staging path* safe — a second writer opening
+    the same tmp path truncates the first writer's inode, and the first writer's
+    rename then fails on a source that no longer exists. Measured: 152 uncaught
+    FileNotFoundError in 240 concurrent writes before this changed.
+    """
+    tmp = run_dir / f".meta.json.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        tmp.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(run_dir / "meta.json")
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def update_meta(run_dir: Path, **fields):
-    meta = read_meta(run_dir) or {}
-    meta.update(fields)
-    write_meta(run_dir, meta)
-    return meta
+    """Merge `fields` into meta.json under the run's lock."""
+    with _meta_lock(run_dir):
+        meta = read_meta(run_dir) or {}
+        meta.update(fields)
+        write_meta(run_dir, meta)
+        return meta
+
+
+def update_meta_if(run_dir: Path, expected_states, **fields):
+    """Compare-and-set on `state`: merge `fields` only if the state on disk is
+    still one of `expected_states`, and return whatever is actually on disk.
+
+    A caller that decided from a snapshot cannot commit through `update_meta`,
+    because between snapshot and commit the run may have finished and written
+    its real outcome — and overwriting that outcome is not self-healing. Reading
+    and writing inside one lock is what makes the check meaningful.
+    """
+    with _meta_lock(run_dir):
+        meta = read_meta(run_dir) or {}
+        if meta.get("state") not in expected_states:
+            return meta
+        meta.update(fields)
+        write_meta(run_dir, meta)
+        return meta
 
 
 # -- finding runs -----------------------------------------------------------
@@ -150,5 +239,10 @@ def reap(run_dir: Path, meta: dict) -> dict:
                 return meta
         except OSError:
             pass
-    return update_meta(run_dir, state="orphaned",
-                       ended_at=meta.get("ended_at") or now_iso())
+    # Everything above judged from the caller's snapshot, and `pid_alive` is a
+    # slow enough check that the supervisor can finish and write `completed`
+    # while we are still deciding. Commit conditionally so that a real outcome
+    # always beats our stale one — `orphaned, exit_code: 0` is a lie that never
+    # self-heals once written.
+    return update_meta_if(run_dir, ("running", "starting"),
+                          state="orphaned", ended_at=now_iso())

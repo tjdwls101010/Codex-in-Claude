@@ -19,6 +19,8 @@ knowledge that it is talking to a fake:
   FAKE_CODEX_VERSION    what `--version` prints (default: codex-cli 0.144.1-fake)
   FAKE_CODEX_LOGIN_RC   exit code for `login status` (default 0)
   FAKE_CODEX_THREAD_ID  thread id to substitute into the replayed stream
+  FAKE_CODEX_IGNORE_SIGINT  ignore SIGINT instead of exiting, so the caller's
+                            signal ladder has to escalate to SIGTERM/SIGKILL
 """
 
 import json
@@ -28,6 +30,28 @@ import sys
 import time
 
 DEFAULT_THREAD = "019f0000-0000-7000-0000-00000000fake"
+
+
+def invocation_thread_id(argv):
+    """Model how real Codex hands out thread ids: a fresh `exec` opens a new
+    thread, and `exec resume <ref>` reports the same one back.
+
+    A shim that answered every invocation with one constant id looked harmless
+    until a batch resumed several members at once — every member then appeared
+    to be a second live turn on one shared thread, and the wrapper refused them.
+    That refusal was correct; the fiction was.
+    """
+    if "resume" in argv[:2]:
+        rest = argv[argv.index("resume") + 1:]
+        for a in rest:
+            if a == "--last":
+                break
+            if not a.startswith("-"):
+                return a
+        return DEFAULT_THREAD
+    # Distinct per invocation, and stable within it. Keeps the recognisable
+    # shape so a failure message still reads as coming from the fake.
+    return f"019f0000-0000-7000-0000-{os.getpid():012x}"[:36]
 
 DEFAULT_STREAM = [
     {"type": "thread.started", "thread_id": DEFAULT_THREAD},
@@ -148,6 +172,8 @@ def main():
     interrupted = {"flag": False}
 
     def on_int(signum, frame):
+        if os.environ.get("FAKE_CODEX_IGNORE_SIGINT"):
+            return
         interrupted["flag"] = True
         raise KeyboardInterrupt
 
@@ -156,7 +182,7 @@ def main():
     pre = float(os.environ.get("FAKE_CODEX_PRE_DELAY", "0"))
     delay = float(os.environ.get("FAKE_CODEX_DELAY", "0"))
     hang = float(os.environ.get("FAKE_CODEX_HANG", "0"))
-    tid = os.environ.get("FAKE_CODEX_THREAD_ID")
+    tid = os.environ.get("FAKE_CODEX_THREAD_ID") or invocation_thread_id(argv)
 
     try:
         if pre:

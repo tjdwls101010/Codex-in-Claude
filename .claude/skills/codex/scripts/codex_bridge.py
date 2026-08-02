@@ -15,6 +15,9 @@ the plugin and symlink installs:
     _registry.py   <project>/.codex-runs — locating, reading and reaping runs
     _events.py     reading the event stream, the filter levels, summarising
     _codex.py      argv composition, the two invariants, spawning, thread DB
+    _worktree.py   cutting a git worktree per writing batch member, and removing it
+    _run.py        building a run (`create_run`) and describing one (`run_row`)
+    _batch.py      groups: the manifest, the batch subcommands, the group views
 
 Start here for "what can it do"; go to `_codex.py` for "what exactly does it run"
 and `_events.py` for "what reaches my context".
@@ -31,164 +34,43 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
-    SANDBOX_MODES, THREAD_ID_WAIT, apply_preamble, build_argv, query_threads,
-    spawn_supervised, state_db_path, supervise,
+    SANDBOX_MODES, query_threads, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
-    DEFAULT_LEVEL, LEVELS, find_item, format_events, read_events, scan_progress,
-    strip_wrapper,
+    CursorOutOfRange, DEFAULT_LEVEL, LEVELS, find_item, format_events, read_events,
+    scan_progress, strip_wrapper,
 )
+from _batch import (  # noqa: E402
+    TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
+    group_snapshot, list_groups, resolve_group, unstarted_members,
+    vanished_members,
+)
+from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
-    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, new_run_id, read_meta,
-    reap, resolve_project, resolve_runs_dir, update_meta, write_meta,
+    TERMINAL_STATES, find_run, iter_runs, read_meta, reap, resolve_project,
+    resolve_runs_dir, update_meta_if,
+)
+from _run import (  # noqa: E402
+    WRITING_SANDBOXES, create_run, refuse_concurrent_turn, resolve_implicit_run,
+    run_row,
 )
 from _util import (  # noqa: E402
-    clip, codex_home, emit, fail, git_toplevel, nfc, now_iso, pid_alive,
+    clip, codex_home, emit, fail, git_toplevel, now_iso, pid_alive,
 )
 
 # `show --item` default cap. A silently truncated blob is worse than a loud one,
 # so truncation is always announced along with how much was withheld.
 SHOW_MAX_BYTES = 20000
 
-# Advisory only. `idle_seconds` is always reported alongside it, so this number
-# never decides anything by itself: one long `command_execution` is legitimately
-# silent, which is why silence alone is not failure — silence plus no
-# in-progress item is.
-STALL_SECONDS = 300
-
 
 # --------------------------------------------------------------------------
-# start / resume / review — all three build a run the same way
+# start / resume / review — all three build a run the same way, in `_run.py`
 # --------------------------------------------------------------------------
-
-def read_prompt(args) -> str:
-    if getattr(args, "prompt_file", None):
-        return Path(args.prompt_file).read_text(encoding="utf-8")
-    p = getattr(args, "prompt", None)
-    if p == "-" or p is None:
-        if not sys.stdin.isatty():
-            data = sys.stdin.read()
-            if data.strip():
-                return data
-        if p is None:
-            return ""
-    return p or ""
-
-
-def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None):
-    project = resolve_project(args.project)
-    runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
-
-    cwd = (Path(args.cwd).expanduser().resolve() if getattr(args, "cwd", None)
-           else (Path(base["cwd"]) if base else project))
-    if not cwd.is_dir():
-        fail(f"cwd does not exist: {cwd}")
-
-    prompt = read_prompt(args)
-    if kind != "review" and not prompt.strip():
-        fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
-
-    isolated = base["isolated"] if base else True
-    if getattr(args, "inherit_config", False):
-        isolated = False
-    if getattr(args, "isolate", False):
-        isolated = True
-
-    sandbox = args.sandbox or (base["sandbox"] if base else "workspace-write")
-    priority = isolated if getattr(args, "priority", None) is None else args.priority
-
-    run_id = new_run_id(args.label or (base.get("label") if base else None))
-    run_dir = runs_dir / run_id
-    run_dir.mkdir(parents=True)
-
-    meta = {
-        "run_id": run_id,
-        "run_dir": str(run_dir),
-        "thread_id": base.get("thread_id") if base else None,
-        "parent_run_id": base.get("run_id") if base else None,
-        "kind": kind,
-        "label": args.label or (base.get("label") if base else None),
-        "prompt_preview": clip(prompt, 300),
-        "cwd": str(cwd),
-        "project": str(project),
-        "sandbox": sandbox,
-        "model": args.model or (base.get("model") if base else None),
-        "effort": args.effort or (base.get("effort") if base else None),
-        "isolated": isolated,
-        "priority": priority,
-        "schema_path": (str(Path(args.schema).expanduser().resolve())
-                        if getattr(args, "schema", None)
-                        else (base.get("schema_path") if base else None)),
-        "images": [str(Path(i).expanduser().resolve())
-                   for i in (getattr(args, "image", None) or [])],
-        "add_dirs": [str(Path(d).expanduser().resolve())
-                     for d in (getattr(args, "add_dir", None) or [])],
-        "extra_config": list(getattr(args, "config", None) or []),
-        # Only where Codex's own guard does not apply. The wrapper does not
-        # silently disable a Codex safety default just to keep its own argv
-        # uniform.
-        "skip_git_repo_check": git_toplevel(cwd) is None,
-        "preamble": not args.no_preamble,
-        "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
-        "detached": bool(getattr(args, "detach", False)),
-        "foreground": bool(getattr(args, "foreground", False)),
-        "started_at": now_iso(),
-        "ended_at": None, "exit_code": None, "state": "starting",
-        "codex_pid": None, "supervisor_pid": None, "pgid": None,
-    }
-
-    if base and args.sandbox and args.sandbox != base["sandbox"]:
-        # A sandbox change is never silent, in either direction.
-        meta["sandbox_changed_from"] = base["sandbox"]
-
-    if meta["schema_path"] and not Path(meta["schema_path"]).exists():
-        fail(f"schema file not found: {meta['schema_path']}")
-    for img in meta["images"]:
-        if not Path(img).exists():
-            fail(f"image not found: {img}")
-
-    send = apply_preamble(prompt, meta["preamble"]) if prompt.strip() else None
-    meta["argv"] = build_argv(meta, kind=kind, prompt=send,
-                              thread_ref=thread_ref, review_args=review_args)
-    write_meta(run_dir, meta)
-
-    if meta["foreground"]:
-        supervise(run_dir, timeout=getattr(args, "timeout", None))
-        m = read_meta(run_dir) or {}
-        info = scan_progress(run_dir / "events.jsonl")
-        return {"run_id": run_id, "thread_id": m.get("thread_id"),
-                "state": m.get("state"), "exit_code": m.get("exit_code"),
-                "events": str(run_dir / "events.jsonl"), "project": str(project),
-                "sandbox": sandbox, "isolated": isolated,
-                "last_agent_message": info["last_agent_message"],
-                "usage": info["usage"]}
-
-    spawn_supervised(run_dir)
-    # Hand back a usable handle as soon as the thread id exists, and never block
-    # the caller past that window.
-    deadline = time.time() + THREAD_ID_WAIT
-    thread_id = None
-    while time.time() < deadline:
-        m = read_meta(run_dir) or {}
-        thread_id = m.get("thread_id")
-        if thread_id or m.get("state") in TERMINAL_STATES:
-            break
-        time.sleep(0.05)
-    m = read_meta(run_dir) or {}
-    out = {"run_id": run_id, "thread_id": thread_id,
-           "state": m.get("state", "starting"),
-           "events": str(run_dir / "events.jsonl"), "project": str(project),
-           "sandbox": sandbox, "isolated": isolated, "detached": meta["detached"]}
-    if "sandbox_changed_from" in meta:
-        out["sandbox_changed_from"] = meta["sandbox_changed_from"]
-    return out
-
 
 def cmd_start(args):
     emit(create_run(args, kind="start"))
@@ -214,11 +96,16 @@ def cmd_resume(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
 
-    base, thread_ref = None, None
+    base, thread_ref, resolved_from = None, None, None
     if args.last:
-        runs = [(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id")]
-        if runs:
-            _, base = runs[-1]  # iter_runs yields oldest-first by started_at
+        # F4: this used to be `runs[-1]` with no filter on cwd, label or kind —
+        # a read-only caller could inherit another run's label AND its
+        # danger-full-access sandbox. resolve_implicit_run enforces D27: exactly
+        # one non-terminal run is unambiguous, zero falls back to the newest and
+        # says so, two or more fails loud with the candidate list.
+        candidates = [(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id")]
+        if candidates:
+            _, base, resolved_from = resolve_implicit_run(candidates)
             thread_ref = base["thread_id"]
         else:
             # Nothing in the registry: fall back to Codex's own thread list for
@@ -229,18 +116,40 @@ def cmd_resume(args):
                 fail("no previous run in this project's registry and no Codex thread "
                      "recorded for this directory", project=str(project))
             thread_ref = rows[0]["id"]
+            resolved_from = "Codex's own thread list (no registry entry)"
     else:
         if not args.ref:
             fail("resume needs a run id, thread id, thread name, or --last")
         _, base = find_run(runs_dir, args.ref)
+        if base and not base.get("thread_id"):
+            # The pass-through below exists for refs this registry has never
+            # seen. This one it has, and it has no thread: the run's Codex
+            # process died before emitting `thread.started`. Handing the run id
+            # to Codex as if it were a thread name only moves the failure
+            # somewhere the caller cannot read it.
+            fail("nothing to resume: that run never recorded a thread id, so "
+                 "there is no conversation to continue",
+                 run_id=base.get("run_id"), state=base.get("state"))
         # An unknown ref is not an error: `codex exec resume` also accepts a
         # thread name, so pass it through.
         thread_ref = (base or {}).get("thread_id") or args.ref
 
+    # F4's second reproduction: two turns run concurrently on one thread, rc 0,
+    # no warning. Refuse a second live turn on the same thread unless the
+    # caller explicitly opts in.
+    refuse_concurrent_turn(runs_dir, thread_ref, args.force)
+
     # A resumed run is a NEW run pointing at the SAME thread, so each turn gets
     # its own event log while the thread stays linked.
-    emit(create_run(args, kind="resume", base=dict(base) if base else None,
-                    thread_ref=thread_ref))
+    out = create_run(args, kind="resume", base=dict(base) if base else None,
+                     thread_ref=thread_ref)
+    if args.last:
+        # The escalation F4 reproduced was invisible precisely because nothing
+        # was echoed — say which run (and its label/sandbox) this run inherited.
+        out["resolved_from_run_id"] = base.get("run_id") if base else None
+        out["resolved_from"] = resolved_from
+        out["label"] = base.get("label") if base else None
+    emit(out)
 
 
 def cmd_review(args):
@@ -269,72 +178,6 @@ def cmd_review(args):
 # status
 # --------------------------------------------------------------------------
 
-def run_row(run_dir: Path, meta: dict, project: Path):
-    meta = reap(run_dir, meta)
-    events_path = run_dir / "events.jsonl"
-    info = scan_progress(events_path)
-    now = time.time()
-
-    elapsed = None
-    try:
-        t0 = datetime.fromisoformat(meta["started_at"].replace("Z", "+00:00")).timestamp()
-        elapsed = int(now - t0)
-    except Exception:
-        pass
-    idle = None
-    if events_path.exists() and events_path.stat().st_size > 0:
-        idle = int(now - events_path.stat().st_mtime)
-
-    state = meta.get("state")
-    if state == "running" and idle is not None and idle >= STALL_SECONDS:
-        state = "stalled"
-
-    stderr_tail = None
-    sp = run_dir / "stderr.log"
-    if sp.exists() and sp.stat().st_size:
-        txt = sp.read_text(encoding="utf-8", errors="replace")
-        # Codex always writes `Reading additional input from stdin...` here when
-        # stdin is not a TTY. It is normal output, not failure; surfacing it as
-        # an error would train the reader to ignore this field entirely.
-        txt = "\n".join(l for l in txt.splitlines()
-                        if l.strip() and "Reading additional input from stdin" not in l)
-        stderr_tail = txt[-800:] or None
-
-    # Measured: review runs report all-zero usage even after real work. Zero
-    # would be a wrong number; null is a true one.
-    usage = info["usage"]
-    review_zero = meta.get("kind") == "review" and usage is not None and not any(usage.values())
-
-    row = {
-        "run_id": meta.get("run_id"),
-        "thread_id": meta.get("thread_id") or info["thread_id"],
-        "parent_run_id": meta.get("parent_run_id"), "kind": meta.get("kind"),
-        "label": meta.get("label"), "state": state,
-        "codex_pid": meta.get("codex_pid"), "pgid": meta.get("pgid"),
-        "started_at": meta.get("started_at"), "ended_at": meta.get("ended_at"),
-        "elapsed_seconds": elapsed, "idle_seconds": idle,
-        "exit_code": meta.get("exit_code"), "sandbox": meta.get("sandbox"),
-        "model": meta.get("model"), "effort": meta.get("effort"),
-        "isolated": meta.get("isolated"), "detached": meta.get("detached"),
-        "cwd": meta.get("cwd"),
-        "usage": None if review_zero else usage,
-        "turns_completed": info["turns_completed"], "commands": info["commands"],
-        "files_changed": info["files_changed"], "config_error_events": info["errors"],
-        "in_progress_item": info["in_progress_item"],
-        "last_agent_message": clip(info["last_agent_message"] or "", 400) or None,
-        "events": str(events_path),
-    }
-    if review_zero:
-        row["usage_note"] = "review runs report zero usage; unavailable, not free"
-    if meta.get("sandbox_changed_from"):
-        row["sandbox_changed_from"] = meta["sandbox_changed_from"]
-    if stderr_tail:
-        row["stderr_tail"] = stderr_tail
-    if meta.get("error"):
-        row["error"] = meta["error"]
-    return row
-
-
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -344,23 +187,60 @@ def cmd_status(args):
         if not m:
             fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
         rows.append(run_row(rd, m, project))
+    elif args.group:
+        if args.follow:
+            return follow_group(args, project, runs_dir)
+        for rd, m in resolve_group(runs_dir, args.group):
+            rows.append(run_row(rd, m, project))
+        never = (unstarted_members(runs_dir, args.group)
+                 + vanished_members(runs_dir, args.group))
+        running, done, failed, gstate = group_snapshot(rows, len(never))
+        out = {"project": str(project), "group": args.group, "runs": rows,
+               "running": running, "done": done, "failed": failed,
+               "total_runs": len(rows), "runs_truncated": 0,
+               "group_state": gstate}
+        if never:
+            out["unstarted"] = never
+        emit(out)
     else:
         for rd, m in iter_runs(runs_dir):
             if args.thread and m.get("thread_id") != args.thread:
                 continue
             rows.append(run_row(rd, m, project))
-        if not args.all:
-            rows = rows[-20:]
 
+    # F3: derive every summary from the FULL list before truncating for
+    # display. A phase gate is literally `len(running) == 0` — deriving it
+    # from an already-truncated `rows` let live runs older than the newest 20
+    # fall off the page, so the gate passed while they were still writing.
+    total_runs = len(rows)
     by_thread = {}
     for r in rows:
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
+    running = [r["run_id"] for r in rows if r["state"] in ("running", "stalled")]
+    done = [r["run_id"] for r in rows if r["state"] == "completed"]
+    failed = [r["run_id"] for r in rows
+              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
+    known = {r["thread_id"] for r in rows}
 
-    out = {"project": str(project), "runs_dir": str(runs_dir), "runs": rows,
-           "threads": by_thread,
-           "running": [r["run_id"] for r in rows if r["state"] in ("running", "stalled")]}
+    display_rows = rows
+    runs_truncated = 0
+    if not args.run and not args.all and total_runs > 20:
+        tail = rows[-20:]
+        # Truncate the display list only — a non-terminal row must survive
+        # truncation no matter how old, or `running` above and `runs` below
+        # would disagree about which runs are still alive.
+        kept_live = [r for r in rows[:-20] if r["state"] not in TERMINAL_STATES]
+        display_rows = kept_live + tail
+        runs_truncated = total_runs - len(display_rows)
+
+    # Groups are listed even when no run in the (truncated) view belongs to one:
+    # discovering that this project has batches at all is the step that makes
+    # `status --group` and `--resume-from` reachable.
+    out = {"project": str(project), "runs_dir": str(runs_dir), "runs": display_rows,
+           "threads": by_thread, "running": running, "done": done, "failed": failed,
+           "total_runs": total_runs, "runs_truncated": runs_truncated,
+           "groups": list_groups(runs_dir)}
     if args.include_external:
-        known = {r["thread_id"] for r in rows}
         out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]
         out["external_note"] = (
@@ -382,24 +262,32 @@ def cmd_log(args):
         if not meta:
             fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
     else:
-        runs = list(iter_runs(runs_dir))
-        if not runs:
+        # F4: this used to be `runs[-1]` with no filter at all. Apply the same
+        # D27 resolution as `resume --last` — exactly one non-terminal run is
+        # unambiguous, zero falls back to the newest, two or more fails loud
+        # instead of silently picking across concurrent runs.
+        candidates = list(iter_runs(runs_dir))
+        if not candidates:
             fail("no runs in this project", runs_dir=str(runs_dir))
-        rd, meta = runs[-1]
+        rd, meta, _ = resolve_implicit_run(candidates)
 
     events_path = rd / "events.jsonl"
     rel_to = Path(meta.get("cwd") or project)
+    run_id = meta.get("run_id")
     cursor = args.since
 
     def dump(cur):
-        events, new_cur = read_events(events_path, cur)
+        try:
+            events, new_cur = read_events(events_path, cur)
+        except CursorOutOfRange as e:
+            fail(str(e), run_id=run_id, since=cur)
         for line in format_events(events, args.level, rel_to):
             sys.stdout.write(line + "\n")
         return new_cur
 
     if not args.follow:
         cursor = dump(cursor)
-        sys.stdout.write(f"# cursor={cursor}\n")
+        sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
         sys.stdout.flush()
         return
 
@@ -415,12 +303,12 @@ def cmd_log(args):
         if st in TERMINAL_STATES:
             cursor = dump(cursor)
             sys.stdout.write(f"run.{st} run={m.get('run_id')} exit={m.get('exit_code')}\n")
-            sys.stdout.write(f"# cursor={cursor}\n")
+            sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
         if deadline and time.time() > deadline:
             sys.stdout.write(f"run.still-running run={m.get('run_id')} state={st}\n")
-            sys.stdout.write(f"# cursor={cursor}\n")
+            sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
         time.sleep(args.interval)
@@ -504,9 +392,11 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
 
     result["signals_sent"] = sent
     result["signalled"] = bool(sent)
-    m = read_meta(run_dir) or {}
-    if m.get("state") in ("running", "starting", "stalled"):
-        m = update_meta(run_dir, state="interrupted", ended_at=now_iso())
+    # Compare-and-set, not a plain write: the supervisor may have recorded its
+    # own outcome (`completed`, or `timed_out` if its deadline fired) between
+    # the last signal and this line, and that outcome is the true one.
+    m = update_meta_if(run_dir, ("running", "starting", "stalled"),
+                       state="interrupted", ended_at=now_iso())
     result["state"] = m.get("state")
     result["thread_id"] = m.get("thread_id")
     return result
@@ -517,19 +407,31 @@ def cmd_stop(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     session = os.environ.get("CLAUDE_CODE_SESSION_ID")
     if args.run:
-        rd, m = find_run(runs_dir, args.run)
-        if not m:
-            fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
-        targets = [(rd, m)]
-    elif args.all_mine:
+        targets = []
+        for ref in args.run:
+            rd, m = find_run(runs_dir, ref)
+            if not m:
+                fail(f"no such run: {ref}", runs_dir=str(runs_dir))
+            targets.append((rd, m))
+    elif args.group:
+        # Not a name match on process or label — B8 forbids that, and for good
+        # reason: matching by name is how concurrent runs end up killing each
+        # other. This resolves a group id recorded in the manifest to run ids,
+        # then signals each run's own pgid exactly like --run does. The group
+        # name never reaches a process.
+        targets = []
+        for rd, m in resolve_group(runs_dir, args.group):
+            m = reap(rd, m)
+            if m.get("state") in ("running", "starting", "stalled"):
+                targets.append((rd, m))
+    elif args.all:
         targets = []
         for rd, m in iter_runs(runs_dir):
             m = reap(rd, m)
-            if (m.get("state") in ("running", "starting", "stalled")
-                    and m.get("claude_session_id") == session):
+            if m.get("state") in ("running", "starting", "stalled"):
                 targets.append((rd, m))
     else:
-        fail("stop needs --run <id>, or --all-mine typed explicitly")
+        fail("stop needs --run <id> (repeatable), --group <name>, or --all")
     emit({"stopped": [signal_run(rd, m, grace=args.grace) for rd, m in targets],
           "claude_session_id": session})
 
@@ -541,6 +443,10 @@ def cmd_stop(args):
 def cmd_result(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    if args.group:
+        return cmd_result_group(args, project, runs_dir)
+    if not args.run:
+        fail("result needs --run <id> or --group <name>")
     rd, meta = find_run(runs_dir, args.run)
     if not meta:
         fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
@@ -556,6 +462,10 @@ def cmd_result(args):
     out = {"run_id": meta["run_id"], "thread_id": meta.get("thread_id") or info["thread_id"],
            "state": meta.get("state"), "exit_code": meta.get("exit_code"),
            "message": message, "usage": None if review_zero else usage,
+           # F8: same clipped `turn.failed` error as `run_row`, so `result`
+           # doesn't force a second `log` call to learn why a run failed.
+           "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
+                          if info["turn_failed"] else None),
            "files_changed": info["files_changed"], "commands": info["commands"]}
     if review_zero:
         out["usage_note"] = "review runs report zero usage; unavailable, not free"
@@ -673,6 +583,48 @@ def cmd_doctor(args):
         report["runs_dir_writable"] = False
         blockers.append(f"runs dir is not writable ({target}): {e}")
 
+    # Facts, not a policy. Nothing here deletes anything or nags about a
+    # threshold: the run directories hold event streams the caller may still
+    # want, and the worktrees hold results nothing else has a copy of. What the
+    # caller cannot see without being told is that batch runs leave both behind
+    # and that only `batch clean --group` removes them.
+    if runs_dir.is_dir():
+        total = sum(p.stat().st_size for p in runs_dir.rglob("*") if p.is_file())
+        report["runs_dir_bytes"] = total
+        report["runs_dir_runs"] = sum(1 for _ in iter_runs(runs_dir))
+        report["groups"] = list_groups(runs_dir)
+        # §1.7. Grouped by recorded cwd, never by git top level — one
+        # repository's worktrees all share a top level, so that comparison
+        # would warn on exactly the arrangement that makes it safe.
+        by_cwd = {}
+        for rd, m in iter_runs(runs_dir):
+            # Reaped, like `concurrent_writers`. meta.json says `running` until
+            # something notices the supervisor died, so grouping on it as
+            # written names dead runs as live writers — and this is the report
+            # a caller consults precisely when they suspect something is stuck,
+            # which is exactly when stale state is most likely.
+            m = reap(rd, m)
+            if m.get("state") in TERMINAL_STATES:
+                continue
+            by_cwd.setdefault(m.get("cwd"), []).append(m)
+        for cwd, ms in sorted(by_cwd.items(), key=lambda kv: str(kv[0])):
+            writers = [m for m in ms if m.get("sandbox") in WRITING_SANDBOXES]
+            if len(ms) > 1 and writers:
+                warnings.append(
+                    f"{len(ms)} live runs share {cwd}, {len(writers)} of which can "
+                    f"write to it: {', '.join(m.get('run_id') for m in ms)}. None of "
+                    f"them can tell another agent's change from its own. Runs in "
+                    f"their own worktrees are exempt and will not appear here.")
+
+        live_wt = [p for p in worktrees_registered(project) if p.exists()]
+        report["worktrees"] = len(live_wt)
+        if live_wt:
+            warnings.append(
+                f"{len(live_wt)} git worktree(s) from batch runs are still "
+                f"checked out under {runs_dir}. Each is a full working copy and "
+                f"holds its run's uncommitted results; `batch clean --group "
+                f"<name>` removes a group's once you have collected them.")
+
     db = state_db_path()
     report["thread_db"] = str(db) if db else None
     report["thread_db_readable"] = bool(query_threads(limit=1)) if db else False
@@ -681,14 +633,6 @@ def cmd_doctor(args):
             f"{db} exists but no threads could be read. The filename is "
             "version-stamped, so a Codex upgrade may have changed its schema; "
             "`--include-external` and a registry-less `--last` degrade, nothing else.")
-
-    orphans = [m.get("run_id") for rd, m0 in iter_runs(runs_dir)
-               for m in [reap(rd, m0)]
-               if m.get("state") in ("running", "stalled") and m.get("detached")]
-    report["detached_running"] = orphans
-    if orphans:
-        warnings.append("detached runs still marked running — these are exempt from "
-                        f"session-end cleanup and will outlive this session: {orphans}")
 
     report["blockers"] = blockers
     report["warnings"] = warnings
@@ -717,8 +661,10 @@ def add_run_options(p, *, kind):
     p.add_argument("--schema")
     p.add_argument("--config", action="append", metavar="k=v")
     p.add_argument("--foreground", action="store_true")
-    p.add_argument("--timeout", type=float)
-    p.add_argument("--detach", action="store_true")
+    p.add_argument("--timeout", type=float,
+                   help="give the run this many seconds, then SIGINT its process "
+                        "group and record state=timed_out. Works in background "
+                        "and foreground. No default: no flag, no deadline.")
     p.add_argument("--no-preamble", action="store_true")
     if kind in ("start", "resume"):
         p.add_argument("--image", action="append")
@@ -742,6 +688,8 @@ def build_parser():
     p = sub.add_parser("resume", help="continue an existing Codex thread")
     add_common(p); add_run_options(p, kind="resume")
     p.add_argument("--last", action="store_true")
+    p.add_argument("--force", action="store_true",
+                   help="allow a second turn on a thread that already has one running")
     p.add_argument("rest", nargs="*", metavar="[REF] PROMPT",
                    help="run id / thread id / thread name, then the prompt; "
                         "with --last, just the prompt")
@@ -762,8 +710,15 @@ def build_parser():
     add_common(p)
     p.add_argument("--run")
     p.add_argument("--thread")
+    p.add_argument("--group", help="report on one batch group's members only")
     p.add_argument("--all", action="store_true")
     p.add_argument("--include-external", action="store_true")
+    p.add_argument("--follow", action="store_true",
+                   help="with --group: print each member state change, then a "
+                        "terminal group line, then exit. Pair with Monitor; the "
+                        "Bash tool's 600s ceiling cannot be crossed by blocking.")
+    p.add_argument("--interval", type=float, default=1.0)
+    p.add_argument("--follow-timeout", type=float)
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("log", help="filtered, incremental event log")
@@ -785,15 +740,57 @@ def build_parser():
 
     p = sub.add_parser("stop", help="interrupt a run by process group")
     add_common(p)
-    p.add_argument("--run")
-    p.add_argument("--all-mine", action="store_true")
+    p.add_argument("--run", action="append")
+    p.add_argument("--group")
+    p.add_argument("--all", action="store_true")
     p.add_argument("--grace", type=float, default=5.0)
     p.set_defaults(func=cmd_stop)
 
     p = sub.add_parser("result", help="final message, usage, and schema JSON")
     add_common(p)
-    p.add_argument("--run", required=True)
+    p.add_argument("--run")
+    p.add_argument("--group", help="collect every member of a batch group, capped "
+                                   "per run, plus the paths more than one wrote")
     p.set_defaults(func=cmd_result)
+
+    p = sub.add_parser("batch", help="start and manage a group of runs")
+    bsub = p.add_subparsers(dest="batch_cmd", required=True)
+    b = bsub.add_parser("start", help="start N runs as one addressable group")
+    add_common(b); add_run_options(b, kind="start")
+    b.add_argument("--group", required=True,
+                   help="name for this group. Single-use per project: reusing one "
+                        "would make membership and start order ambiguous, and "
+                        "--resume-from pairs positionally against exactly that list.")
+    b.add_argument("--task", action="append",
+                   help="a prompt. Repeatable. Always kind=start.")
+    b.add_argument("--tasks-file",
+                   help="JSONL, one task object per line, for long or "
+                        "heterogeneous tasks. Fields: " + ", ".join(TASK_FIELDS))
+    b.add_argument("--force", action="store_true",
+                   help="allow a resume task to start a second turn on a thread "
+                        "that already has a live one")
+    b.add_argument("--worktree", action="store_true",
+                   help="give every writing member its own git worktree even if "
+                        "there is only one of them")
+    b.add_argument("--no-worktree", action="store_true",
+                   help="never assign worktrees; every member shares the "
+                        "caller's tree")
+    b.add_argument("--base",
+                   help="commit or ref the worktrees are cut from (default HEAD)")
+    b.add_argument("--resume-from", metavar="GROUP",
+                   help="continue an earlier group: task i resumes member i of "
+                        "that group, in its start order, keeping its thread and "
+                        "its working directory. One task per started member.")
+    b.set_defaults(func=cmd_batch_start)
+
+    b = bsub.add_parser("clean", help="remove a finished group's worktrees")
+    add_common(b)
+    b.add_argument("--group", required=True)
+    b.add_argument("--force", action="store_true",
+                   help="remove worktrees that still hold uncommitted changes, "
+                        "and ignore live members and dependent groups. This "
+                        "discards work nothing else has a copy of.")
+    b.set_defaults(func=cmd_batch_clean)
 
     p = sub.add_parser("doctor", help="diagnose the Codex environment")
     add_common(p)
@@ -827,6 +824,8 @@ def main(argv=None):
             pass
     except KeyboardInterrupt:
         fail("interrupted")
+    except Exception as e:
+        fail(f"internal error: {e}")
 
 
 if __name__ == "__main__":

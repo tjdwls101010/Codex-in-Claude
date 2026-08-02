@@ -20,9 +20,10 @@ import sqlite3
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
-from _events import first_thread_id
+from _events import final_usage, first_thread_id
 from _registry import read_meta, update_meta
 from _util import codex_home, nfc, now_iso
 
@@ -123,8 +124,53 @@ PREAMBLE = (
 )
 
 
-def apply_preamble(prompt: str, enabled: bool) -> str:
-    return f"{PREAMBLE}\n\n{prompt}" if enabled else prompt
+# Situational facts again, and for the same reason — but these are facts Codex
+# has no way to observe from inside its own turn, and it does not hold back on
+# them. Measured (V-18), asked what tree it was in: without this paragraph a run
+# answered "it is the shared workspace with the person who started me, so we are
+# looking at the same tree" — wrong, and asserted rather than hedged. With it,
+# the same run answered correctly and propagated N-1 to reason about the others.
+# The failure this prevents is fabrication, not omission, which is why it is not
+# optional for batch runs. Cost: 113 input tokens.
+#
+# Facts only, no methodology (B19). Nothing here tells Codex how to cooperate
+# with the other runs; being told they exist is enough to stop it assuming they
+# do not.
+# "may be running" rather than "are running right now", and "{n} tasks" rather
+# than "{n} runs". Both hedges are load-bearing. Members are spawned in
+# sequence, so by the time the last one reads this the first may already have
+# finished — and a member that failed to spawn was never a run at all, while it
+# was always a task. Asserting either as fact would make this paragraph commit
+# the exact error it exists to prevent: stating something unobservable without
+# hedging.
+BATCH_PREAMBLE = (
+    "[Batch context: you are one run in a batch of {n} tasks launched together "
+    'as group "{group}". Other runs from this batch may be executing alongside '
+    "you and editing other paths.]"
+)
+
+WORKTREE_PREAMBLE = (
+    "[Working tree: yours is an isolated git worktree at {path}, created from "
+    "commit {base}. It is not the tree the person who started you is looking at, "
+    "and it does not contain the {uncommitted} uncommitted file(s) that exist in "
+    "theirs.]"
+)
+
+
+def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
+    """Prepend the run-context paragraphs. `--no-preamble` turns off all of them
+    together — a caller switching it off is saying it will brief Codex itself,
+    and half a briefing is worse than none."""
+    if not enabled:
+        return prompt
+    parts = [PREAMBLE]
+    if batch:
+        parts.append(BATCH_PREAMBLE.format(n=batch["n"], group=batch["group"]))
+        if batch.get("worktree"):
+            parts.append(WORKTREE_PREAMBLE.format(
+                path=batch["worktree"], base=(batch.get("base") or "?")[:12],
+                uncommitted=batch.get("uncommitted", 0)))
+    return "\n\n".join(parts + [prompt])
 
 
 # -- spawning ---------------------------------------------------------------
@@ -157,6 +203,11 @@ def supervise(run_dir: Path, timeout=None) -> int:
     meta = read_meta(run_dir)
     if not meta:
         return 1
+    if timeout is None:
+        # A background run re-execs `__supervise --run-dir`, so nothing can be
+        # handed to it on the command line. meta.json is the only channel that
+        # survives that hop, which is why the deadline is recorded there.
+        timeout = meta.get("timeout_seconds")
     interrupted = {"flag": False}
 
     def on_signal(signum, _frame):
@@ -175,9 +226,19 @@ def supervise(run_dir: Path, timeout=None) -> int:
     out = events_path.open("ab")
     err = (run_dir / "stderr.log").open("ab")
     kwargs = {}
-    if timeout is not None:
-        # Foreground: give Codex its own group so a timeout can kill the tree
-        # without killing the caller.
+    if timeout is not None and meta.get("foreground"):
+        # Foreground only: the supervisor *is* the caller's process here, so
+        # Codex needs its own group for a timeout to kill the tree without
+        # killing the caller.
+        #
+        # Doing the same in the background would be a silent bug rather than a
+        # nicety. There the supervisor is already a session leader, and Codex
+        # shares its group — which is what lets `stop`'s killpg reach the
+        # supervisor, whose handler records `interrupted`. Split them and the
+        # signal reaches only Codex, the handler never fires, and a deliberately
+        # stopped run is recorded `failed`. Since batch members routinely carry
+        # --timeout, that would surface as intermittent lifecycle-test failures
+        # that read as flakiness.
         kwargs["start_new_session"] = True
     try:
         proc = subprocess.Popen(
@@ -221,7 +282,13 @@ def supervise(run_dir: Path, timeout=None) -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
             rc = proc.wait()
-        update_meta(run_dir, state="interrupted", exit_code=rc, ended_at=now_iso(),
+        # A distinct terminal state, not `interrupted`: the caller needs to tell
+        # "I stopped it" from "Codex failed" from "it ran out of the time I gave
+        # it", and only the third is answered by raising --timeout. Measured
+        # (V-16): the thread stays resumable across this SIGINT, with the
+        # pre-timeout turn's context intact — so `timed_out` is recoverable,
+        # not a failure.
+        update_meta(run_dir, state="timed_out", exit_code=rc, ended_at=now_iso(),
                     error=f"timed out after {timeout}s")
         return rc
 
@@ -231,6 +298,14 @@ def supervise(run_dir: Path, timeout=None) -> int:
     fields = {"state": state, "exit_code": rc, "ended_at": now_iso()}
     if tid:
         fields["thread_id"] = tid
+    # Copy final usage into meta. It is already in events.jsonl, but leaving it
+    # there means anything wanting the number has to scan the whole stream —
+    # and `batch start`'s projected_cost wants it for several past runs at once,
+    # before spawning anything. The supervisor is the one place that pays this
+    # scan exactly once, at a point where the stream is complete.
+    usage = final_usage(events_path)
+    if usage:
+        fields["usage"] = usage
     update_meta(run_dir, **fields)
     return rc
 
@@ -269,22 +344,23 @@ def query_threads(cwd_filter=None, limit=50):
         try:
             cols = {r[1] for r in con.execute("PRAGMA table_info(threads)")}
             sel = [c for c in want if c in cols]
-            if not sel:
+            if not sel or "id" not in sel:
                 return []
             order = " ORDER BY updated_at DESC" if "updated_at" in cols else ""
+            params = [limit]
+            where = ""
+            if cwd_filter and "cwd" in cols:
+                # macOS stores non-ASCII filenames as NFD while argv/JSON carry
+                # NFC, so a Korean cwd never string-equals its own column value
+                # unless both normal forms are tried.
+                where = " WHERE cwd = ? OR cwd = ?"
+                params = [nfc(str(cwd_filter)),
+                          unicodedata.normalize("NFD", str(cwd_filter))] + params
             rows = con.execute(
-                f"SELECT {','.join(sel)} FROM threads{order} LIMIT ?",
-                (limit * 4,)).fetchall()
+                f"SELECT {','.join(sel)} FROM threads{where}{order} LIMIT ?",
+                params).fetchall()
         finally:
             con.close()
     except Exception:
         return []
-    out = []
-    for row in rows:
-        rec = dict(zip(sel, row))
-        if cwd_filter and nfc(str(rec.get("cwd") or "")) != nfc(str(cwd_filter)):
-            continue
-        out.append(rec)
-        if len(out) >= limit:
-            break
-    return out
+    return [dict(zip(sel, row)) for row in rows]

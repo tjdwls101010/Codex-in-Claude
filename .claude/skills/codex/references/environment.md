@@ -1,6 +1,6 @@
 # The Codex environment
 
-Open this when an environment question comes up or `doctor` reports something. Everything here was measured against `codex-cli 0.144.1`; re-check with `doctor` before trusting a number, because Codex ships fast.
+Open this when an environment question comes up or `doctor` reports something. The numbers here were measured against `codex-cli 0.144.1` and re-verified against `0.146.0`; re-check with `doctor` before trusting any of them, because Codex ships fast.
 
 ## `CODEX_HOME`
 
@@ -148,6 +148,6 @@ Neither is pinned by default. Codex picks its own defaults, and inheriting them 
 `doctor` exits 0 when healthy and **2** when there is a blocker, so it is usable in a conditional. It separates two categories deliberately:
 
 - **blockers** — the run will not work: no `codex` on PATH, not authenticated, missing `CODEX_HOME`, unwritable runs dir, Python below 3.10.
-- **warnings** — the run will work but something is worth knowing: `config.toml` set to `danger-full-access`, a project `AGENTS.md`, detached runs still going, a thread database it could not read.
+- **warnings** — the run will work but something is worth knowing: `config.toml` set to `danger-full-access`, a project `AGENTS.md`, a thread database it could not read.
 
 `thread_db_readable: false` with a `thread_db` path present means the sqlite schema changed under a Codex upgrade. Only `--include-external` and a registry-less `resume --last` depend on it; everything else keeps working. That degradation is deliberate — the filename is version-stamped (`state_5.sqlite`), so the schema *will* change, and a Codex upgrade must never break the skill outright.

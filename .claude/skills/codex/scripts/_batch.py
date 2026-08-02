@@ -37,14 +37,16 @@ from _registry import (
     TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, read_meta, reap,
     resolve_project, resolve_runs_dir,
 )
-from _run import create_run, refuse_concurrent_turn, run_row
+from _run import (
+    WRITING_SANDBOXES, create_run, refuse_concurrent_turn, run_row,
+)
 from _util import (
     BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,
     now_iso,
 )
 from _worktree import (
     is_dirty as worktree_dirty, missing_at_base as worktree_missing_at_base,
-    prune as worktree_prune, remove as worktree_remove,
+    prune as worktree_prune, remove as worktree_remove, repo_identity,
     resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
 )
 
@@ -283,9 +285,6 @@ def projected_cost(runs_dir: Path, n_runs: int):
                     "from this number — re-measure."}
 
 
-WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
-
-
 def wants_worktree(item, args):
     """Whether this member would be isolated if the batch turns isolation on.
 
@@ -319,6 +318,10 @@ def plan_worktrees(tasks, args, project):
     members because one writer has nobody to collide with, and isolating it
     would only put its results somewhere the caller has to go and fetch.
     """
+    if getattr(args, "worktree", False) and getattr(args, "no_worktree", False):
+        # Silently letting one win would hand isolation, or its absence, to a
+        # caller who asked for both and cannot tell which they got.
+        fail("--worktree and --no-worktree contradict each other; pass one")
     eligible = {i for i, t in enumerate(tasks) if wants_worktree(t, args)}
     if getattr(args, "no_worktree", False):
         return set(), None, "worktrees disabled by --no-worktree"
@@ -710,6 +713,27 @@ def unstarted_members(runs_dir: Path, name: str):
             for m in g.get("members", []) if not m.get("run_id")]
 
 
+def vanished_members(runs_dir: Path, name: str):
+    """Members the manifest names whose run directory is no longer there.
+
+    A third category, and the only one nothing in this codebase creates:
+    `batch clean` removes worktrees and never run directories. It takes a hand
+    edit or an outside process. But a member that is neither resolvable nor
+    `unstarted` falls out of every count silently, and a group quietly
+    reporting `completed` with one fewer member than it had is the same failure
+    as the one `unstarted` exists to prevent — so it is named rather than
+    dropped."""
+    g = read_group(runs_dir, name) or {}
+    gone = []
+    for m in g.get("members", []):
+        rid = m.get("run_id")
+        if rid and not find_run(runs_dir, rid)[1]:
+            gone.append({"index": m.get("index"), "label": m.get("label"),
+                         "run_id": rid,
+                         "error": "its run directory is no longer in the registry"})
+    return gone
+
+
 def group_snapshot(rows, unstarted=0):
     """The one place group state is derived, so `status --group` and
     `--follow`'s exit line can never disagree about whether a group is done.
@@ -755,7 +779,7 @@ def follow_group(args, project, runs_dir):
     group state here.
     """
     members = resolve_group(runs_dir, args.group)
-    never = unstarted_members(runs_dir, args.group)
+    never = unstarted_members(runs_dir, args.group) + vanished_members(runs_dir, args.group)
     if not members:
         sys.stdout.write(f"group.empty group={args.group}"
                          + (f" unstarted={len(never)}" if never else "") + "\n")
@@ -797,25 +821,34 @@ GROUP_MESSAGE_CAP = 4000
 
 
 def changed_paths(events_path: Path, root=None):
-    """Paths a run wrote, relative to that run's own root.
+    """Paths a run wrote, as `(repository, repo-relative path)` pairs.
 
-    Relative, and that is the whole point. Codex reports absolute paths, and
-    under worktree isolation every member has a different absolute prefix — so
-    comparing them as written, three members all editing `src/parser.py` produce
-    three distinct strings and intersect to nothing. `overlaps` would report a
-    clean run in exactly the situation it exists to warn about, and the cleaner
-    the isolation the more reliably it would lie.
+    Codex reports absolute paths, and comparing them as written makes
+    `overlaps` blind under worktree isolation: three members editing the same
+    `src/parser.py` in three worktrees produce three distinct strings that
+    intersect to nothing, so the field reported a clean run in exactly the
+    situation it exists to warn about. Reproduced against the real CLI.
 
-    Reproduced before this was fixed: two members each modifying `src/shared.py`
-    in their own worktree, `overlaps: {}`.
+    Making them relative to each run's own cwd fixes that case and breaks two
+    others, which is why the key is a pair rather than a string:
 
-    `root` is the run's own cwd — its worktree when it has one. A path outside
-    that root keeps its absolute form rather than being forced into a relative
-    one, since `../../elsewhere` compares no better than the absolute path and
-    reads worse.
+      * Two members in **different repositories** — a per-task `cwd` is allowed
+        and disables worktree assignment — that each write an `output.txt`
+        would share the relative path and be reported as colliding on a file
+        neither of them touched.
+      * Two members with **nested roots** in one repository, one started in a
+        subdirectory of the other, that both write the same file would produce
+        different relative paths and miss a real collision — the same silent
+        miss, reached from the other side.
+
+    `--git-common-dir` is what every worktree of one repository shares and no
+    two repositories do, and the per-worktree top level is what makes the same
+    tracked file reduce to the same repo-relative path from anywhere inside it.
+    Outside a repository there is nothing to be relative to, so the path stays
+    absolute and only ever matches itself.
     """
+    repo, top = repo_identity(Path(root)) if root else (None, None)
     paths = set()
-    root = Path(nfc(str(root))) if root else None
     for ev in read_events(events_path, 0)[0]:
         item = ev.get("item") or {}
         if item.get("type") != "file_change":
@@ -825,12 +858,13 @@ def changed_paths(events_path: Path, root=None):
             if not p:
                 continue
             p = Path(nfc(str(p)))
-            if root:
+            if top:
                 try:
-                    p = p.relative_to(root)
+                    paths.add((repo, str(p.relative_to(Path(nfc(str(top)))))))
+                    continue
                 except ValueError:
-                    pass
-            paths.add(str(p))
+                    pass    # outside the repo entirely; keep it absolute
+            paths.add((None, str(p)))
     return paths
 
 
@@ -883,16 +917,24 @@ def cmd_result_group(args, project, runs_dir):
     # a synthesis step needs first, is which paths two runs both touched.
     counts = {}
     for rid, paths in per_run_paths.items():
-        for p in paths:
-            counts.setdefault(p, []).append(rid)
-    overlaps = {p: rids for p, rids in sorted(counts.items()) if len(rids) > 1}
+        for key in paths:
+            counts.setdefault(key, []).append(rid)
+    # Keyed on (repository, path) but reported by path alone: two members can
+    # only appear together under a key when they were in the same repository,
+    # so the repository half has done its work by the time this is rendered and
+    # printing it would only be noise.
+    overlaps = {path: rids for (_repo, path), rids in sorted(counts.items())
+                if len(rids) > 1}
 
     never = unstarted_members(runs_dir, args.group)
+    gone = vanished_members(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(
-        [{"run_id": r["run_id"], "state": r["state"]} for r in results], len(never))
+        [{"run_id": r["run_id"], "state": r["state"]} for r in results],
+        len(never) + len(gone))
     out = {"group": args.group, "project": str(project), "results": results,
            "overlaps": overlaps, "totals": totals, "group_state": gstate,
-           "done": done, "failed": failed, "running": running, "unstarted": never,
+           "done": done, "failed": failed, "running": running,
+           "unstarted": never + gone,
            "overlaps_note": ("paths written by more than one member. Under worktree "
                              "isolation this is a merge conflict ahead, not damage "
                              "already done.") if overlaps else None}

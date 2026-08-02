@@ -54,13 +54,22 @@ def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
     for rd, m in iter_runs(runs_dir):
         if m.get("run_id") == exclude_run_id:
             continue
-        if m.get("state") in TERMINAL_STATES:
-            continue
         if m.get("sandbox") not in WRITING_SANDBOXES:
             continue
-        if is_within(m.get("cwd"), cwd) or is_within(cwd, m.get("cwd")):
-            out.append({"run_id": m.get("run_id"), "state": m.get("state"),
-                        "sandbox": m.get("sandbox"), "group": m.get("group")})
+        if not (is_within(m.get("cwd"), cwd) or is_within(cwd, m.get("cwd"))):
+            continue
+        # Reaped before being judged alive, like every other place that turns
+        # registry state into a liveness claim. meta.json says `running` until
+        # something notices the supervisor died, so trusting it as written
+        # names dead runs as live writers — and a warning that cries wolf is
+        # one the caller learns to skip past, which costs more than not having
+        # it. Reaped only for the few candidates that already matched the
+        # directory and the sandbox, so this is not a registry-wide write.
+        m = reap(rd, m)
+        if m.get("state") in TERMINAL_STATES:
+            continue
+        out.append({"run_id": m.get("run_id"), "state": m.get("state"),
+                    "sandbox": m.get("sandbox"), "group": m.get("group")})
     return out
 from _worktree import (
     add as worktree_add, uncommitted_count as worktree_uncommitted,

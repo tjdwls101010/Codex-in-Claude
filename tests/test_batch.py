@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -371,6 +372,58 @@ class AGroupIsDiscoverableFromStatus(BridgeTestCase):
         row = self.bridge("status", "--run", run["run_id"])["runs"][0]
         self.assertNotIn("group", row)
         self.assertEqual(self.bridge("status")["groups"], [])
+
+
+class ContradictionsAndGaps(BridgeTestCase):
+
+    def test_worktree_and_no_worktree_together_are_refused(self):
+        """Letting one win silently hands isolation, or its absence, to a
+        caller who asked for both and cannot tell which they got."""
+        out = self.bridge("batch", "start", "--group", "p1", "--task", "a",
+                          "--worktree", "--no-worktree", expect_rc=1)
+        self.assertIn("contradict", out["error"])
+
+    def test_a_member_whose_run_directory_vanished_is_still_counted(self):
+        """Neither resolvable nor `unstarted`, so it fell out of every count —
+        and a group quietly reporting `completed` with one fewer member than it
+        had is the failure `unstarted` exists to prevent, reached from another
+        direction. Nothing here creates this state; a hand edit does."""
+        out = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b")
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        shutil.rmtree(self.project / ".codex-runs" / out["runs"][1]["run_id"])
+
+        st = self.bridge("status", "--group", "p1")
+        self.assertEqual(st["group_state"], "partial")
+        self.assertEqual([u["run_id"] for u in st["unstarted"]],
+                         [out["runs"][1]["run_id"]])
+        self.assertIn("no longer in the registry", st["unstarted"][0]["error"])
+        self.assertEqual(self.bridge("result", "--group", "p1")["group_state"],
+                         "partial")
+
+
+class ExternalThreadsStayDeduped(BridgeTestCase):
+    """`status --include-external` lists Codex threads with no registry entry.
+    A run this skill started is not one of them — and for a while it was, after
+    the variable holding the known thread ids was reused to hold group names.
+    Nothing in the suite covered `--include-external`, which is why 226 tests
+    did not notice."""
+
+    def test_a_tracked_thread_is_never_reported_as_external(self):
+        run = self.start("x")
+        self.wait_for_state(run["run_id"])
+        out = self.bridge("status", "--include-external")
+        external = {t.get("id") for t in out.get("external_threads") or []}
+        self.assertNotIn(run["thread_id"], external)
+
+    def test_groups_are_listed_without_disturbing_that(self):
+        grp = self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        self.wait_for_state(grp["runs"][0]["run_id"])
+        out = self.bridge("status", "--include-external")
+        self.assertEqual(out["groups"], ["p1"])
+        external = {t.get("id") for t in out.get("external_threads") or []}
+        self.assertNotIn(grp["runs"][0]["thread_id"], external)
 
 
 class GroupSelectors(BridgeTestCase):

@@ -48,6 +48,29 @@ def resolve_base(cwd: Path, ref=None):
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def repo_identity(cwd: Path):
+    """`(repository, top level)` for a directory, or `(None, None)`.
+
+    The repository is `--git-common-dir`, which every worktree of one
+    repository shares and no two repositories do. That is the property that
+    makes it the right key for comparing paths across runs: three worktrees of
+    one repo are the same repository, and two unrelated checkouts that both
+    contain an `output.txt` are not.
+
+    The top level is what a path is made relative to, and it is per-worktree —
+    so the same tracked file reduces to the same repo-relative path no matter
+    which worktree, or which subdirectory of one, a run was started in.
+    """
+    r = _git(cwd, "rev-parse", "--path-format=absolute",
+             "--git-common-dir", "--show-toplevel")
+    if r.returncode != 0:
+        return None, None
+    lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None, None
+    return lines[0], Path(lines[1])
+
+
 def missing_at_base(cwd: Path, base: str, names=("AGENTS.md", "CLAUDE.md")):
     """Instruction files that exist in the caller's tree but not at `base`.
 

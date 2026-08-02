@@ -254,6 +254,47 @@ class OverlapsUnderIsolation(WorktreeTestCase):
             self.plant(r["run_id"], [str(Path(r["worktree"]) / "src" / name)])
         self.assertEqual(self.bridge("result", "--group", "p1")["overlaps"], {})
 
+    def test_the_same_name_in_two_different_repositories_is_not_an_overlap(self):
+        """Making paths relative fixed the worktree case and broke this one: a
+        per-task `cwd` puts two members in unrelated repositories, where an
+        `output.txt` each is two files, not one. The key carries the repository
+        — `--git-common-dir`, which every worktree of a repo shares and no two
+        repos do — so relativising cannot merge them."""
+        other = self.tmp / "otherrepo"
+        (other / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(other)], check=True, capture_output=True)
+        (other / "src" / "output.txt").write_text("x\n")
+        for a in (["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t",
+                                  "commit", "-qm", "init"]):
+            self.git(*a, cwd=other)
+
+        tf = self.tasks_file({"prompt": "a"}, {"prompt": "b", "cwd": str(other)})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        for r, root in zip(out["runs"], (self.project, other)):
+            self.wait_for_state(r["run_id"])
+            self.plant(r["run_id"], [str(Path(root) / "src" / "output.txt")])
+        self.assertEqual(self.bridge("result", "--group", "p1")["overlaps"], {},
+                         "two repositories' output.txt are two files")
+
+    def test_nested_roots_in_one_repository_still_see_the_same_file(self):
+        """The mirror of the case above, and the one relativising to each run's
+        own cwd got wrong: two members rooted at different depths of one
+        repository that write the same file must still match. Paths are made
+        relative to the repository's top level, not to wherever the run
+        started."""
+        sub = self.project / "src"
+        sub.mkdir()
+        (sub / "shared.py").write_text("x = 1\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "add src")
+        tf = self.tasks_file({"prompt": "a"}, {"prompt": "b", "cwd": str(sub)})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+            self.plant(r["run_id"], [str(sub / "shared.py")])
+        self.assertEqual(list(self.bridge("result", "--group", "p1")["overlaps"]),
+                         ["src/shared.py"])
+
     def test_a_path_outside_the_run_root_keeps_its_absolute_form(self):
         """`../../elsewhere` compares no better than the absolute path and reads
         worse, so a path that escapes the root is left alone."""

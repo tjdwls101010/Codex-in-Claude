@@ -48,6 +48,7 @@ from _events import (  # noqa: E402
 from _batch import (  # noqa: E402
     TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
     group_snapshot, list_groups, resolve_group, unstarted_members,
+    vanished_members,
 )
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
@@ -190,7 +191,8 @@ def cmd_status(args):
             return follow_group(args, project, runs_dir)
         for rd, m in resolve_group(runs_dir, args.group):
             rows.append(run_row(rd, m, project))
-        never = unstarted_members(runs_dir, args.group)
+        never = (unstarted_members(runs_dir, args.group)
+                 + vanished_members(runs_dir, args.group))
         running, done, failed, gstate = group_snapshot(rows, len(never))
         out = {"project": str(project), "group": args.group, "runs": rows,
                "running": running, "done": done, "failed": failed,
@@ -233,11 +235,10 @@ def cmd_status(args):
     # Groups are listed even when no run in the (truncated) view belongs to one:
     # discovering that this project has batches at all is the step that makes
     # `status --group` and `--resume-from` reachable.
-    known = list_groups(runs_dir)
     out = {"project": str(project), "runs_dir": str(runs_dir), "runs": display_rows,
            "threads": by_thread, "running": running, "done": done, "failed": failed,
            "total_runs": total_runs, "runs_truncated": runs_truncated,
-           "groups": known}
+           "groups": list_groups(runs_dir)}
     if args.include_external:
         out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]

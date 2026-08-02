@@ -382,6 +382,12 @@ class ContradictionsAndGaps(BridgeTestCase):
         out = self.bridge("batch", "start", "--group", "p1", "--task", "a",
                           "--worktree", "--no-worktree", expect_rc=1)
         self.assertIn("contradict", out["error"])
+        # Refused above `claim_group`, not where the flags are read. Refusing
+        # afterwards left an empty manifest behind and burned the name on a
+        # typo, against the whole point of claiming before anything spawns.
+        self.assertFalse((self.project / ".codex-runs" / ".groups" / "p1.json").exists())
+        again = self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        self.wait_for_state(again["runs"][0]["run_id"])
 
     def test_a_member_whose_run_directory_vanished_is_still_counted(self):
         """Neither resolvable nor `unstarted`, so it fell out of every count —

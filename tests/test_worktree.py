@@ -733,6 +733,28 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
             self.wait_for_state(r["run_id"])
         self.assertFalse(any("share" in w for w in self.bridge("doctor")["warnings"]))
 
+    def test_doctor_does_not_call_a_dead_run_a_live_writer(self):
+        """The commit that reaped `concurrent_writers` claimed doctor too and
+        did not do it. This is the report a caller reaches for precisely when
+        they suspect something is stuck, which is exactly when meta.json is
+        most likely to still say `running` for a supervisor that has gone."""
+        first = self.hanging_writer("one")
+        second = self.hanging_writer("two")
+        self.assertTrue(any("live runs share" in w
+                            for w in self.bridge("doctor")["warnings"]))
+        self.bridge("stop", "--run", second["run_id"])
+        # Plant the state a dead supervisor leaves: the file still says running.
+        meta_path = self.project / ".codex-runs" / second["run_id"] / "meta.json"
+        meta = json.loads(meta_path.read_text())
+        meta.update(state="running", ended_at=None, exit_code=None,
+                    supervisor_pid=999999, codex_pid=999999)
+        meta_path.write_text(json.dumps(meta))
+
+        rep = self.bridge("doctor")
+        self.assertFalse(any("live runs share" in w for w in rep["warnings"]),
+                         "a dead supervisor must not be reported as a live writer")
+        self.bridge("stop", "--all")
+
     def test_doctor_groups_live_runs_by_their_recorded_cwd(self):
         self.hanging_writer("one")
         self.hanging_writer("two")

@@ -318,10 +318,6 @@ def plan_worktrees(tasks, args, project):
     members because one writer has nobody to collide with, and isolating it
     would only put its results somewhere the caller has to go and fetch.
     """
-    if getattr(args, "worktree", False) and getattr(args, "no_worktree", False):
-        # Silently letting one win would hand isolation, or its absence, to a
-        # caller who asked for both and cannot tell which they got.
-        fail("--worktree and --no-worktree contradict each other; pass one")
     eligible = {i for i, t in enumerate(tasks) if wants_worktree(t, args)}
     if getattr(args, "no_worktree", False):
         return set(), None, "worktrees disabled by --no-worktree"
@@ -436,6 +432,13 @@ def cmd_batch_start(args):
     if not valid_name(args.group):
         fail("group name must be alphanumeric with . _ - and no path separators",
              got=args.group)
+    if getattr(args, "worktree", False) and getattr(args, "no_worktree", False):
+        # Checked here, above `claim_group`, and not where the flags are used.
+        # Silently letting one win would hand isolation — or its absence — to a
+        # caller who asked for both and cannot tell which they got; refusing
+        # after the name was claimed would burn that name on a typo, against
+        # the whole point of claiming before anything is spawned.
+        fail("--worktree and --no-worktree contradict each other; pass one")
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args)

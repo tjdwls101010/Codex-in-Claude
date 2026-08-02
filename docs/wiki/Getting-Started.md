@@ -6,7 +6,7 @@ Installation, requirements, and a full first-run walkthrough. For anyone setting
 
 | Requirement | Notes |
 |---|---|
-| [Codex CLI](https://developers.openai.com/codex/cli) | Verified against `0.144.1`. Must already be authenticated — run `codex login` and confirm `codex login status` exits `0` before going further. |
+| [Codex CLI](https://developers.openai.com/codex/cli) | Verified against `0.146.0`. Must already be authenticated — run `codex login` and confirm `codex login status` exits `0` before going further. |
 | Python 3.10+ | Standard library only. No `jq`, no `pip install` step. |
 | Claude Code | 2.1.220 or later. |
 

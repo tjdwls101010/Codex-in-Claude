@@ -1,6 +1,6 @@
 # The Codex environment
 
-Open this when an environment question comes up or `doctor` reports something. Everything here was measured against `codex-cli 0.144.1`; re-check with `doctor` before trusting a number, because Codex ships fast.
+Open this when an environment question comes up or `doctor` reports something. The numbers here were measured against `codex-cli 0.144.1` and re-verified against `0.146.0`; re-check with `doctor` before trusting any of them, because Codex ships fast.
 
 ## `CODEX_HOME`
 

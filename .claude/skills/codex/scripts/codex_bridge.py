@@ -56,7 +56,8 @@ from _registry import (  # noqa: E402
     resolve_runs_dir, update_meta_if,
 )
 from _run import (  # noqa: E402
-    create_run, refuse_concurrent_turn, resolve_implicit_run, run_row,
+    WRITING_SANDBOXES, create_run, refuse_concurrent_turn, resolve_implicit_run,
+    run_row,
 )
 from _util import (  # noqa: E402
     clip, codex_home, emit, fail, git_toplevel, now_iso, pid_alive,
@@ -596,13 +597,18 @@ def cmd_doctor(args):
         # repository's worktrees all share a top level, so that comparison
         # would warn on exactly the arrangement that makes it safe.
         by_cwd = {}
-        for _rd, m in iter_runs(runs_dir):
+        for rd, m in iter_runs(runs_dir):
+            # Reaped, like `concurrent_writers`. meta.json says `running` until
+            # something notices the supervisor died, so grouping on it as
+            # written names dead runs as live writers — and this is the report
+            # a caller consults precisely when they suspect something is stuck,
+            # which is exactly when stale state is most likely.
+            m = reap(rd, m)
             if m.get("state") in TERMINAL_STATES:
                 continue
             by_cwd.setdefault(m.get("cwd"), []).append(m)
         for cwd, ms in sorted(by_cwd.items(), key=lambda kv: str(kv[0])):
-            writers = [m for m in ms if m.get("sandbox") in ("workspace-write",
-                                                             "danger-full-access")]
+            writers = [m for m in ms if m.get("sandbox") in WRITING_SANDBOXES]
             if len(ms) > 1 and writers:
                 warnings.append(
                     f"{len(ms)} live runs share {cwd}, {len(writers)} of which can "

@@ -44,7 +44,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 **Prerequisites**
 
-- [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.144.1`, already authenticated (`codex login`)
+- [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.146.0`, already authenticated (`codex login`)
 - Python 3.10+ — standard library only, no extra packages to install
 - Claude Code 2.1.220 or later
 

@@ -8,9 +8,11 @@ The four-tier test strategy behind this project, and how to run the tiers that l
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-**124 tests, passing in about 40 seconds**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
+**232 tests, passing in about two minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
 
 This tier includes the single most load-bearing test in the suite: a regression assertion that a resumed run's *recorded argv* actually contains `-c sandbox_mode="read-only"` when its thread was created read-only — the specific defect described in [Sandbox Stability](Sandbox-Stability.md), caught at the argument-composition level before it ever reaches a real Codex process. It also covers Unicode/NFC path handling (Korean paths, spaces), the run registry's self-`.gitignore`ing behavior, cursor-exactness on partial trailing lines, all four filter levels, and all four `doctor` failure modes.
+
+Since v0.2.0 it additionally drives real `git` — worktrees are cut, written into and removed for real rather than faked — and reproduces the registry race that motivated the concurrency work by running several writers as actual separate processes. Several of these tests exist because something got past this tier and was caught by a real run below it; where that is so, the test says which failure it is holding.
 
 Run this tier before opening any pull request — it's fast, free, and covers most of the codebase's actual logic.
 
@@ -20,7 +22,7 @@ Run this tier before opening any pull request — it's fast, free, and covers mo
 CODEX_SKILL_TEST_INTEGRATION=1 python3 tests/integration/run_integration.py
 ```
 
-Gated behind an explicit environment variable so it never runs by accident, since it consumes real API usage. Spins up a throwaway git repository and drives the real bridge against the real, authenticated `codex` binary. **8 of 8 cases passing**, in about 88 seconds, verified against `codex-cli 0.144.1`:
+Gated behind an explicit environment variable so it never runs by accident, since it consumes real API usage. Spins up a throwaway git repository and drives the real bridge against the real, authenticated `codex` binary. **15 of 15 cases passing**, in about four minutes, verified against `codex-cli 0.146.0`:
 
 | Case | What it verifies |
 |---|---|
@@ -32,6 +34,15 @@ Gated behind an explicit environment variable so it never runs by accident, sinc
 | I6 | `review --uncommitted` produces real findings; usage is correctly reported as `null`, not zero |
 | I7 | Isolation has a measurable effect (config-error event count), without asserting an unstable token ratio |
 | I8 | Image attachment via `--image` — the model correctly identifies a synthesized test image |
+| I9 | Three members of one batch get three distinct threads and three distinct process groups |
+| I10 | **Worktree isolation, for real** — three writers told to create the same filename produce three files in three checkouts, the main tree stays clean, and `overlaps` catches the collision |
+| I11 | `--resume-from` continues each member on *its own* thread, checked against the rollout rather than the wrapper's bookkeeping |
+| I12 | A member refused before it can spawn does not take the batch with it; the group ends `partial` |
+| I13 | `status --group --follow` ends on a terminal line rather than going quiet |
+| I14 | A background `--timeout` records `timed_out`, and the same thread resumes to completion afterwards |
+| I15 | `batch clean` refuses to discard uncollected work, `--force` removes it, and git stops listing the worktrees |
+
+I10 is the case worth knowing about: it is what caught `overlaps` reporting `{}` for three members all editing the same repository path in their own worktrees — a defect the unit tier missed because its fixture planted repo-relative paths, which is not the shape real events have.
 
 Use `--only <case-id>` to run a single case while iterating. This tier isn't required for most contributions — run it when a change touches how the bridge invokes `codex` itself.
 
@@ -57,7 +68,16 @@ The results of the most recent run are recorded in `.claude/harness-spec.md` rat
 | E4 | Resuming an earlier session's thread from a fresh session, using only the run registry — no in-context memory of the original run |
 | E5 | Delegating a long-running task to Codex in the background while Claude does unrelated work in parallel, then reconciling both |
 
-E3 matters as much as the four that trigger the skill: a skill whose description over-triggers is as much a defect as one that under-triggers.
+| E6 | Three modules audited by three Codex runs as one group, then collected — findings delivered, not promised |
+| E7 | Continuing that group's three threads, each on the bug it personally found |
+| E8 | **A second near-miss** — "review these three files at once", no mention of Codex — correctly does not trigger |
+| E9 | Noticing and reporting that a group started fewer members than it was asked for |
+
+E3 and E8 matter as much as the scenarios that trigger the skill: a description that over-triggers is as much a defect as one that under-triggers, and for both the evidence of a pass is an absence — no skill invocation anywhere in the transcript.
+
+The v0.2.0 round of this tier is the one that found the most, and the reason is worth stating. Every failure was a session that ran the *right commands* and still did not do the job: two that started a batch correctly and then ended the turn promising to report back, and one that declared three grouped runs to be unrelated because `status` did not say they were a group — reasoning correctly from a false premise the tool had handed it. Grading on tool calls alone would have passed all three. The rule that catches them is that surface compliance is a failure: a verdict must cite the final message, not the commands that preceded it.
+
+One scenario also failed for the opposite reason, which is recorded rather than papered over. E7's third run found the group, reasoned aloud about the shared-directory hazard, serialised the writers so they could not collide, waited, verified with `git diff`, and reported real per-file diffs — and was marked failed only because it did not use `--resume-from`. That criterion was over-specified: serialised writers cannot collide. The finding was in the rubric, not the harness.
 
 ## 5. Harness Validation
 

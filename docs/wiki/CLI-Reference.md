@@ -30,6 +30,8 @@ Every subcommand accepts:
 | `--timeout <seconds>` | Give the run this long, then SIGINT its process group and record `timed_out`. Works in the background too |
 | `--no-preamble` | Disable the short situational preamble normally prepended to the prompt |
 
+A `start` or `resume` that can write to a directory another live writing run already occupies returns `concurrent_writers` naming them. Reported, never refused — sharing a directory is sometimes what you meant, but it is not something you can otherwise see. Runs in their own worktrees never appear there.
+
 Defaults across all of them: **background**, `workspace-write`, isolated from the user's own Codex config, `service_tier=priority` re-injected under isolation, no model or reasoning effort pinned, no hard timeout.
 
 ## 2. `start`
@@ -81,7 +83,9 @@ Drives `codex exec review`'s own distinct flag surface. Exactly one of `--uncomm
 ## 5. `status`
 
 ```bash
-$CODEX status [--run <ref>] [--thread <thread_id>] [--all] [--include-external]
+$CODEX status [--run <ref>] [--thread <thread_id>] [--group <name>]
+              [--follow [--interval <sec>] [--follow-timeout <sec>]]
+              [--all] [--include-external]
 ```
 
 Lists runs for the project. The default view — no `--run`, `--group` or `--all` — keeps every non-terminal run plus a tail of recent ones, capped at 20 rows, and reports `total_runs` with `runs_truncated` saying how many it withheld. `--group` never truncates: a group you started is bounded by definition, so `runs_truncated` is always `0` there.
@@ -159,6 +163,8 @@ Group-level flags are **defaults**, not constraints; a per-item field overrides 
 **Worktrees** are assigned when two or more members can write (`workspace-write` or `danger-full-access`), one per member at `.codex-runs/<run_id>/wt`, detached. `read-only` members, `kind: review` members, `kind: resume` members, and any member with an explicit `cwd` never get one. See [Orchestration](Orchestration.md) for why each exclusion exists.
 
 **Output:** `group`, `runs` (one entry per task, in order, each with `run_id`/`thread_id`/`cwd`/`sandbox` or an `error`), `spawned`, `requested`, `projected_cost`, `manifest`; plus `worktrees` when any were cut (or a `note` saying why none were), and `resumed_from` under `--resume-from`.
+
+A member that never spawned keeps its slot with an `error` and no `run_id`. It stays visible in every later view of the group as `unstarted`, and makes the group `partial` rather than `completed` — a group asked for three and given two never reports success.
 
 ## 11. `batch clean`
 

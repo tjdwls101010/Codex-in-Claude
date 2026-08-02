@@ -8,7 +8,7 @@ The four-tier test strategy behind this project, and how to run the tiers that l
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-**233 tests, passing in about two minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
+**239 tests, passing in about two minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
 
 This tier includes the single most load-bearing test in the suite: a regression assertion that a resumed run's *recorded argv* actually contains `-c sandbox_mode="read-only"` when its thread was created read-only — the specific defect described in [Sandbox Stability](Sandbox-Stability.md), caught at the argument-composition level before it ever reaches a real Codex process. It also covers Unicode/NFC path handling (Korean paths, spaces), the run registry's self-`.gitignore`ing behavior, cursor-exactness on partial trailing lines, all four filter levels, and all four `doctor` failure modes.
 

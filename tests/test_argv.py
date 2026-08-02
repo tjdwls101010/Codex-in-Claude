@@ -12,6 +12,7 @@ import unittest
 from helpers import BridgeTestCase   # puts the scripts dir on sys.path
 
 import _codex                        # noqa: E402
+from _events import LEVELS           # noqa: E402
 import _util                         # noqa: E402
 
 
@@ -355,3 +356,78 @@ class PureArgvUnits(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlagsNothingElseCovers(BridgeTestCase):
+    """Four flags had zero test coverage under any spelling, found by diffing
+    the parser's registered flags against every string in the suite.
+
+    That is the shape `--include-external` was in when a change to its
+    neighbour silently disabled it — a flag nothing asserts on is a flag that
+    can stop working without anything going red. None of these four turned out
+    to be broken; they are pinned so the next edit nearby cannot break them
+    quietly either."""
+
+    def test_isolate_overrides_inherit_config(self):
+        """The two can be passed together, and `--isolate` is the one that
+        wins — it also drives whether `service_tier=priority` is re-injected,
+        so getting the precedence wrong changes two things, not one."""
+        out = self.bridge("start", "x", "--inherit-config", "--isolate")
+        self.wait_for_state(out["run_id"])
+        self.assertTrue(out["isolated"])
+        argv = " ".join(self.last_argv())
+        self.assertIn("--ignore-user-config", argv)
+        self.assertIn('service_tier="priority"', argv)
+
+    def test_inherit_config_alone_drops_isolation(self):
+        out = self.bridge("start", "x", "--inherit-config")
+        self.wait_for_state(out["run_id"])
+        self.assertFalse(out["isolated"])
+        self.assertNotIn("--ignore-user-config", " ".join(self.last_argv()))
+
+    def test_every_level_is_accepted_through_the_cli(self):
+        """`test_filters.py` calls `format_events` directly, so the flag that
+        selects a level was never itself exercised."""
+        run = self.start("x")
+        self.wait_for_state(run["run_id"])
+        for level in LEVELS:
+            with self.subTest(level=level):
+                p = self.bridge_raw("log", "--run", run["run_id"], "--level", level)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn("# cursor=", p.stdout)
+
+    def test_an_unknown_level_is_refused(self):
+        run = self.start("x")
+        self.wait_for_state(run["run_id"])
+        p = self.bridge_raw("log", "--run", run["run_id"], "--level", "verbose")
+        self.assertNotEqual(p.returncode, 0)
+
+    def test_thread_filters_status_to_one_thread(self):
+        first = self.start("a")
+        self.wait_for_state(first["run_id"])
+        second = self.bridge("resume", first["run_id"], "b")
+        self.wait_for_state(second["run_id"])
+        other = self.start("c")
+        self.wait_for_state(other["run_id"])
+
+        rows = self.bridge("status", "--thread", first["thread_id"], "--all")["runs"]
+        ids = {r["run_id"] for r in rows}
+        self.assertEqual(ids, {first["run_id"], second["run_id"]},
+                         "a resumed run shares its parent's thread; an unrelated "
+                         "run must not be in the filtered view")
+        self.assertNotIn(other["run_id"], ids)
+
+    def test_runs_dir_puts_the_registry_where_it_is_told(self):
+        """`--run-dir` (singular) is `__supervise`'s internal flag and not part
+        of the user surface; `--runs-dir` is the one callers pass."""
+        elsewhere = self.tmp / "registry"
+        out = self.bridge("start", "x", "--runs-dir", str(elsewhere))
+        self.wait_for_state(out["run_id"], runs_dir=elsewhere)
+        self.assertTrue(out["events"].startswith(str(elsewhere)))
+        self.assertFalse((self.project / ".codex-runs").exists(),
+                         "the default registry must not also be created")
+        # And the run is only addressable through the same override.
+        self.bridge("status", "--run", out["run_id"], expect_rc=1)
+        row = self.bridge("status", "--run", out["run_id"],
+                          "--runs-dir", str(elsewhere))["runs"][0]
+        self.assertEqual(row["run_id"], out["run_id"])

@@ -130,11 +130,13 @@ class BridgeTestCase(unittest.TestCase):
         return recs[-1]["argv"]
 
     def wait_for_state(self, run_id, states=("completed", "failed", "interrupted", "orphaned"),
+                       runs_dir=None,
                        timeout=60):
         deadline = time.time() + timeout
         last = None
         while time.time() < deadline:
-            st = self.bridge("status", "--run", run_id)
+            extra = ("--runs-dir", str(runs_dir)) if runs_dir else ()
+            st = self.bridge("status", "--run", run_id, *extra)
             last = st["runs"][0]
             if last["state"] in states:
                 return last

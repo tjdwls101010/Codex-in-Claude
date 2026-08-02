@@ -80,12 +80,14 @@ Same form as R1–R9: each one is a place the plan said something that turned ou
 
 - **R15 — "pair `--follow` with Monitor" (§3.3) is right only when another turn is coming.** The plan's reasoning was the Bash tool's 600-second ceiling, which is correct as far as it goes. In a single-turn context the follower dies with the turn and nothing arrives. Measured: two headless sessions each started their batch correctly, launched a background wait, and ended the turn promising to report back — delivering the user a promise instead of the findings they asked for. With one turn, `status --group --follow --follow-timeout <sec>` in the **foreground** is the right shape. And separately: `batch start` returning is not the batch being done, and the group finishing is not the results being collected.
 
+- **R17 — a flag nothing asserts on is a flag that can stop working silently.** `--include-external` had zero test coverage, and a change to a neighbouring line disabled it without anything going red. Asked afterwards how much more of the surface was in that state, the answer was measurable rather than a guess: diffing the parser's registered flags against every string in the suite found four more. None of the four turned out to be broken — but they were in the same position, and that position is the defect. All 43 user-facing flags are now named by at least one test, and that diff is worth re-running before any release.
+
 - **R16 — a specified, assigned item was never implemented, and nothing at the milestone level noticed.** §1.7's `doctor` warning for non-terminal runs sharing a cwd was written into the plan, assigned to M4b, and simply not built; the pre-release sweep found it. Milestone checks verified what was written against what was planned for *that* milestone, and this fell between two. Worth carrying forward as a process note: a plan item's completion should be checked against the plan, not against the diff.
 
 
 ### v0.2.0 validation results (2026-08-02)
 
-**T1 — 233 tests, passing.** Grew from 124 at v0.1.0. The additions worth naming are the ones that exist because something got past the tier below them: multiprocess registry concurrency (F1 reproduced at 152 of 240 writes first), per-member worktree assignment against real git, the `--resume-from` pairing refusals, and `OverlapsUnderIsolation` — which exists because the pre-existing `overlaps` test planted repo-relative paths, a shape real events never have.
+**T1 — 239 tests, passing.** Grew from 124 at v0.1.0. The additions worth naming are the ones that exist because something got past the tier below them: multiprocess registry concurrency (F1 reproduced at 152 of 240 writes first), per-member worktree assignment against real git, the `--resume-from` pairing refusals, and `OverlapsUnderIsolation` — which exists because the pre-existing `overlaps` test planted repo-relative paths, a shape real events never have.
 
 **T2 — 15/15 against `codex-cli 0.146.0`**, up from the 0.144.1 every earlier tier was measured on. I1–I8 unchanged; I9–I15 cover batch orchestration. Notable: I7 measured the isolated-vs-inherited input-token ratio at **1.06×**, against 2.92× at design time and 1.09× two weeks later — a third data point for R8, and the standing reason `projected_cost` is computed from the registry rather than baked in.
 
@@ -296,7 +298,7 @@ Two observations worth carrying forward rather than burying:
 
 ### T1 — unit tests
 
-**233 tests, passing**, ~115 s. Includes the sandbox-drift regression on the recorded resume argv, the `compact`-never-leaks-output assertions against a real 22 KB `cat`, cursor exactness, parallel-stop isolation, the Korean/NFD path case, the four `doctor` failure modes, multiprocess registry-concurrency reproduction, per-member worktree assignment against real git, and the `--resume-from` pairing refusals. The 16 hook tests are gone with the hook (v0.2.0).
+**239 tests, passing**, ~118 s. Includes the sandbox-drift regression on the recorded resume argv, the `compact`-never-leaks-output assertions against a real 22 KB `cat`, cursor exactness, parallel-stop isolation, the Korean/NFD path case, the four `doctor` failure modes, multiprocess registry-concurrency reproduction, per-member worktree assignment against real git, and the `--resume-from` pairing refusals. The 16 hook tests are gone with the hook (v0.2.0).
 
 **Results:** M0 verification sweep complete; V-01 and V-07 answered at M8 against a real local install. The V-03 blocker is cleared and re-confirmed against the real CLI at I4. Four plan corrections came out of building and testing (R6, R7, R8, R9). No component's design changed; §4's path-resolution snippet and §3.3's headline number were both wrong and are replaced.
 

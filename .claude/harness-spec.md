@@ -85,6 +85,12 @@ Same form as R1–R9: each one is a place the plan said something that turned ou
 - **R16 — a specified, assigned item was never implemented, and nothing at the milestone level noticed.** §1.7's `doctor` warning for non-terminal runs sharing a cwd was written into the plan, assigned to M4b, and simply not built; the pre-release sweep found it. Milestone checks verified what was written against what was planned for *that* milestone, and this fell between two. Worth carrying forward as a process note: a plan item's completion should be checked against the plan, not against the diff.
 
 
+### What is still unmeasured after v0.2.0
+
+Recorded so the gaps are as visible as the results. Eleven open items, with how to measure each and what a failure would mean, are in `docs/plan/260802/README.md`. The short version: `overlaps` has been wrong three times and its third design has not been attacked; no deliberate fault injection has ever been run, which is where most of this project's defects have lived; everything was measured on one macOS machine; and B18 (no approval prompt in default permission mode) was verified for the v0.1.0 surface only — the v0.2.0 e2e runs used `bypassPermissions`, which sidesteps exactly that property.
+
+The signal worth carrying: **defect discovery never converged to zero.** The pre-release sweep found six, the verification after it found three more, and a coverage measurement after that found four untested flags. Work stopped because the session's context filled, not because the defects ran out.
+
 ### v0.2.0 validation results (2026-08-02)
 
 **T1 — 239 tests, passing.** Grew from 124 at v0.1.0. The additions worth naming are the ones that exist because something got past the tier below them: multiprocess registry concurrency (F1 reproduced at 152 of 240 writes first), per-member worktree assignment against real git, the `--resume-from` pairing refusals, and `OverlapsUnderIsolation` — which exists because the pre-existing `overlaps` test planted repo-relative paths, a shape real events never have.

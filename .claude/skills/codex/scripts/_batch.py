@@ -681,8 +681,9 @@ def cmd_batch_clean(args):
 
 def resolve_group(runs_dir: Path, name: str):
     """Group members as (run_dir, meta), in start order. Fails if the group is
-    unknown. Members that never spawned are skipped — they are recorded in the
-    manifest with an `error` and no run id."""
+    unknown. Members that never spawned have no run id to resolve, so they are
+    not here — `unstarted_members` is how the rest of the group views learn
+    they exist."""
     ids = member_run_ids(runs_dir, name)
     if ids is None:
         fail(f"no such group: {name}", runs_dir=str(runs_dir),
@@ -695,16 +696,37 @@ def resolve_group(runs_dir: Path, name: str):
     return out
 
 
-def group_snapshot(rows):
+def unstarted_members(runs_dir: Path, name: str):
+    """Manifest slots that never became runs, with the reason each one didn't.
+
+    Kept as a first-class part of every group view. The alternative — letting
+    them exist only in `batch start`'s reply — means the information is gone
+    the moment that one line of JSON scrolls past, and every later question
+    about the group answers as if the caller had asked for fewer things."""
+    g = read_group(runs_dir, name) or {}
+    return [{"index": m.get("index"), "label": m.get("label"),
+             "kind": m.get("kind"), "error": m.get("error")}
+            for m in g.get("members", []) if not m.get("run_id")]
+
+
+def group_snapshot(rows, unstarted=0):
     """The one place group state is derived, so `status --group` and
-    `--follow`'s exit line can never disagree about whether a group is done."""
+    `--follow`'s exit line can never disagree about whether a group is done.
+
+    `unstarted` is the count of manifest members that never got a run id. They
+    have to be counted here rather than only in `batch start`'s own reply,
+    because every later view of the group resolves membership through run ids
+    and would otherwise be blind to them — a batch asked for three and given
+    one would report `completed`, which is the group-level form of the failure
+    a terminal `--follow` line exists to prevent.
+    """
     running = [r["run_id"] for r in rows if r["state"] in ("running", "starting", "stalled")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
               if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
     if running:
         state = "running"
-    elif failed or not rows:
+    elif failed or unstarted or not rows:
         # `partial` covers "a member failed", "the user stopped it" and "a member
         # timed out" alike. It means "this group did not all succeed", not
         # "Codex broke" — worth stating, because a --follow exit line saying
@@ -732,8 +754,10 @@ def follow_group(args, project, runs_dir):
     group state here.
     """
     members = resolve_group(runs_dir, args.group)
+    never = unstarted_members(runs_dir, args.group)
     if not members:
-        sys.stdout.write(f"group.empty group={args.group}\n")
+        sys.stdout.write(f"group.empty group={args.group}"
+                         + (f" unstarted={len(never)}" if never else "") + "\n")
         sys.stdout.flush()
         return
     seen = {}
@@ -752,10 +776,11 @@ def follow_group(args, project, runs_dir):
                 sys.stdout.write(line + "\n")
                 sys.stdout.flush()
                 seen[row["run_id"]] = row["state"]
-        running, done, failed, gstate = group_snapshot(rows)
+        running, done, failed, gstate = group_snapshot(rows, len(never))
         if not running:
             sys.stdout.write(f"group.{gstate} group={args.group} "
-                             f"done={len(done)} failed={len(failed)}\n")
+                             f"done={len(done)} failed={len(failed)}"
+                             + (f" unstarted={len(never)}" if never else "") + "\n")
             sys.stdout.flush()
             return
         if deadline and time.time() >= deadline:
@@ -836,13 +861,15 @@ def cmd_result_group(args, project, runs_dir):
             counts.setdefault(p, []).append(rid)
     overlaps = {p: rids for p, rids in sorted(counts.items()) if len(rids) > 1}
 
+    never = unstarted_members(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(
-        [{"run_id": r["run_id"], "state": r["state"]} for r in results])
-    emit({"group": args.group, "project": str(project), "results": results,
-          "overlaps": overlaps, "totals": totals, "group_state": gstate,
-          "done": done, "failed": failed, "running": running,
-          "overlaps_note": ("paths written by more than one member. Under worktree "
-                            "isolation this is a merge conflict ahead, not damage "
-                            "already done.") if overlaps else None})
+        [{"run_id": r["run_id"], "state": r["state"]} for r in results], len(never))
+    out = {"group": args.group, "project": str(project), "results": results,
+           "overlaps": overlaps, "totals": totals, "group_state": gstate,
+           "done": done, "failed": failed, "running": running, "unstarted": never,
+           "overlaps_note": ("paths written by more than one member. Under worktree "
+                             "isolation this is a merge conflict ahead, not damage "
+                             "already done.") if overlaps else None}
+    emit(out)
 
 

@@ -47,7 +47,7 @@ from _events import (  # noqa: E402
 )
 from _batch import (  # noqa: E402
     TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
-    group_snapshot, list_groups, resolve_group,
+    group_snapshot, list_groups, resolve_group, unstarted_members,
 )
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
@@ -190,11 +190,15 @@ def cmd_status(args):
             return follow_group(args, project, runs_dir)
         for rd, m in resolve_group(runs_dir, args.group):
             rows.append(run_row(rd, m, project))
-        running, done, failed, gstate = group_snapshot(rows)
-        emit({"project": str(project), "group": args.group, "runs": rows,
-              "running": running, "done": done, "failed": failed,
-              "total_runs": len(rows), "runs_truncated": 0,
-              "group_state": gstate})
+        never = unstarted_members(runs_dir, args.group)
+        running, done, failed, gstate = group_snapshot(rows, len(never))
+        out = {"project": str(project), "group": args.group, "runs": rows,
+               "running": running, "done": done, "failed": failed,
+               "total_runs": len(rows), "runs_truncated": 0,
+               "group_state": gstate}
+        if never:
+            out["unstarted"] = never
+        emit(out)
     else:
         for rd, m in iter_runs(runs_dir):
             if args.thread and m.get("thread_id") != args.thread:

@@ -284,6 +284,61 @@ class GroupManifestAtomicity(BridgeTestCase):
         self.assertEqual(leftovers, [], "no tmp file may survive a claim")
 
 
+class AMemberThatNeverStartedIsStillAMember(BridgeTestCase):
+    """Found by running a real batch, not by reading the code: a group that was
+    asked for two and given one reported `completed`.
+
+    Every view of a group after `batch start` resolves membership through run
+    ids, and a member that never spawned has none — so it was invisible
+    everywhere except the one line of JSON `batch start` printed. That is the
+    group-level form of the failure a terminal `--follow` line exists to
+    prevent: the caller asked for N things, got fewer, and was told everything
+    succeeded."""
+
+    def half_started(self):
+        f = self.tmp / "tasks.jsonl"
+        f.write_text("\n".join([
+            json.dumps({"prompt": "this one works", "label": "lives"}),
+            json.dumps({"prompt": "this one cannot", "label": "doomed",
+                        "schema": "/nonexistent/schema.json"}),
+        ]) + "\n")
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", str(f))
+        self.wait_for_state(out["runs"][0]["run_id"])
+        return out
+
+    def test_status_group_reports_partial_and_names_what_never_started(self):
+        self.half_started()
+        st = self.bridge("status", "--group", "p1")
+        self.assertEqual(st["group_state"], "partial",
+                         "one of two spawned is not a completed group")
+        self.assertEqual(len(st["unstarted"]), 1)
+        self.assertEqual(st["unstarted"][0]["label"], "doomed")
+        self.assertIn("schema", st["unstarted"][0]["error"])
+
+    def test_result_group_carries_them_too(self):
+        self.half_started()
+        res = self.bridge("result", "--group", "p1")
+        self.assertEqual(res["group_state"], "partial")
+        self.assertEqual([u["index"] for u in res["unstarted"]], [1])
+
+    def test_follow_says_so_on_its_terminal_line(self):
+        self.half_started()
+        p = self.bridge_raw("status", "--group", "p1", "--follow",
+                            "--follow-timeout", "10", "--interval", "0.2")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        last = p.stdout.strip().splitlines()[-1]
+        self.assertTrue(last.startswith("group.partial"), last)
+        self.assertIn("unstarted=1", last)
+
+    def test_a_fully_started_group_says_nothing_about_it(self):
+        out = self.bridge("batch", "start", "--group", "p1", "--task", "a", "--task", "b")
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        st = self.bridge("status", "--group", "p1")
+        self.assertEqual(st["group_state"], "completed")
+        self.assertNotIn("unstarted", st)
+
+
 class GroupSelectors(BridgeTestCase):
 
     def start_group(self, *extra, name="p1", n=2, **kw):

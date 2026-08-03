@@ -71,17 +71,23 @@ Or, for development, symlink the skill directly:
 ln -s /path/to/Codex-in-Claude/.claude/skills/codex ~/.claude/skills/codex
 ```
 
-A symlinked skill doesn't get the plugin's pre-approved `allowed-tools`, so every poll prompts for approval. Add this to `~/.claude/settings.json` to get the same effect manually:
+A symlinked skill doesn't get the plugin's pre-approved `allowed-tools`, so every poll prompts for approval. Add this to `~/.claude/settings.json` to get the same effect manually — **with your own absolute path written out**:
 
 ```json
 {
   "permissions": {
     "allow": [
-      "Bash(python3 \"$HOME/.claude/skills/codex/scripts/codex_bridge.py\" *)"
+      "Skill(codex)",
+      "Bash(python3 \"/Users/you/.claude/skills/codex/scripts/codex_bridge.py\" *)"
     ]
   }
 }
 ```
+
+Both lines are load-bearing, and both were measured in a headless session running in the default permission mode:
+
+- **`$HOME` is not expanded in a permission rule.** `${CLAUDE_PLUGIN_ROOT}` is (that is what makes the plugin install work with no settings at all), but `$HOME` is not, so a rule written with it never matches and every bridge call is refused. Write the path out.
+- **`Skill(codex)` is separate from the bridge rule.** Without it the skill cannot even load, so the `Bash(...)` rule is never reached — the session simply reports that the skill failed and does nothing.
 
 </details>
 

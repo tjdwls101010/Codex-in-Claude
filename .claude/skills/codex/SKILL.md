@@ -27,6 +27,8 @@ python3 "<base directory>/scripts/codex_bridge.py" status
 
 **Do not build the path from an environment variable.** `$CLAUDE_PLUGIN_ROOT` and `$CLAUDE_SKILL_DIR` are both empty in the Bash environment, even for a plugin install (measured — `$CLAUDE_PLUGIN_ROOT` is expanded in permission rules, which is a different layer from the process environment). And because this skill's pre-approved permission pattern matches the command *text*, a command written as `python3 "$SOMEVAR/..."` is not covered by it and raises an approval prompt on every poll — which is exactly what makes background work unusable.
 
+**Write each call on one line.** The same text matching means a command broken across lines with a trailing `\` does not match the pattern either, and gets refused. This bites exactly where it is least convenient: `batch start` with several `--task` flags is long, long commands invite line continuations, and a refused `batch start` is the whole batch. Measured in a headless run in the default permission mode — the multi-line form was denied, the identical single-line form ran.
+
 If a call fails with "No such file or directory", the path is wrong and `doctor` cannot help you find it — it is the same script. Locate the file first: the `Base directory for this skill:` line above is the answer, and `ls "<base directory>/scripts/"` confirms it. Once a call runs at all, `doctor` diagnoses everything else about the environment.
 
 Every subcommand prints **one line of JSON**, except `log`, which prints text plus a trailing `# cursor=<n>`. Below, `$CODEX` is shorthand for that literal `python3 "<base directory>/scripts/codex_bridge.py"` — write it out in full when you run it.

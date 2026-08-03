@@ -44,6 +44,42 @@ def toml_cfg(key: str, value: str):
     return ["-c", f'{key}="{value}"']
 
 
+REVIEW_SELECTORS = ("uncommitted", "base", "commit", "prompt")
+
+
+def review_argv(*, uncommitted=None, base=None, commit=None, title=None,
+                prompt=None, fail):
+    """`codex exec review`'s own flag surface, validated in one place.
+
+    Two callers build this — `review` on the command line and a `kind: review`
+    member of a batch — and they had drifted. The CLI refused a `--title`
+    without a `--commit` and refused combinations the Codex CLI itself rejects;
+    the batch path did neither, so a tasks file could ask for `uncommitted` and
+    `base` together and get a member that failed asynchronously, or name a
+    `title` that was dropped without a word. `load_tasks` already states the
+    principle it was breaking: a silently ignored field is a run that quietly
+    did something else.
+
+    `fail` is passed in because the two callers report errors differently — one
+    exits, one raises inside `failures_raise` so the rest of the batch survives.
+    """
+    chosen = [n for n, v in (("--uncommitted", uncommitted), ("--base", base),
+                             ("--commit", commit), ("prompt", prompt)) if v]
+    if len(chosen) != 1:
+        fail("review takes exactly one of --uncommitted, --base <ref>, "
+             "--commit <sha>, or a prompt; the Codex CLI rejects combinations",
+             given=chosen)
+    if title and not commit:
+        fail("--title is only valid with --commit")
+    if uncommitted:
+        return ["--uncommitted"]
+    if base:
+        return ["--base", str(base)]
+    if commit:
+        return ["--commit", str(commit)] + (["--title", str(title)] if title else [])
+    return []
+
+
 def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_args=None):
     """Compose the Codex argv for a run from its recorded settings.
 

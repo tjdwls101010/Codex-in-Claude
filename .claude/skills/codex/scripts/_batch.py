@@ -37,6 +37,7 @@ from _registry import (
     TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, read_meta, reap,
     resolve_project, resolve_runs_dir,
 )
+from _codex import review_argv
 from _run import (
     WRITING_SANDBOXES, create_run, refuse_concurrent_turn, run_row,
 )
@@ -206,6 +207,8 @@ TASK_FIELDS = ("prompt", "kind", "label", "model", "effort", "sandbox", "schema"
 # the earlier members have already spawned; a tasks file this broken should
 # cost nothing, and the way to make it cost nothing is to read it fully before
 # starting anything.
+REVIEW_FIELDS = ("uncommitted", "base", "commit", "title")
+
 TASK_FIELD_TYPES = {"prompt": str, "kind": str, "label": str, "model": str,
                     "effort": str, "sandbox": str, "schema": str, "cwd": str,
                     "resume": str, "image": list, "review": dict}
@@ -248,6 +251,13 @@ def load_tasks(args):
             if any(not isinstance(i, str) for i in item.get("image") or []):
                 fail(f"tasks file line {n}: 'image' must be a list of paths",
                      line=clip(line, 200))
+            # The same rule one level down. `review` is the only nested object
+            # a task has, and typing `titel` into it was silently a no-op while
+            # typing it at the top level was a loud refusal.
+            unknown_review = set(item.get("review") or {}) - set(REVIEW_FIELDS)
+            if unknown_review:
+                fail(f"tasks file line {n} has unknown 'review' field(s): "
+                     f"{sorted(unknown_review)}", known_fields=list(REVIEW_FIELDS))
             item.setdefault("kind", "start")
             if item["kind"] not in ("start", "resume", "review"):
                 fail(f"tasks file line {n}: kind must be start, resume or review",
@@ -607,13 +617,10 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
                           thread_ref=base.get("thread_id"), group=group,
                           batch=batch)
     review = item.get("review") or {}
-    review_args = []
-    if review.get("uncommitted"):
-        review_args.append("--uncommitted")
-    if review.get("base"):
-        review_args += ["--base", str(review["base"])]
-    if review.get("commit"):
-        review_args += ["--commit", str(review["commit"])]
+    review_args = review_argv(uncommitted=review.get("uncommitted"),
+                              base=review.get("base"), commit=review.get("commit"),
+                              title=review.get("title"),
+                              prompt=item.get("prompt"), fail=fail)
     return create_run(ns, kind="review", review_args=review_args, group=group,
                       batch=batch)
 

@@ -39,6 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
+    review_argv,
     SANDBOX_MODES, query_threads, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
@@ -158,24 +159,9 @@ def cmd_resume(args):
 
 
 def cmd_review(args):
-    chosen = [n for n, v in (("--uncommitted", args.uncommitted), ("--base", args.base),
-                             ("--commit", args.commit), ("prompt", args.prompt)) if v]
-    if len(chosen) != 1:
-        fail("review takes exactly one of --uncommitted, --base <ref>, --commit <sha>, "
-             "or a prompt; the Codex CLI rejects combinations", given=chosen)
-    if args.title and not args.commit:
-        fail("--title is only valid with --commit")
-
-    if args.uncommitted:
-        review_args = ["--uncommitted"]
-    elif args.base:
-        review_args = ["--base", args.base]
-    elif args.commit:
-        review_args = ["--commit", args.commit]
-        if args.title:
-            review_args += ["--title", args.title]
-    else:
-        review_args = []
+    review_args = review_argv(uncommitted=args.uncommitted, base=args.base,
+                              commit=args.commit, title=args.title,
+                              prompt=args.prompt, fail=fail)
     emit(create_run(args, kind="review", review_args=review_args))
 
 

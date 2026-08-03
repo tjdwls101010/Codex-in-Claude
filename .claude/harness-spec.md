@@ -131,6 +131,18 @@ Coverage before this round was about ten flags with real-CLI evidence (T2's I1�
 
 **Mode F — near-misses, headless.** Two, both passing with the absence shown rather than asserted: "review these three files at once" (no `Skill` event, no `SKILL.md` read, no bridge call, and all three seeded bugs found by Claude itself), and a harder one not previously tried — "does this project document which GPT models it works with, and is that accurate" — where `GPT` appears as the subject of a documentation question rather than as an instruction to delegate. It did not trigger, and it answered the question by checking each documented claim against the code.
 
+**Coverage, counted rather than asserted.** The bridge exposes **41 user-facing flags** across eleven subcommands (`--runs-dir`, `--project` and `-h` excluded — they exist for tests and scripting). Every one of the 41 now has evidence from a real `codex-cli` invocation: 22 from T2's I1–I15 in earlier rounds, and the rest from this tier. The four that had no evidence anywhere until the ledger was actually built — `--grace`, `--isolate`, `--no-priority`, `--no-worktree` — plus `stop --group` and `stop --all` (T2 covered only `stop --run`) were run explicitly to close it:
+
+| flag | evidence |
+|---|---|
+| `--no-worktree` | two `workspace-write` members, which normally force isolation, both landed in the caller's tree with `worktree: null` |
+| `--no-priority` | `priority: false` and **no `service_tier` in argv**, against `--priority`'s `-c service_tier="priority"` |
+| `--isolate` | `isolated: true`, `--ignore-user-config` in argv — passing it explicitly agrees with the default rather than changing it |
+| `stop --group --grace 3` | both members signalled, `SIGINT` alone, both `interrupted`, group `partial`, returned in 1.6 s |
+| `stop --all` | signalled the one live run and left the two already-terminal members alone |
+
+One honest limit on that table: `--grace` bounds an escalation ladder (SIGINT → SIGTERM → SIGKILL) that real Codex never forces, because it exits on the first signal. The ladder itself is T1's, via a shim that ignores SIGINT. So `--grace` is measured as accepted and honoured as a bound; it is not measured as *elapsing*, and cannot be against a well-behaved Codex.
+
 **What this tier found:** four defects, all in the class R17 predicted. `status --run --follow` accepted the flag and ignored it; `--run` together with `--group` silently discarded the group; `status --include-external` returned every thread's full stored prompt as its title; and the `review` surface had two rulebooks, with the batch one enforcing none of the single-run path's three rules.
 
 ### v0.2.0 validation results (2026-08-02)

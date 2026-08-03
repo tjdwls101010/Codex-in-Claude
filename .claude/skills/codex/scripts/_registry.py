@@ -98,6 +98,16 @@ def read_meta(run_dir: Path):
         return None
 
 
+def meta_unreadable(run_dir: Path) -> bool:
+    """Distinguish a corrupt run from one whose metadata is gone.
+
+    `read_meta` returns None for both a missing file and one that will not
+    parse. These three callers have established whether the file is there, so
+    they need one shared answer to the remaining question: corrupt or gone.
+    """
+    return (run_dir / "meta.json").is_file() and read_meta(run_dir) is None
+
+
 @contextlib.contextmanager
 def _meta_lock(run_dir: Path):
     """Serialise read-modify-write on one run's meta.json.
@@ -220,7 +230,7 @@ def unreadable_runs(runs_dir: Path):
     for d in runs_dir.iterdir():
         if not d.is_dir() or d.name.startswith("."):
             continue
-        if (d / "meta.json").is_file() and read_meta(d) is None:
+        if meta_unreadable(d):
             bad.append(d.name)
     return sorted(bad)
 

@@ -34,8 +34,8 @@ from pathlib import Path
 
 from _events import read_events, scan_progress
 from _registry import (
-    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir, unreadable_runs,
+    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, meta_unreadable,
+    read_meta, reap, resolve_project, resolve_runs_dir, unreadable_runs,
 )
 from _codex import review_argv
 from _run import (
@@ -665,7 +665,7 @@ def cmd_batch_clean(args):
             # recorded `running` had its only copy of its work deleted without
             # `--force` ever being passed. Unknown is not terminal: refuse, and
             # make the caller say --force if they mean it.
-            if rd is not None and (rd / "meta.json").exists():
+            if rd is not None and meta_unreadable(rd):
                 live.append({"run_id": rid, "state": "unreadable",
                              "reason": "its meta.json will not parse, so whether "
                                        "it is still running cannot be determined"})
@@ -835,7 +835,7 @@ def vanished_members(runs_dir: Path, name: str):
         # caller it is "no longer in the registry" would send them away from
         # work that is still on disk, while the same payload's `unreadable`
         # field says the opposite.
-        present = rd is not None and (rd / "meta.json").exists()
+        present = rd is not None and meta_unreadable(rd)
         gone.append({"index": m.get("index"), "label": m.get("label"),
                      "run_id": rid,
                      "error": ("its meta.json will not parse; the run directory "

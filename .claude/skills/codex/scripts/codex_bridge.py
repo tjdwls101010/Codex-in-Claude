@@ -178,6 +178,20 @@ def cmd_review(args):
 # status
 # --------------------------------------------------------------------------
 
+def note_unreadable(out: dict, runs_dir):
+    """A run whose meta.json will not parse is skipped by `iter_runs`, which is
+    what keeps one broken run from breaking every view. Saying nothing about it
+    would make the list it is missing from look complete.
+
+    Every listing branch has to say it, not only the default one: `--group` is
+    the view a caller polls, and it emits and exits on its own path."""
+    bad = unreadable_runs(runs_dir)
+    if bad:
+        out["runs_unreadable"] = len(bad)
+        out["unreadable"] = bad
+    return out
+
+
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -201,6 +215,7 @@ def cmd_status(args):
                "group_state": gstate}
         if never:
             out["unstarted"] = never
+        note_unreadable(out, runs_dir)
         emit(out)
     else:
         for rd, m in iter_runs(runs_dir):
@@ -240,13 +255,7 @@ def cmd_status(args):
            "threads": by_thread, "running": running, "done": done, "failed": failed,
            "total_runs": total_runs, "runs_truncated": runs_truncated,
            "groups": list_groups(runs_dir)}
-    # A run whose meta.json will not parse is skipped by `iter_runs`, which is
-    # what keeps one broken run from breaking every view. Saying nothing about
-    # it would make this list look complete when it is not.
-    bad = unreadable_runs(runs_dir)
-    if bad:
-        out["runs_unreadable"] = len(bad)
-        out["unreadable"] = bad
+    note_unreadable(out, runs_dir)
     if args.include_external:
         out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]

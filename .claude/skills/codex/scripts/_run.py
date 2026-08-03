@@ -246,6 +246,18 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         if not Path(img).exists():
             fail(f"image not found: {img}")
 
+    # Every check that could still refuse this run has passed, so publish it
+    # before cutting anything. `write_meta` is what makes the run — and the
+    # group it names — visible to `iter_runs`, and a checkout that exists while
+    # the registry has never heard of the run is reachable by nothing at all:
+    # not `batch clean --group`, which needs a run id, and not `status`, which
+    # needs a meta.json. This process can die at any instant from here on, and
+    # what it has already put on disk has to be findable without it.
+    #
+    # The reasoning below was written about *rejection* and is still right; it
+    # was silent about *death*, which is the case that actually leaked.
+    write_meta(run_dir, meta)
+
     # Cut the worktree last, after every check that can still refuse this run.
     # It cannot be cut before `claim_run_dir` — it lives at `<run_dir>/wt`, and
     # the run id naming that directory does not exist until then — but cutting
@@ -267,6 +279,13 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
                    "source": str(source)}
         meta["cwd"] = str(cwd)
         meta["worktree"] = wt_info
+        # Immediately, not with the rest of meta at the end of this function.
+        # Between here and there lies `THREAD_ID_WAIT`, up to fifteen seconds
+        # of waiting for Codex to name its thread, and a checkout whose path is
+        # written nowhere is one `batch clean` skips: its loop takes the path
+        # from `meta["worktree"]`. Publishing the run without it closes half a
+        # hole and leaves the other half exactly as wide.
+        write_meta(run_dir, meta)
 
     if batch and wt_info:
         batch = {**batch, "worktree": wt_info["path"], "base": wt_info["base"],

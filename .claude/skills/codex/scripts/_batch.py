@@ -158,6 +158,33 @@ def member_run_ids(runs_dir: Path, name: str):
     return [m["run_id"] for m in g.get("members", []) if m.get("run_id")]
 
 
+def owned_run_ids(runs_dir: Path, name: str):
+    """Every run that says it belongs to this group, manifest first.
+
+    The manifest is `batch start`'s record and it lags what is already on disk:
+    `create_run` mints the run id, cuts the worktree and writes `meta.json`
+    before it returns, and only then does the spawn loop learn the id and put it
+    in the manifest. A batch killed inside that window — up to THREAD_ID_WAIT
+    wide — leaves a full checkout whose slot has no run id, and anything that
+    resolves membership through `member_run_ids` alone can never reach it.
+
+    So membership is asked of the registry as well: a run records its own group
+    at the moment its directory is claimed. This is R10 again, and for the same
+    reason — a run's own record cannot go stale the way a manifest entry that
+    was never written cannot be recovered. Manifest order comes first because
+    `--resume-from` pairs positionally against it; registry-only members are
+    appended, since by definition nothing ever recorded an order for them.
+    """
+    ids = member_run_ids(runs_dir, name)
+    if ids is None:
+        return None
+    seen = set(ids)
+    extra = [m["run_id"] for _rd, m in iter_runs(runs_dir)
+             if m.get("group") == name and m.get("run_id")
+             and m["run_id"] not in seen]
+    return ids + extra
+
+
 def derived_groups(runs_dir: Path, name: str):
     """Groups whose `--resume-from` was this one. `batch clean` needs them:
     a phase-2 member resumes into its phase-1 predecessor's worktree, so
@@ -610,7 +637,7 @@ def cmd_batch_clean(args):
              known_groups=list_groups(runs_dir)[:20])
 
     live, removed, kept = [], [], []
-    for rid in member_run_ids(runs_dir, args.group) or []:
+    for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
         if not meta:
             continue
@@ -642,12 +669,18 @@ def cmd_batch_clean(args):
         overrode["derived_groups"] = children
 
     worktree_prune(project)
-    for rid in member_run_ids(runs_dir, args.group) or []:
+    for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
-        wt = (meta or {}).get("worktree")
-        if not wt:
+        if rd is None:
             continue
-        path = Path(wt["path"])
+        wt = (meta or {}).get("worktree")
+        # `git worktree add` and the `write_meta` that records its path cannot
+        # be one operation, so there is a window — now milliseconds rather than
+        # the fifteen seconds it used to be — where the checkout exists and
+        # `meta["worktree"]` is still null. The path is not a guess: a member's
+        # worktree is always `<run_dir>/wt` (`create_run`), so the convention is
+        # the recovery. Without it that checkout is removable by nothing.
+        path = Path(wt["path"]) if wt else rd / "wt"
         if not path.exists():
             continue
         # 3. Uncommitted changes in the worktree, i.e. results nobody collected.
@@ -734,9 +767,16 @@ def unstarted_members(runs_dir: Path, name: str):
     # Slots the manifest never got to record at all, because `batch start` was
     # killed before it reached them. Without this the group looks like it asked
     # for however many it managed to start.
+    #
+    # The wording claims only what this view knows. A slot with no run id may
+    # still have got as far as a run directory and a worktree — the manifest
+    # lags `create_run` by up to THREAD_ID_WAIT — and `batch clean` finds those
+    # through the registry (`owned_run_ids`). This view deliberately does not:
+    # it is the one a caller polls once a second, and walking the registry per
+    # tick is the cost this module's docstring exists to refuse.
     for i in range(len(members), g.get("requested") or 0):
         never.append({"index": i, "label": None, "kind": None,
-                      "error": "batch start did not reach this task"})
+                      "error": "batch start recorded no run for this task"})
     return never
 
 

@@ -80,7 +80,22 @@ class ABatchKilledWhileSpawning(FaultTestCase):
     part that outlives the process and holds the only copy of a member's work —
     were never in the picture."""
 
+    def worktrees_cut(self):
+        out = subprocess.run(["git", "-C", str(self.project), "worktree", "list",
+                              "--porcelain"], capture_output=True, text=True).stdout
+        return [l.split(" ", 1)[1] for l in out.splitlines()
+                if l.startswith("worktree ")][1:]
+
     def test_what_was_cut_is_still_reachable_and_still_counted(self):
+        """Killed *inside* the window, not merely somewhere near it.
+
+        Waiting for "two members in the manifest" and killing then lands the
+        signal wherever the scheduler happens to put it, so this passed about
+        six times in ten and the four failures were the defect. The window that
+        matters is the one between `create_run` cutting a worktree and the spawn
+        loop learning the run id, so the test waits until it can *see* that
+        state — a checkout on disk with no run id in the manifest — and kills
+        there every time."""
         env = dict(self.env)
         env["FAKE_CODEX_PRE_DELAY"] = "6"
         proc = subprocess.Popen(
@@ -92,18 +107,20 @@ class ABatchKilledWhileSpawning(FaultTestCase):
         self.addCleanup(self.kill_tree, proc)
 
         manifest = self.runs_dir() / ".groups" / "p1.json"
-        deadline = time.time() + 30
-        members = []
+        deadline = time.time() + 40
+        in_window = False
         while time.time() < deadline:
             if manifest.exists():
                 members = (json.loads(manifest.read_text()) or {}).get("members") or []
-                if len(members) >= 2:
+                with_id = [m for m in members if m.get("run_id")]
+                if len(self.worktrees_cut()) > len(with_id):
+                    in_window = True
                     break
             if proc.poll() is not None:
                 break
-            time.sleep(0.1)
-        self.assertGreaterEqual(len(members), 2, "at least two members must have "
-                                                 "spawned before the kill")
+            time.sleep(0.05)
+        self.assertTrue(in_window, "never observed a checkout whose member had no "
+                                   "run id; this test asserts nothing without it")
         self.kill_tree(proc)
 
         members = json.loads(manifest.read_text())["members"]
@@ -263,6 +280,30 @@ class WhenAGroupManifestCannotBeParsed(FaultTestCase):
             self.assertIn("error", res,
                           f"{cmd[0]} --group must refuse a manifest it cannot "
                           f"read instead of reporting an empty group")
+
+
+class WhenGitHasLockedAWorktree(FaultTestCase):
+    """`git worktree add` holds a lock for the duration of the checkout, so a
+    `batch start` killed inside it leaves one locked forever. A single
+    `--force` does not lift a git lock — only `-f -f` does — and `batch clean`
+    says in its own output that `--force` "lifted every protection at once"."""
+
+    def test_force_lifts_a_git_lock_too(self):
+        out = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b")
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        path = out["runs"][0]["worktree"]
+        self.git("worktree", "lock", "--reason", "initializing", path)
+
+        refused = self.bridge("batch", "clean", "--group", "p1")
+        self.assertTrue(any(k["path"] == path for k in refused["kept"]),
+                        "a locked worktree must be reported, not skipped")
+        self.assertFalse(refused["name_released"],
+                         "the name stays claimed while something is left behind")
+
+        self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual(self.bridge("doctor", expect_rc=doctor_rc(self))["worktrees"], 0)
 
 
 class WhenAWorktreeIsRemovedFromUnderALiveRun(FaultTestCase):

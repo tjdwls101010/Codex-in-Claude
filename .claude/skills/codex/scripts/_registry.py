@@ -253,8 +253,23 @@ def reap(run_dir: Path, meta: dict) -> dict:
     if sup and pid_alive(sup):
         return meta
     if meta.get("state") == "starting" and not sup:
-        # The supervisor writes its pid as its first act; give it a moment
-        # before calling a just-spawned run dead.
+        # A run with no supervisor yet is still being built, and the process
+        # building it says so: `create_run` records its own pid before it does
+        # anything slow. Ask that directly rather than guessing from a clock.
+        #
+        # The clock guess was safe while meta.json was written once, at the very
+        # end. It stopped being safe the moment meta.json started being written
+        # *before* `git worktree add`, which `_worktree._git` allows sixty
+        # seconds — twice this grace period. A large checkout on a slow disk
+        # would leave a live run looking thirty seconds dead, and `orphaned` is
+        # terminal, so it drops out of `batch clean`'s live-member guard and out
+        # of the occupancy check that protects its worktree. Combined with
+        # `-f -f`, which exists to defeat git's own "initializing" lock on a
+        # worktree whose owner died, that removes a checkout whose owner is
+        # alive and still writing into it.
+        creator = meta.get("creator_pid")
+        if creator and pid_alive(creator):
+            return meta
         try:
             if time.time() - os.path.getmtime(run_dir / "meta.json") < 30:
                 return meta

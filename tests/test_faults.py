@@ -282,6 +282,86 @@ class WhenAGroupManifestCannotBeParsed(FaultTestCase):
                           f"read instead of reporting an empty group")
 
 
+class WhenARunIsStillBeingBuilt(FaultTestCase):
+    """Publishing a run before cutting its worktree made it visible to `reap`
+    before it had done anything slow — and `git worktree add` is allowed sixty
+    seconds, twice `reap`'s thirty-second grace. A live run would be branded
+    `orphaned`, which is terminal, so it dropped out of `batch clean`'s live
+    guard and out of the occupancy check; `-f -f` then removed the checkout its
+    owner was still writing into. Two fixes cancelling each other out."""
+
+    def test_a_live_creator_is_not_reaped_however_slow_it_is(self):
+        run_dir = self.runs_dir() / "r-building"
+        run_dir.mkdir(parents=True)
+        write_meta(run_dir, {"run_id": "r-building", "state": "starting",
+                             "supervisor_pid": None, "creator_pid": os.getpid()})
+        # Older than the grace period by a wide margin.
+        old = time.time() - 600
+        os.utime(run_dir / "meta.json", (old, old))
+
+        from _registry import reap
+        out = reap(run_dir, read_meta(run_dir))
+        self.assertEqual(out["state"], "starting",
+                         "a run whose creator is alive is being built, not dead")
+
+    def test_a_dead_creator_is_still_reaped(self):
+        run_dir = self.runs_dir() / "r-abandoned"
+        run_dir.mkdir(parents=True)
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        write_meta(run_dir, {"run_id": "r-abandoned", "state": "starting",
+                             "supervisor_pid": None, "creator_pid": dead.pid})
+        old = time.time() - 600
+        os.utime(run_dir / "meta.json", (old, old))
+
+        from _registry import reap
+        self.assertEqual(reap(run_dir, read_meta(run_dir))["state"], "orphaned",
+                         "the grace period must still end for a creator that died")
+
+
+class WhenAMembersMetaCannotBeParsed(FaultTestCase):
+    """`batch clean` skipped a member whose meta would not parse when deciding
+    whether anything was live, and then found its worktree anyway by convention
+    — so a run last recorded `running` lost the only copy of its work with no
+    `--force` ever passed. Unknown is not terminal."""
+
+    def test_clean_refuses_rather_than_guessing_the_run_is_dead(self):
+        out = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b")
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        victim = out["runs"][0]["run_id"]
+        (self.runs_dir() / victim / "meta.json").write_text("{ truncated")
+
+        res = self.bridge("batch", "clean", "--group", "p1", expect_rc=1)
+        self.assertIn("running members", res["error"])
+        self.assertIn(victim, [r["run_id"] for r in res["running"]])
+        self.assertTrue((self.runs_dir() / victim / "wt").exists(),
+                        "the worktree must survive a clean that was refused")
+
+        forced = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual(len(forced["removed"]), 2)
+
+    def test_the_group_views_do_not_call_a_broken_run_a_missing_one(self):
+        out = self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        rid = out["runs"][0]["run_id"]
+        self.wait_for_state(rid)
+        (self.runs_dir() / rid / "meta.json").write_text("{ truncated")
+
+        st = self.bridge("status", "--group", "p1")
+        self.assertEqual(st["runs_unreadable"], 1)
+        reason = st["unstarted"][0]["error"]
+        self.assertIn("will not parse", reason)
+        self.assertNotIn("no longer in the registry", reason,
+                         "the directory is still there; saying otherwise sends "
+                         "the caller away from work that is still on disk")
+
+        p = self.bridge_raw("status", "--group", "p1", "--follow",
+                            "--follow-timeout", "5")
+        self.assertIn("unreadable=1", p.stdout,
+                      "the branch a caller polls has to say it too")
+
+
 class WhenGitHasLockedAWorktree(FaultTestCase):
     """`git worktree add` holds a lock for the duration of the checkout, so a
     `batch start` killed inside it leaves one locked forever. A single

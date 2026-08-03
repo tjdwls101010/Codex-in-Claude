@@ -35,7 +35,7 @@ from pathlib import Path
 from _events import read_events, scan_progress
 from _registry import (
     TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir,
+    resolve_project, resolve_runs_dir, unreadable_runs,
 )
 from _codex import review_argv
 from _run import (
@@ -659,6 +659,16 @@ def cmd_batch_clean(args):
     for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
         if not meta:
+            # A run whose meta.json will not parse is not thereby dead. Skipping
+            # it here left it out of the live-member guard while the removal
+            # loop below still found its worktree by convention, so a run last
+            # recorded `running` had its only copy of its work deleted without
+            # `--force` ever being passed. Unknown is not terminal: refuse, and
+            # make the caller say --force if they mean it.
+            if rd is not None and (rd / "meta.json").exists():
+                live.append({"run_id": rid, "state": "unreadable",
+                             "reason": "its meta.json will not parse, so whether "
+                                       "it is still running cannot be determined"})
             continue
         meta = reap(rd, meta)
         if meta.get("state") not in TERMINAL_STATES:
@@ -813,10 +823,25 @@ def vanished_members(runs_dir: Path, name: str):
     gone = []
     for m in g.get("members", []):
         rid = m.get("run_id")
-        if rid and not find_run(runs_dir, rid)[1]:
-            gone.append({"index": m.get("index"), "label": m.get("label"),
-                         "run_id": rid,
-                         "error": "its run directory is no longer in the registry"})
+        if not rid:
+            continue
+        rd, meta = find_run(runs_dir, rid)
+        if meta:
+            continue
+        # Two different things reach here and they need different words. A
+        # directory that is gone was removed by hand or by something outside
+        # this skill. A directory that is present with an unparseable meta.json
+        # still holds its event stream and possibly its worktree — telling the
+        # caller it is "no longer in the registry" would send them away from
+        # work that is still on disk, while the same payload's `unreadable`
+        # field says the opposite.
+        present = rd is not None and (rd / "meta.json").exists()
+        gone.append({"index": m.get("index"), "label": m.get("label"),
+                     "run_id": rid,
+                     "error": ("its meta.json will not parse; the run directory "
+                               "is still there and may still hold results"
+                               if present else
+                               "its run directory is no longer in the registry")})
     return gone
 
 
@@ -866,9 +891,15 @@ def follow_group(args, project, runs_dir):
     """
     members = resolve_group(runs_dir, args.group)
     never = unstarted_members(runs_dir, args.group) + vanished_members(runs_dir, args.group)
+    # The other two `status` branches report this; the one a caller actually
+    # polls did not, so a group whose only member had a corrupt meta.json
+    # printed `group.empty` — indistinguishable from a group that never started
+    # anything, while the member's run directory and worktree were still there.
+    bad = len(unreadable_runs(runs_dir))
+    tail = ((f" unstarted={len(never)}" if never else "")
+            + (f" unreadable={bad}" if bad else ""))
     if not members:
-        sys.stdout.write(f"group.empty group={args.group}"
-                         + (f" unstarted={len(never)}" if never else "") + "\n")
+        sys.stdout.write(f"group.empty group={args.group}" + tail + "\n")
         sys.stdout.flush()
         return
     seen = {}
@@ -890,8 +921,7 @@ def follow_group(args, project, runs_dir):
         running, done, failed, gstate = group_snapshot(rows, len(never))
         if not running:
             sys.stdout.write(f"group.{gstate} group={args.group} "
-                             f"done={len(done)} failed={len(failed)}"
-                             + (f" unstarted={len(never)}" if never else "") + "\n")
+                             f"done={len(done)} failed={len(failed)}" + tail + "\n")
             sys.stdout.flush()
             return
         if deadline and time.time() >= deadline:

@@ -157,8 +157,9 @@ class ExternalThreadTitles(BridgeTestCase):
         filtered to the project's cwd, and a temp project has no threads in it,
         so asserting over an empty list would pass while the cap did nothing.
         That the cap is actually applied in `cmd_status` is a T5 measurement
-        against the real CLI (19 KB to 16 KB over sixteen threads), not a T1
-        one — which is the whole distinction this round is about."""
+        against the real CLI, not a T1
+        one — which is the whole distinction this round is about. The measured
+        numbers live on `EXTERNAL_TITLE_CAP` so there is one copy of them."""
         import codex_bridge
         cap = codex_bridge.EXTERNAL_TITLE_CAP
         short = "already short"

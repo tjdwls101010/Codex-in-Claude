@@ -69,8 +69,12 @@ from _util import (  # noqa: E402
 SHOW_MAX_BYTES = 20000
 
 # `status --include-external` caps each thread's title. Codex stores the whole
-# prompt there, preamble included, and this listing returns up to fifty of them:
-# measured at 19 KB against a 3 KB listing for sixteen threads on one project.
+# prompt there, preamble included, and this listing returns up to fifty of them.
+# Measured on one project with sixteen external threads: the listing went
+# 19,293 B to 16,399 B, so the titles were about 2.9 KB of it. The rest is
+# structural — roughly 830 B per thread, mostly `sandbox_policy` and
+# `rollout_path` — which at the fifty-thread limit is around 40 KB, and is
+# the larger half of this cost rather than the part capped here.
 EXTERNAL_TITLE_CAP = 200
 
 
@@ -271,10 +275,11 @@ def cmd_status(args):
     if args.include_external:
         # `title` is whatever Codex stored, which is the whole prompt — and for
         # a thread this skill started, that includes the preamble verbatim on
-        # every row. Fifty of them measured 19 KB against a 3 KB listing. What a
-        # caller needs in order to pick a thread is the opening, so this is
-        # capped for the same reason `result --group` caps a member's message,
-        # and `clip` says how much it dropped.
+        # every row. What a caller needs in order to pick a thread is the
+        # opening, so this is capped for the same reason `result --group` caps
+        # a member's message, and `clip` says how much it dropped. The numbers
+        # are on EXTERNAL_TITLE_CAP above; the cap is the smaller half of the
+        # cost, which is worth knowing before reaching for it again.
         out["external_threads"] = [{**t, "title": clip(t.get("title") or "",
                                                        EXTERNAL_TITLE_CAP)}
                                    for t in query_threads(cwd_filter=str(project))

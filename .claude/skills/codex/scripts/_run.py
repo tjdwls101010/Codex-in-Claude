@@ -234,6 +234,11 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         "started_at": now_iso(),
         "ended_at": None, "exit_code": None, "state": "starting",
         "codex_pid": None, "supervisor_pid": None, "pgid": None,
+        # Who is building this run, so `reap` can ask instead of guessing from
+        # meta.json's mtime. There is a real window between publishing the run
+        # and handing it to a supervisor — `git worktree add` may take a minute
+        # — and during it this pid is the only evidence the run is alive.
+        "creator_pid": os.getpid(),
     }
 
     if base and args.sandbox and args.sandbox != base["sandbox"]:

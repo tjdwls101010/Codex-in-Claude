@@ -67,6 +67,11 @@ from _util import (  # noqa: E402
 # so truncation is always announced along with how much was withheld.
 SHOW_MAX_BYTES = 20000
 
+# `status --include-external` caps each thread's title. Codex stores the whole
+# prompt there, preamble included, and this listing returns up to fifty of them:
+# measured at 19 KB against a 3 KB listing for sixteen threads on one project.
+EXTERNAL_TITLE_CAP = 200
+
 
 # --------------------------------------------------------------------------
 # start / resume / review — all three build a run the same way, in `_run.py`
@@ -195,6 +200,16 @@ def note_unreadable(out: dict, runs_dir):
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    # `--follow` only ever meant "--group --follow": the other branches emit a
+    # snapshot and exit. Accepting it silently is the shape of mistake R13 was
+    # about — the tool hands back an answer the caller reads as "I waited for
+    # this", and everything they conclude from that instant's state is then
+    # correctly reasoned from a false premise.
+    if args.follow and not args.group:
+        fail("--follow needs --group; a group is what has an end to wait for. "
+             "To watch one run, use `log --run <id> --follow`, which streams its "
+             "events and ends on the run's terminal line.",
+             run=args.run, interval=args.interval)
     rows = []
     if args.run:
         rd, m = find_run(runs_dir, args.run)
@@ -257,7 +272,15 @@ def cmd_status(args):
            "groups": list_groups(runs_dir)}
     note_unreadable(out, runs_dir)
     if args.include_external:
-        out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
+        # `title` is whatever Codex stored, which is the whole prompt — and for
+        # a thread this skill started, that includes the preamble verbatim on
+        # every row. Fifty of them measured 19 KB against a 3 KB listing. What a
+        # caller needs in order to pick a thread is the opening, so this is
+        # capped for the same reason `result --group` caps a member's message,
+        # and `clip` says how much it dropped.
+        out["external_threads"] = [{**t, "title": clip(t.get("title") or "",
+                                                       EXTERNAL_TITLE_CAP)}
+                                   for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]
         out["external_note"] = (
             "Codex threads for this cwd with no registry entry — started outside this "

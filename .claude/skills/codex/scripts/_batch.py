@@ -94,11 +94,20 @@ def _write_atomic(path: Path, manifest: dict):
     tmp.replace(path)
 
 
-def claim_group(runs_dir: Path, name: str, derived_from=None) -> dict:
+def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> dict:
     """Take the name, atomically, before any run is spawned.
 
     Raises FileExistsError if the name is taken. Claiming first means a
     duplicate name costs nothing — no Codex process has started yet.
+
+    `requested` is written here, before the first spawn, because it is the one
+    fact that cannot be recovered afterwards. `members` grows as the loop
+    reaches each task, so a `batch start` killed partway through leaves a
+    manifest that is internally consistent and wrong: asked for three, given
+    two, and indistinguishable from a group that only ever asked for two. That
+    reports `completed` — the same lie R12 exists to prevent, arriving by a
+    different road. A manifest written before v0.2.1 has no `requested`, and
+    falls back to counting only the slots it does have.
 
     The claim is `os.link`, not `O_CREAT|O_EXCL` on the destination, and the
     difference is not cosmetic. `O_EXCL` creates the file empty and fills it
@@ -111,7 +120,7 @@ def claim_group(runs_dir: Path, name: str, derived_from=None) -> dict:
     d = groups_dir(runs_dir)
     d.mkdir(parents=True, exist_ok=True)
     manifest = {"group": name, "created_at": now_iso(),
-                "derived_from": derived_from, "members": []}
+                "derived_from": derived_from, "requested": requested, "members": []}
     path = group_path(runs_dir, name)
     tmp = _tmp_path(path)
     tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -453,7 +462,7 @@ def cmd_batch_start(args):
     # against exactly that list. Failing here costs nothing — no Codex process
     # has started yet.
     try:
-        claim_group(runs_dir, args.group, derived_from=previous)
+        claim_group(runs_dir, args.group, derived_from=previous, requested=len(tasks))
     except FileExistsError:
         existing = read_group(runs_dir, args.group) or {}
         fail(f"group {args.group!r} already exists in this project; group names "
@@ -468,6 +477,15 @@ def cmd_batch_start(args):
     for index, item in enumerate(tasks):
         entry = {"index": index, "kind": item["kind"],
                  "label": item.get("label") or args.label}
+        # The slot goes in before the spawn, not after it. `spawn_task` cuts the
+        # member's worktree and claims its run directory before it returns, and
+        # recording the slot afterwards left that whole window unaccounted: a
+        # batch killed inside it leaves a checkout belonging to no member of any
+        # group, which `batch clean --group` will therefore never remove. Two
+        # writes of a few hundred bytes per member is the price of the manifest
+        # never trailing what is already on disk.
+        members.append(entry)
+        write_members(runs_dir, args.group, members)
         try:
             with failures_raise():
                 out = spawn_task(task_args(args, item), item, group=args.group,
@@ -489,7 +507,6 @@ def cmd_batch_start(args):
             entry["error"] = e.msg if isinstance(e, BridgeError) else str(e)
             entry.update(e.extra if isinstance(e, BridgeError)
                          else {"error_type": type(e).__name__})
-            members.append(entry)
             results.append(entry)
             write_members(runs_dir, args.group, members)
             continue
@@ -499,7 +516,6 @@ def cmd_batch_start(args):
         entry["sandbox"] = out.get("sandbox")
         if out.get("worktree"):
             entry["worktree"] = out["worktree"]["path"]
-        members.append(entry)
         results.append({**entry, "state": out.get("state")})
         # After every member, not once at the end: see write_members. A member
         # that has spawned is a live process, and it must be reachable through
@@ -711,9 +727,17 @@ def unstarted_members(runs_dir: Path, name: str):
     the moment that one line of JSON scrolls past, and every later question
     about the group answers as if the caller had asked for fewer things."""
     g = read_group(runs_dir, name) or {}
-    return [{"index": m.get("index"), "label": m.get("label"),
-             "kind": m.get("kind"), "error": m.get("error")}
-            for m in g.get("members", []) if not m.get("run_id")]
+    members = g.get("members", [])
+    never = [{"index": m.get("index"), "label": m.get("label"),
+              "kind": m.get("kind"), "error": m.get("error")}
+             for m in members if not m.get("run_id")]
+    # Slots the manifest never got to record at all, because `batch start` was
+    # killed before it reached them. Without this the group looks like it asked
+    # for however many it managed to start.
+    for i in range(len(members), g.get("requested") or 0):
+        never.append({"index": i, "label": None, "kind": None,
+                      "error": "batch start did not reach this task"})
+    return never
 
 
 def vanished_members(runs_dir: Path, name: str):

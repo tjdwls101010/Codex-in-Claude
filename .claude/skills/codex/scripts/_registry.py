@@ -204,6 +204,27 @@ def iter_runs(runs_dir: Path):
         yield pair
 
 
+def unreadable_runs(runs_dir: Path):
+    """Run directories `iter_runs` had to skip because their meta.json would not
+    parse, newest-looking first by name.
+
+    `read_meta` swallowing a parse error is right — one corrupt run must not
+    take down every view of every other one. Dropping it *silently* is not: the
+    caller then gets a complete-looking answer with the broken run missing from
+    it, which is the failure D27 refuses. Counting them costs one extra stat per
+    skipped directory and turns a disappearance into a fact.
+    """
+    if not runs_dir.is_dir():
+        return []
+    bad = []
+    for d in runs_dir.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        if (d / "meta.json").is_file() and read_meta(d) is None:
+            bad.append(d.name)
+    return sorted(bad)
+
+
 def find_run(runs_dir: Path, ref: str):
     """Resolve a run id, a thread id, or a run-id prefix; newest wins."""
     d = runs_dir / ref

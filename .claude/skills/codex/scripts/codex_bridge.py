@@ -53,7 +53,7 @@ from _batch import (  # noqa: E402
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
     TERMINAL_STATES, find_run, iter_runs, read_meta, reap, resolve_project,
-    resolve_runs_dir, update_meta_if,
+    resolve_runs_dir, unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
     WRITING_SANDBOXES, create_run, refuse_concurrent_turn, resolve_implicit_run,
@@ -240,6 +240,13 @@ def cmd_status(args):
            "threads": by_thread, "running": running, "done": done, "failed": failed,
            "total_runs": total_runs, "runs_truncated": runs_truncated,
            "groups": list_groups(runs_dir)}
+    # A run whose meta.json will not parse is skipped by `iter_runs`, which is
+    # what keeps one broken run from breaking every view. Saying nothing about
+    # it would make this list look complete when it is not.
+    bad = unreadable_runs(runs_dir)
+    if bad:
+        out["runs_unreadable"] = len(bad)
+        out["unreadable"] = bad
     if args.include_external:
         out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]
@@ -593,6 +600,18 @@ def cmd_doctor(args):
         report["runs_dir_bytes"] = total
         report["runs_dir_runs"] = sum(1 for _ in iter_runs(runs_dir))
         report["groups"] = list_groups(runs_dir)
+        bad = unreadable_runs(runs_dir)
+        report["runs_unreadable"] = len(bad)
+        if bad:
+            # `runs_dir_bytes` counts their files while `runs_dir_runs` does not
+            # count them at all. Without this line those two numbers simply
+            # disagree and nothing says why.
+            warnings.append(
+                f"{len(bad)} run director(ies) have an unreadable meta.json and are "
+                f"absent from every run listing: {', '.join(bad)}. Their bytes are "
+                f"still counted in runs_dir_bytes. Nothing here writes a partial "
+                f"meta.json — a truncated one means the disk filled or something "
+                f"outside this skill edited it.")
         # §1.7. Grouped by recorded cwd, never by git top level — one
         # repository's worktrees all share a top level, so that comparison
         # would warn on exactly the arrangement that makes it safe.

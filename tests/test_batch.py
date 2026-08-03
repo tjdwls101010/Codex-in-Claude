@@ -236,20 +236,23 @@ class ManifestSurvivesAHalfFinishedBatch(BridgeTestCase):
         while time.time() < deadline:
             if manifest.exists():
                 members = (json.loads(manifest.read_text()) or {}).get("members") or []
-                if members:
+                # A slot is written before its spawn (so a checkout cut inside
+                # that window still belongs to the group); what this test is
+                # about is the member being reachable once it is *running*.
+                if any(m.get("run_id") for m in members):
                     break
             if proc.poll() is not None:
                 break
             time.sleep(0.1)
         self.assertTrue(members, "the first member must be in the manifest before "
                                  "the batch finishes spawning the rest")
-        self.assertTrue(members[0].get("run_id"))
+        self.assertTrue(any(m.get("run_id") for m in members))
 
         self._kill_tree(proc)
         # What the manifest recorded is still there, and still resolves.
         after = json.loads(manifest.read_text())["members"]
         self.assertGreaterEqual(len(after), 1)
-        rid = after[0]["run_id"]
+        rid = next(m["run_id"] for m in after if m.get("run_id"))
         self.assertTrue((self.project / ".codex-runs" / rid / "meta.json").exists())
         status = self.bridge("status", "--group", "p1")
         self.assertIn(rid, [r["run_id"] for r in status["runs"]],

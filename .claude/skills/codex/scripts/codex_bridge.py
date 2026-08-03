@@ -200,6 +200,17 @@ def note_unreadable(out: dict, runs_dir):
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    # `--run` and `--group` are two different questions and the branches below
+    # answer whichever comes first, so passing both silently drops one of them
+    # — including the case where the dropped one is the `--group` that would
+    # have made `--follow` mean something. Found by a `review` member reading
+    # the commit that added the check below, which is the kind of hole a fix
+    # leaves when it guards a symptom instead of the precedence underneath it.
+    if args.run and args.group:
+        fail("--run and --group are different questions; pass one. "
+             "`--run` reports one run, `--group` reports a whole group and is "
+             "the one `--follow` can wait on.",
+             run=args.run, group=args.group)
     # `--follow` only ever meant "--group --follow": the other branches emit a
     # snapshot and exit. Accepting it silently is the shape of mistake R13 was
     # about — the tool hands back an answer the caller reads as "I waited for

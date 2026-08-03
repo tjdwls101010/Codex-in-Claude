@@ -123,6 +123,18 @@ class FollowNeedsAGroup(BridgeTestCase):
             self.assertIn("log --run", out["error"],
                           "the refusal has to name the command that does work")
 
+    def test_a_run_and_a_group_together_are_refused(self):
+        """The first guard only asked whether `--group` was present, so
+        `--run X --group g --follow` walked past it and the `--run` branch then
+        won — a snapshot again, with `--group` dropped entirely. Found by a
+        Codex `review` member reading the commit that added the guard."""
+        r = self.start("do a thing")
+        self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        for args in (("status", "--run", r["run_id"], "--group", "p1"),
+                     ("status", "--run", r["run_id"], "--group", "p1", "--follow")):
+            out = self.bridge(*args, expect_rc=1)
+            self.assertIn("different questions", out["error"])
+
     def test_follow_with_a_group_is_still_accepted(self):
         self.bridge("batch", "start", "--group", "p1", "--task", "a")
         # `--follow` streams text and ends on a terminal line; it is the one

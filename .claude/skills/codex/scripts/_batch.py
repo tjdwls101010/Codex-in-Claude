@@ -296,17 +296,23 @@ def task_args(base_args, item):
 
 
 def projected_cost(runs_dir: Path, n_runs: int):
-    """What N runs will cost at the floor, computed from this project's own
-    history rather than a constant.
+    """What N runs are likely to cost, computed from this project's own history
+    rather than a constant.
 
     D37. A baked-in number rots: the isolation overhead measured at design time
     moved 2.92x -> 1.09x within two weeks (R8), so any constant written here
     would be wrong by the time anyone read it. The median input_tokens over
     recent isolated, completed runs is the same measurement taken fresh.
 
-    It is a floor and it is reported, not enforced (D10): the caller decides
-    whether N runs is worth it, and this only makes the decision informed
-    instead of blind.
+    It was called a *floor* until this was measured against the registry it is
+    computed from: 6 of 11 real runs came in **below** it. Of course they did —
+    a median is exceeded by half its samples by construction, and the word
+    invited a caller to read "at least this much" from a number that is under
+    the truth as often as over it. A misleading name is a false premise the
+    caller then reasons correctly from, which is R19 in a different place.
+
+    Reported, not enforced (D10): the caller decides whether N runs is worth
+    it, and this only makes the decision informed instead of blind.
     """
     samples = []
     for _rd, m in reversed(list(iter_runs(runs_dir))):
@@ -318,17 +324,19 @@ def projected_cost(runs_dir: Path, n_runs: int):
         if len(samples) >= 10:
             break
     if len(samples) < 3:
-        return {"runs": n_runs, "input_floor_per_run": None, "input_floor_total": None,
-                "samples": len(samples),
+        return {"runs": n_runs, "input_median_per_run": None,
+                "input_median_total": None, "samples": len(samples),
                 "note": "not enough completed isolated runs in this project to "
-                        "measure a floor yet (need 3)"}
+                        "measure a median yet (need 3)"}
     samples.sort()
     per_run = samples[len(samples) // 2]
-    return {"runs": n_runs, "input_floor_per_run": per_run,
-            "input_floor_total": per_run * n_runs, "samples": len(samples),
-            "note": "floor only, measured from this project's recent isolated runs. "
-                    "Real cost is higher and grows with each resume. Do not budget "
-                    "from this number — re-measure."}
+    return {"runs": n_runs, "input_median_per_run": per_run,
+            "input_median_total": per_run * n_runs, "samples": len(samples),
+            "note": "median input tokens of this project's recent isolated runs, "
+                    "times N. About half of real runs come in under it and half "
+                    "over — measured 6 under of 11 — and a resume grows from "
+                    "there. It is a scale, not a bound: re-measure rather than "
+                    "budgeting from it."}
 
 
 def wants_worktree(item, args):
@@ -503,7 +511,11 @@ def cmd_batch_start(args):
     except FileExistsError:
         existing = read_group(runs_dir, args.group) or {}
         fail(f"group {args.group!r} already exists in this project; group names "
-             f"are single-use so that membership and start order stay unambiguous",
+             f"are single-use so that membership and start order stay unambiguous. "
+             f"`batch clean --group {args.group}` releases the name once its "
+             f"worktrees are gone — which is also how a name is reclaimed from a "
+             f"batch whose members all failed to spawn, since the claim happens "
+             f"before the first one is tried",
              created_at=existing.get("created_at"),
              members=len(existing.get("members") or []))
 

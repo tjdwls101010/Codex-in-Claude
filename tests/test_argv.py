@@ -431,3 +431,67 @@ class FlagsNothingElseCovers(BridgeTestCase):
         row = self.bridge("status", "--run", out["run_id"],
                           "--runs-dir", str(elsewhere))["runs"][0]
         self.assertEqual(row["run_id"], out["run_id"])
+
+
+class RawConfigCannotOutrankTheInvariant(BridgeTestCase):
+    """`--config` takes a raw `-c key=value` straight through to Codex, and four
+    of those keys are ones this wrapper sets itself.
+
+    `codex`'s `-c` is last-value-wins for a repeated key, and the wrapper's own
+    `-c sandbox_mode=` used to be emitted *before* the caller's raw entries — so
+    `--config 'sandbox_mode="danger-full-access"'` won. Measured against the real
+    binary: the same file write is refused with the enforced `-c` alone and
+    succeeds with the raw one appended after it. `status` went on reporting
+    `read-only` throughout, and because `extra_config` is inherited by every
+    resume that does not pass `--config` itself, the drift rode along for the
+    rest of the thread.
+
+    That is the one thing this wrapper exists to prevent, reached through a
+    documented flag. Two guards now: the collision is refused outright, and the
+    argv order is inverted so a key nobody thought to reserve still cannot
+    outrank an invariant.
+    """
+
+    def test_a_reserved_key_is_refused_and_names_its_flag(self):
+        for raw, flag in ((' sandbox_mode="danger-full-access"', "--sandbox"),
+                          ('service_tier="priority"', "--priority"),
+                          ("model_reasoning_effort=low", "--effort"),
+                          ("model=gpt-5.6-sol", "--model")):
+            with self.subTest(raw=raw):
+                out = self.bridge("start", "--config", raw, "x", expect_rc=1)
+                self.assertIn("--config may not set", out["error"])
+                self.assertIn(flag, out["error"])
+
+    def test_the_refusal_costs_nothing(self):
+        self.bridge("start", "--config", 'sandbox_mode="danger-full-access"', "x",
+                    expect_rc=1)
+        runs = self.project / ".codex-runs"
+        started = [p for p in runs.iterdir() if p.is_dir()] if runs.is_dir() else []
+        self.assertEqual(started, [],
+                         "a refused run must not claim a directory first")
+
+    def test_an_unreserved_key_still_works(self):
+        out = self.bridge("start", "--config", "hide_agent_reasoning=false", "x")
+        self.wait_for_state(out["run_id"])
+        self.assertIn("hide_agent_reasoning=false", self.last_argv())
+
+    def test_the_enforced_settings_are_emitted_last(self):
+        """The second guard, on its own. A registry written before the refusal
+        existed can still hold a poisoned `extra_config`, and so can a key the
+        reserved list does not name — ordering is what covers both."""
+        from _codex import build_argv
+        argv = build_argv(
+            {"sandbox": "read-only", "isolated": True, "run_dir": "/tmp/r",
+             "effort": "low", "priority": True,
+             "extra_config": ['sandbox_mode="danger-full-access"',
+                              'model_reasoning_effort="high"']},
+            kind="start", prompt="x")
+        for key, wins in (("sandbox_mode", 'sandbox_mode="read-only"'),
+                          ("model_reasoning_effort",
+                           'model_reasoning_effort="low"')):
+            with self.subTest(key=key):
+                hits = [i for i, t in enumerate(argv) if t.startswith(key + "=")]
+                self.assertEqual(len(hits), 2, argv)
+                self.assertEqual(argv[hits[-1]], wins,
+                                 "the last -c wins, so the enforced value must "
+                                 "be the last one")

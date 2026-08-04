@@ -24,7 +24,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from _codex import THREAD_ID_WAIT, apply_preamble, build_argv, spawn_supervised, supervise
+from _codex import (
+    RESERVED_CONFIG_KEYS, THREAD_ID_WAIT, apply_preamble, build_argv,
+    reserved_config_key, spawn_supervised, supervise,
+)
 from _events import scan_progress
 from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
@@ -159,6 +162,23 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     if kind != "review" and not prompt.strip():
         fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
 
+    # Raw `-c` entries, checked before anything is claimed on disk. Four keys
+    # are this wrapper's own — it records them in the registry and re-asserts
+    # them on every turn, which is the only reason a resumed run cannot quietly
+    # change its sandbox. A raw override of one makes that record a lie for the
+    # rest of the thread, because `extra_config` is inherited by every resume
+    # that does not pass `--config` itself.
+    extra_config = (list(args.config) if getattr(args, "config", None)
+                    else (base.get("extra_config") if base else [])) or []
+    for raw in extra_config:
+        key = reserved_config_key(raw)
+        if key:
+            fail(f"--config may not set {key!r}: this skill records that setting "
+                 f"and re-asserts it on every turn, so a raw override makes "
+                 f"`status` report something the run is not doing. Use "
+                 f"{RESERVED_CONFIG_KEYS[key]} instead.",
+                 config=raw, reserved=sorted(RESERVED_CONFIG_KEYS))
+
     if kind == "resume" and not thread_ref:
         # `build_argv` omits the ref when there is none, producing a bare
         # `codex exec resume` that fails asynchronously — after this command
@@ -216,8 +236,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
                    for i in (getattr(args, "image", None) or [])],
         "add_dirs": [str(Path(d).expanduser().resolve())
                      for d in (getattr(args, "add_dir", None) or [])],
-        "extra_config": (list(args.config) if getattr(args, "config", None)
-                         else (base.get("extra_config") if base else [])) or [],
+        "extra_config": extra_config,
         # Only where Codex's own guard does not apply. The wrapper does not
         # silently disable a Codex safety default just to keep its own argv
         # uniform.

@@ -39,6 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
+    review_argv,
     SANDBOX_MODES, query_threads, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
@@ -53,19 +54,27 @@ from _batch import (  # noqa: E402
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
     TERMINAL_STATES, find_run, iter_runs, read_meta, reap, resolve_project,
-    resolve_runs_dir, update_meta_if,
+    resolve_runs_dir, unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
-    WRITING_SANDBOXES, create_run, refuse_concurrent_turn, resolve_implicit_run,
-    run_row,
+    WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
 )
 from _util import (  # noqa: E402
-    clip, codex_home, emit, fail, git_toplevel, now_iso, pid_alive,
+    clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
 )
 
 # `show --item` default cap. A silently truncated blob is worse than a loud one,
 # so truncation is always announced along with how much was withheld.
 SHOW_MAX_BYTES = 20000
+
+# `status --include-external` caps each thread's title. Codex stores the whole
+# prompt there, preamble included, and this listing returns up to fifty of them.
+# Measured on one project with sixteen external threads: the listing went
+# 19,293 B to 16,399 B, so the titles were about 2.9 KB of it. The rest is
+# structural — roughly 830 B per thread, mostly `sandbox_policy` and
+# `rollout_path` — which at the fifty-thread limit is around 40 KB, and is
+# the larger half of this cost rather than the part capped here.
+EXTERNAL_TITLE_CAP = 200
 
 
 # --------------------------------------------------------------------------
@@ -134,11 +143,6 @@ def cmd_resume(args):
         # thread name, so pass it through.
         thread_ref = (base or {}).get("thread_id") or args.ref
 
-    # F4's second reproduction: two turns run concurrently on one thread, rc 0,
-    # no warning. Refuse a second live turn on the same thread unless the
-    # caller explicitly opts in.
-    refuse_concurrent_turn(runs_dir, thread_ref, args.force)
-
     # A resumed run is a NEW run pointing at the SAME thread, so each turn gets
     # its own event log while the thread stays linked.
     out = create_run(args, kind="resume", base=dict(base) if base else None,
@@ -153,24 +157,9 @@ def cmd_resume(args):
 
 
 def cmd_review(args):
-    chosen = [n for n, v in (("--uncommitted", args.uncommitted), ("--base", args.base),
-                             ("--commit", args.commit), ("prompt", args.prompt)) if v]
-    if len(chosen) != 1:
-        fail("review takes exactly one of --uncommitted, --base <ref>, --commit <sha>, "
-             "or a prompt; the Codex CLI rejects combinations", given=chosen)
-    if args.title and not args.commit:
-        fail("--title is only valid with --commit")
-
-    if args.uncommitted:
-        review_args = ["--uncommitted"]
-    elif args.base:
-        review_args = ["--base", args.base]
-    elif args.commit:
-        review_args = ["--commit", args.commit]
-        if args.title:
-            review_args += ["--title", args.title]
-    else:
-        review_args = []
+    review_args = review_argv(uncommitted=args.uncommitted, base=args.base,
+                              commit=args.commit, title=args.title,
+                              prompt=args.prompt, fail=fail)
     emit(create_run(args, kind="review", review_args=review_args))
 
 
@@ -178,9 +167,56 @@ def cmd_review(args):
 # status
 # --------------------------------------------------------------------------
 
+def refuse_run_and_group(args, command):
+    """`--run` and `--group` name different things; passing both silently drops
+    one of them, and which one depends on which branch happens to come first.
+
+    `status` learned this and was fixed; `stop` and `result` were not, and they
+    had drifted in opposite directions — `stop` honoured `--run` and left the
+    group's other members running, `result` honoured `--group` and answered a
+    different question in a different shape. A caller with a stray `--run` in a
+    copy-pasted `stop --group` line got a success reply while the group carried
+    on. Three commands, one rule, one place (R28)."""
+    if getattr(args, "run", None) and getattr(args, "group", None):
+        fail(f"--run and --group are different questions; pass one. "
+             f"`{command} --run` acts on one run, `{command} --group` acts on "
+             f"the whole group.", run=args.run, group=args.group)
+
+
+def note_unreadable(out: dict, runs_dir):
+    """A run whose meta.json will not parse is skipped by `iter_runs`, which is
+    what keeps one broken run from breaking every view. Saying nothing about it
+    would make the list it is missing from look complete.
+
+    Every listing branch has to say it, not only the default one: `--group` is
+    the view a caller polls, and it emits and exits on its own path."""
+    bad = unreadable_runs(runs_dir)
+    if bad:
+        out["runs_unreadable"] = len(bad)
+        out["unreadable"] = bad
+    return out
+
+
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    # `--run` and `--group` are two different questions and the branches below
+    # answer whichever comes first, so passing both silently drops one of them
+    # — including the case where the dropped one is the `--group` that would
+    # have made `--follow` mean something. Found by a `review` member reading
+    # the commit that added the check below, which is the kind of hole a fix
+    # leaves when it guards a symptom instead of the precedence underneath it.
+    refuse_run_and_group(args, "status")
+    # `--follow` only ever meant "--group --follow": the other branches emit a
+    # snapshot and exit. Accepting it silently is the shape of mistake R13 was
+    # about — the tool hands back an answer the caller reads as "I waited for
+    # this", and everything they conclude from that instant's state is then
+    # correctly reasoned from a false premise.
+    if args.follow and not args.group:
+        fail("--follow needs --group; a group is what has an end to wait for. "
+             "To watch one run, use `log --run <id> --follow`, which streams its "
+             "events and ends on the run's terminal line.",
+             run=args.run, interval=args.interval)
     rows = []
     if args.run:
         rd, m = find_run(runs_dir, args.run)
@@ -201,6 +237,7 @@ def cmd_status(args):
                "group_state": gstate}
         if never:
             out["unstarted"] = never
+        note_unreadable(out, runs_dir)
         emit(out)
     else:
         for rd, m in iter_runs(runs_dir):
@@ -240,8 +277,18 @@ def cmd_status(args):
            "threads": by_thread, "running": running, "done": done, "failed": failed,
            "total_runs": total_runs, "runs_truncated": runs_truncated,
            "groups": list_groups(runs_dir)}
+    note_unreadable(out, runs_dir)
     if args.include_external:
-        out["external_threads"] = [t for t in query_threads(cwd_filter=str(project))
+        # `title` is whatever Codex stored, which is the whole prompt — and for
+        # a thread this skill started, that includes the preamble verbatim on
+        # every row. What a caller needs in order to pick a thread is the
+        # opening, so this is capped for the same reason `result --group` caps
+        # a member's message, and `clip` says how much it dropped. The numbers
+        # are on EXTERNAL_TITLE_CAP above; the cap is the smaller half of the
+        # cost, which is worth knowing before reaching for it again.
+        out["external_threads"] = [{**t, "title": clip(t.get("title") or "",
+                                                       EXTERNAL_TITLE_CAP)}
+                                   for t in query_threads(cwd_filter=str(project))
                                    if t.get("id") not in known]
         out["external_note"] = (
             "Codex threads for this cwd with no registry entry — started outside this "
@@ -403,6 +450,7 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
 
 
 def cmd_stop(args):
+    refuse_run_and_group(args, "stop")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     session = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -441,6 +489,7 @@ def cmd_stop(args):
 # --------------------------------------------------------------------------
 
 def cmd_result(args):
+    refuse_run_and_group(args, "result")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
@@ -527,7 +576,25 @@ def cmd_doctor(args):
             report["login_status"] = (r.stdout or r.stderr).strip()[:400]
             report["login_ok"] = r.returncode == 0
             if r.returncode != 0:
-                blockers.append("`codex login status` exited non-zero — not authenticated")
+                # Non-zero does not mean "not authenticated". It means the
+                # command did not succeed, and `codex login status` also fails
+                # outright when it cannot load config at all — a malformed
+                # `config.toml` gives `Error loading configuration: ...` and
+                # exit 1 with a perfectly good auth.json sitting right there.
+                # Calling that "not authenticated" sends the caller to
+                # `codex login`, which fails the same way for the same reason,
+                # forever. Measured against codex-cli 0.146.0.
+                text = report["login_status"] or ""
+                if re.search(r"(?i)error loading config|config\.toml|"
+                             r"permission denied|invalid|parse", text):
+                    blockers.append(
+                        f"`codex login status` could not run at all — an "
+                        f"environment or config problem, not an auth one, so "
+                        f"`codex login` will fail the same way: "
+                        f"{clip(text, 200)}")
+                else:
+                    blockers.append(
+                        "`codex login status` exited non-zero — not authenticated")
         except Exception as e:
             report["login_ok"] = None
             warnings.append(f"could not run `codex login status`: {e}")
@@ -593,10 +660,22 @@ def cmd_doctor(args):
         report["runs_dir_bytes"] = total
         report["runs_dir_runs"] = sum(1 for _ in iter_runs(runs_dir))
         report["groups"] = list_groups(runs_dir)
+        bad = unreadable_runs(runs_dir)
+        report["runs_unreadable"] = len(bad)
+        if bad:
+            # `runs_dir_bytes` counts their files while `runs_dir_runs` does not
+            # count them at all. Without this line those two numbers simply
+            # disagree and nothing says why.
+            warnings.append(
+                f"{len(bad)} run director(ies) have an unreadable meta.json and are "
+                f"absent from every run listing: {', '.join(bad)}. Their bytes are "
+                f"still counted in runs_dir_bytes. Nothing here writes a partial "
+                f"meta.json — a truncated one means the disk filled or something "
+                f"outside this skill edited it.")
         # §1.7. Grouped by recorded cwd, never by git top level — one
         # repository's worktrees all share a top level, so that comparison
         # would warn on exactly the arrangement that makes it safe.
-        by_cwd = {}
+        live = []
         for rd, m in iter_runs(runs_dir):
             # Reaped, like `concurrent_writers`. meta.json says `running` until
             # something notices the supervisor died, so grouping on it as
@@ -606,17 +685,44 @@ def cmd_doctor(args):
             m = reap(rd, m)
             if m.get("state") in TERMINAL_STATES:
                 continue
-            by_cwd.setdefault(m.get("cwd"), []).append(m)
-        for cwd, ms in sorted(by_cwd.items(), key=lambda kv: str(kv[0])):
-            writers = [m for m in ms if m.get("sandbox") in WRITING_SANDBOXES]
-            if len(ms) > 1 and writers:
-                warnings.append(
-                    f"{len(ms)} live runs share {cwd}, {len(writers)} of which can "
-                    f"write to it: {', '.join(m.get('run_id') for m in ms)}. None of "
-                    f"them can tell another agent's change from its own. Runs in "
-                    f"their own worktrees are exempt and will not appear here.")
+            live.append(m)
+        # Overlap, not string equality. `concurrent_writers` — the same check,
+        # made at the moment a run is created — has always used `is_within` in
+        # both directions, because a run in `/p` and a run in `/p/sub` are two
+        # writers in one tree. Grouping on the exact `cwd` string put them in
+        # two buckets of one and warned about neither, so the report a caller
+        # consults *afterwards* was blind to what the check at creation time had
+        # already seen. Two implementations of one question is how they drift;
+        # this is the second time that has cost something (R20).
+        seen = set()
+        for i, m in enumerate(live):
+            group = [m] + [o for j, o in enumerate(live) if j != i
+                           and (is_within(o.get("cwd"), m.get("cwd"))
+                                or is_within(m.get("cwd"), o.get("cwd")))]
+            if len(group) < 2:
+                continue
+            key = tuple(sorted(x.get("run_id") or "" for x in group))
+            if key in seen:
+                continue
+            seen.add(key)
+            writers = [x for x in group if x.get("sandbox") in WRITING_SANDBOXES]
+            if not writers:
+                continue
+            warnings.append(
+                f"{len(group)} live runs overlap in {m.get('cwd')}, "
+                f"{len(writers)} of which can write there: "
+                f"{', '.join(x.get('run_id') for x in group)}. None of them can "
+                f"tell another agent's change from its own. Runs in their own "
+                f"worktrees are exempt and will not appear here.")
 
-        live_wt = [p for p in worktrees_registered(project) if p.exists()]
+        # `registered` is `git worktree list` for the whole repository, so it
+        # includes checkouts a user made themselves. Saying "N worktrees from
+        # batch runs are checked out under .codex-runs" about one of those is
+        # false twice over — it was not from a batch run and it is not under
+        # that directory — and `batch clean` cannot touch it either. This
+        # command only speaks for what this skill cut.
+        live_wt = [p for p in worktrees_registered(project)
+                   if p.exists() and is_within(str(p), str(runs_dir))]
         report["worktrees"] = len(live_wt)
         if live_wt:
             warnings.append(

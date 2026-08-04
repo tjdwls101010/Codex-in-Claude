@@ -236,20 +236,23 @@ class ManifestSurvivesAHalfFinishedBatch(BridgeTestCase):
         while time.time() < deadline:
             if manifest.exists():
                 members = (json.loads(manifest.read_text()) or {}).get("members") or []
-                if members:
+                # A slot is written before its spawn (so a checkout cut inside
+                # that window still belongs to the group); what this test is
+                # about is the member being reachable once it is *running*.
+                if any(m.get("run_id") for m in members):
                     break
             if proc.poll() is not None:
                 break
             time.sleep(0.1)
         self.assertTrue(members, "the first member must be in the manifest before "
                                  "the batch finishes spawning the rest")
-        self.assertTrue(members[0].get("run_id"))
+        self.assertTrue(any(m.get("run_id") for m in members))
 
         self._kill_tree(proc)
         # What the manifest recorded is still there, and still resolves.
         after = json.loads(manifest.read_text())["members"]
         self.assertGreaterEqual(len(after), 1)
-        rid = after[0]["run_id"]
+        rid = next(m["run_id"] for m in after if m.get("run_id"))
         self.assertTrue((self.project / ".codex-runs" / rid / "meta.json").exists())
         status = self.bridge("status", "--group", "p1")
         self.assertIn(rid, [r["run_id"] for r in status["runs"]],
@@ -607,7 +610,7 @@ class ProjectedCost(BridgeTestCase):
 
     def test_it_reports_null_and_says_why_before_there_are_samples(self):
         out = self.bridge("batch", "start", "--group", "p1", "--task", "x")
-        self.assertIsNone(out["projected_cost"]["input_floor_per_run"])
+        self.assertIsNone(out["projected_cost"]["input_median_per_run"])
         self.assertIn("not enough", out["projected_cost"]["note"])
         self.wait_for_state(out["runs"][0]["run_id"])
 
@@ -618,11 +621,16 @@ class ProjectedCost(BridgeTestCase):
         out = self.bridge("batch", "start", "--group", "p1",
                           "--task", "a", "--task", "b")
         cost = out["projected_cost"]
-        self.assertIsNotNone(cost["input_floor_per_run"])
+        self.assertIsNotNone(cost["input_median_per_run"])
         self.assertEqual(cost["runs"], 2)
-        self.assertEqual(cost["input_floor_total"],
-                         cost["input_floor_per_run"] * 2)
-        self.assertIn("Do not budget", cost["note"])
+        self.assertEqual(cost["input_median_total"],
+                         cost["input_median_per_run"] * 2)
+        # The note has to say the number is not a bound. It was called a floor
+        # until the registry it is computed from was checked against it: 6 of 11
+        # real runs came in below, which is what a median does.
+        self.assertIn("half", cost["note"])
+        self.assertIn("not a bound", cost["note"])
+        self.assertNotIn("floor", cost["note"])
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 

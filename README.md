@@ -71,17 +71,23 @@ Or, for development, symlink the skill directly:
 ln -s /path/to/Codex-in-Claude/.claude/skills/codex ~/.claude/skills/codex
 ```
 
-A symlinked skill doesn't get the plugin's pre-approved `allowed-tools`, so every poll prompts for approval. Add this to `~/.claude/settings.json` to get the same effect manually:
+A symlinked skill doesn't get the plugin's pre-approved `allowed-tools`, so every poll prompts for approval. Add this to `~/.claude/settings.json` to get the same effect manually — **with your own absolute path written out**:
 
 ```json
 {
   "permissions": {
     "allow": [
-      "Bash(python3 \"$HOME/.claude/skills/codex/scripts/codex_bridge.py\" *)"
+      "Skill(codex)",
+      "Bash(python3 \"/Users/you/.claude/skills/codex/scripts/codex_bridge.py\" *)"
     ]
   }
 }
 ```
+
+Both lines are load-bearing, and both were measured in a headless session running in the default permission mode:
+
+- **`$HOME` is not expanded in a permission rule.** `${CLAUDE_PLUGIN_ROOT}` is (that is what makes the plugin install work with no settings at all), but `$HOME` is not, so a rule written with it never matches and every bridge call is refused. Write the path out.
+- **`Skill(codex)` is separate from the bridge rule.** Without it the skill cannot even load, so the `Bash(...)` rule is never reached — the session simply reports that the skill failed and does nothing.
 
 </details>
 
@@ -177,7 +183,7 @@ This README gets you running. Everything else lives in [`docs/wiki/`](docs/wiki/
 
 ## 6. Project Status
 
-Codex in Claude is at **v0.2.0** — an early, actively developed release, verified against `codex-cli 0.146.0` and Claude Code `2.1.220+`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
+Codex in Claude is at **v0.3.0** — an early, actively developed release, verified against `codex-cli 0.146.0` and Claude Code `2.1.220+`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
 
 **Upgrading from v0.1.0?** Two removals are breaking: the `SessionEnd` cleanup hook (and `--detach` with it) and `stop --all-mine`. Background runs are no longer stopped when a session ends — `status --all` finds them and `stop --run <id>`/`stop --all` ends them, and `doctor` now reports what the registry is holding. See the [changelog](CHANGELOG.md#020--2026-08-02).
 

@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-08-04
+
+A verification round, and what it found. No new capability: this version exists because the previous one was measured properly for the first time — every user-facing flag driven against the real Codex CLI, deliberate faults injected, and four adversarial review rounds. Nineteen defects came out of that, and their common shape is the reason to upgrade: almost all of them were **silent**. The command succeeded, the JSON parsed, and the answer was wrong.
+
+**Read the Changed section before upgrading.** Five things that used to be accepted are now refused, and one JSON field was renamed.
+
+### Security
+
+- **`--config` could override the sandbox this skill exists to enforce.** `codex`'s `-c` is last-value-wins for a repeated key, and the caller's raw `--config` entries were emitted *after* the enforced `-c sandbox_mode=`. So `start --sandbox read-only --config 'sandbox_mode="danger-full-access"'` ran fully privileged while `status` went on reporting `read-only` — and because `extra_config` is inherited by every resume, it did so for the rest of the thread. Measured against the real binary: the same file write is refused one way and succeeds the other. Two guards now — the four keys this wrapper sets are refused outright with the flag that owns each one named, and the enforced settings are emitted last, so a key nobody thought to reserve still cannot outrank an invariant.
+
+### Changed
+
+- **Refused where previously accepted.** Each of these used to succeed and silently do something other than what was asked:
+  - `--config` naming `sandbox_mode`, `service_tier`, `model_reasoning_effort` or `model` — use `--sandbox`, `--priority`/`--no-priority`, `--effort`, `--model`.
+  - `status --follow` without `--group`. `--follow` only ever meant `--group --follow`; elsewhere it returned one snapshot and exited, which a caller reads as "I waited for this". To watch one run, use `log --run <id> --follow`.
+  - `--run` together with `--group`, on `status`, `stop` **and** `result`. They are different questions, and passing both silently dropped one — `stop --group G --run L` left every member of G running and reported success.
+  - `log --since <n>` where *n* is not an event boundary. Such a cursor is one fed back from a different run; accepting it destroyed the event straddling that offset and said nothing.
+  - A `review` task in a `--tasks-file` whose `review` object combines selectors, sets `title` without `commit`, or holds an unknown key. The command-line `review` refused all three; the batch path enforced none, so a `title` was dropped without a word.
+- **`projected_cost` fields renamed** from `input_floor_per_run` / `input_floor_total` to `input_median_per_run` / `input_median_total`. It was never a floor: checked against the registry it is computed from, 6 of 11 real runs came in *below* it, which is what a median does. Anything parsing those names must be updated.
+- **`doctor` no longer blames every `codex login status` failure on authentication.** A malformed `config.toml` makes that command fail before it looks at auth at all — and `codex login`, the fix both `doctor` and the troubleshooting docs pointed at, fails identically, forever. It now separates "could not run" from "not logged in", and quotes what it saw.
+- **`doctor` only counts worktrees this skill cut.** A checkout the user made themselves was reported as "from batch runs, checked out under `.codex-runs`" — false twice over, and `batch clean` cannot touch it either.
+- **`doctor` and `concurrent_writers` now agree on what "the same directory" means.** `doctor` compared exact paths, so two live writers in `/p` and `/p/sub` landed in two groups of one and it warned about neither, while the check at run creation had already seen them.
+- **`result --group` no longer reports a review member's zero usage as a real zero.** Review turns report all-zero usage after doing real work; the single-run surfaces have carried "unavailable, not free" since v0.1.0. The group total was silently undercounting any batch that mixed a reviewer with writers, which is the documented normal pattern. Such members are now named in `usage_unmeasured` and left out of `totals`.
+- **`status` and `doctor` report `runs_unreadable`.** A run whose `meta.json` will not parse used to vanish from every listing while `doctor` went on counting its bytes.
+
+### Fixed
+
+- **A batch killed while spawning reported `group_state: completed`.** The manifest recorded members as the loop reached them and nothing recorded how many had been asked for, so "asked for three, given two" was byte-identical to a group that only ever wanted two. `claim_group` now records `requested` before the first spawn — the last moment that fact still exists.
+- **A batch killed while spawning could leave a checkout no group could clean.** `create_run` now publishes the run before cutting its worktree and again immediately after; `batch clean` resolves membership through the registry as well as the manifest; and where a path is still unrecorded it falls back to `<run_dir>/wt`, which is where `create_run` always puts it.
+- **`batch clean --force` did not force.** `git worktree add` holds a lock reading `initializing`, a batch killed inside it leaves the worktree locked forever, and `git worktree remove --force` refuses a locked tree — it wants `-f -f`. `batch clean` had been printing that it "lifted every protection at once" while a checkout survived it.
+- **`batch clean` could delete the worktree of a run whose `meta.json` was unreadable**, without `--force`, even when that run was last recorded `running`. Unknown is not terminal.
+- **Two simultaneous `resume` calls on one thread both started a turn**, leaving two Codex processes appending to one rollout file. The guard now runs under a per-thread lock spanning the check and the new run's publication — including for a thread this registry has never seen, which is the case the feature leads with and which the first attempt at this fix missed.
+- **A group name released mid-spawn could be re-claimed under the first batch's feet**, after which that batch's `write_members` merged its members into a stranger's manifest. Each claim now carries an epoch, and a writer that no longer owns the file says so and names what it had already started.
+- **A foreground run without `--timeout` recorded the caller's process group**, so `stop --run` on it would have signalled the caller.
+- **`overlaps` was never tested against the shapes it exists for.** Seven cases added: a submodule (whose `--git-common-dir` is `<parent>/.git/modules/<name>`), two worktrees of a bare repository, a phase-2 member inheriting its predecessor's tree, a newline in a path, and Unicode — APFS *preserves* normalisation rather than folding it, so NFC and NFD are two true names for one file at the same time, and a run reporting the other form was silently missing the overlap.
+
+### Documentation
+
+- **The `settings.json` rule this project documented for symlink installs never worked.** `$HOME` is not expanded in a permission rule — `${CLAUDE_PLUGIN_ROOT}` is, which is why a plugin install needs no settings at all — and `Skill(codex)` needs its own entry or the skill cannot load and the bridge rule is never reached. Both corrected in the README, verified against a positive control in the default permission mode.
+- **A bridge command must be written on one line.** The permission pattern matches command *text*, so a command broken with a trailing backslash does not match. This bites exactly where it is least convenient: `batch start` with several `--task` flags is long, and long commands invite continuations. Now a gotcha in `SKILL.md`.
+- **`docs/measurements/batch-cost.md`** — new. Registry cost at 2000 runs (worst command 0.63 s, linear, group views flat — so no cache and no cap), concurrency at N=12/16/24 (no contention, `--stagger` stays out), what `result --group` costs (about 1.75× fetching each member separately — it buys `overlaps` and one round trip, not cheapness), and what `projected_cost` actually predicts.
+
 ## [0.2.0] — 2026-08-02
 
 Batch orchestration. Several Codex runs can now be started, watched, collected and cleaned up as one named thing, with a git worktree per writer so concurrent runs cannot edit each other's files mid-edit.
@@ -74,5 +116,6 @@ First release. A Claude Code plugin containing one skill (`codex`) that drives t
 - **`codex cloud` and `codex mcp-server`/`app-server` are out of scope**, both documented upstream as subject to change without notice.
 - Measurements were taken against `codex-cli 0.144.1` on a single machine. The thread database filename is version-stamped, so a Codex upgrade may degrade `--include-external` and a registry-less `resume --last`; `doctor` reports that case rather than failing.
 
+[0.3.0]: https://github.com/tjdwls101010/Codex-in-Claude/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tjdwls101010/Codex-in-Claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tjdwls101010/Codex-in-Claude/releases/tag/v0.1.0

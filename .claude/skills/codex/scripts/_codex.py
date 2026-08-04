@@ -38,10 +38,73 @@ THREAD_ID_WAIT = 15.0
 
 # -- argv -------------------------------------------------------------------
 
+RESERVED_CONFIG_KEYS = {
+    "sandbox_mode": "--sandbox",
+    "service_tier": "--priority / --no-priority",
+    "model_reasoning_effort": "--effort",
+    "model": "--model",
+}
+
+
+def reserved_config_key(raw: str):
+    """The key in a raw `--config k=v`, if this wrapper is the one that sets it.
+
+    These four are not configuration this skill passes through — they are what
+    it records in the registry and re-asserts on every turn, which is the only
+    reason a resumed run cannot silently change its sandbox. A raw `-c` naming
+    one of them makes the registry's copy a lie: `status` keeps reporting what
+    was asked for while the run does something else, and because `extra_config`
+    is inherited by every later resume, it does so for the rest of the thread.
+
+    Refused rather than reordered around. Reordering (see `build_argv`) stops
+    the override from taking effect, but silently ignoring what a caller
+    explicitly typed is its own D27 failure — the caller has to be told that
+    `--sandbox` is where that decision lives.
+    """
+    key = str(raw).split("=", 1)[0].strip()
+    return key if key in RESERVED_CONFIG_KEYS else None
+
+
 def toml_cfg(key: str, value: str):
     """`-c` values are parsed as TOML, falling back to a raw string only if that
     fails — so a string value is emitted quoted. This is the canonical form."""
     return ["-c", f'{key}="{value}"']
+
+
+REVIEW_SELECTORS = ("uncommitted", "base", "commit", "prompt")
+
+
+def review_argv(*, uncommitted=None, base=None, commit=None, title=None,
+                prompt=None, fail):
+    """`codex exec review`'s own flag surface, validated in one place.
+
+    Two callers build this — `review` on the command line and a `kind: review`
+    member of a batch — and they had drifted. The CLI refused a `--title`
+    without a `--commit` and refused combinations the Codex CLI itself rejects;
+    the batch path did neither, so a tasks file could ask for `uncommitted` and
+    `base` together and get a member that failed asynchronously, or name a
+    `title` that was dropped without a word. `load_tasks` already states the
+    principle it was breaking: a silently ignored field is a run that quietly
+    did something else.
+
+    `fail` is passed in because the two callers report errors differently — one
+    exits, one raises inside `failures_raise` so the rest of the batch survives.
+    """
+    chosen = [n for n, v in (("--uncommitted", uncommitted), ("--base", base),
+                             ("--commit", commit), ("prompt", prompt)) if v]
+    if len(chosen) != 1:
+        fail("review takes exactly one of --uncommitted, --base <ref>, "
+             "--commit <sha>, or a prompt; the Codex CLI rejects combinations",
+             given=chosen)
+    if title and not commit:
+        fail("--title is only valid with --commit")
+    if uncommitted:
+        return ["--uncommitted"]
+    if base:
+        return ["--base", str(base)]
+    if commit:
+        return ["--commit", str(commit)] + (["--title", str(title)] if title else [])
+    return []
 
 
 def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_args=None):
@@ -72,6 +135,21 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
     if meta.get("skip_git_repo_check"):
         argv.append("--skip-git-repo-check")
 
+    # The caller's raw `-c` entries go FIRST, and the order is the point.
+    # `codex`'s `-c` is last-value-wins for a repeated key, so while these were
+    # emitted last, `--config 'sandbox_mode="danger-full-access"'` beat the line
+    # below it — the run executed fully privileged while the registry, and
+    # therefore `status`, went on reporting `read-only`. Measured against the
+    # real binary: the same file write is refused with one `-c` and succeeds
+    # with both. That is the single thing this wrapper exists to prevent,
+    # reachable through a documented flag.
+    #
+    # `RESERVED_CONFIG_KEYS` refuses that collision at the point a run is built,
+    # which is the honest fix. This ordering is the second line: a key nobody
+    # thought to reserve still cannot outrank an invariant.
+    for raw in meta.get("extra_config") or []:
+        argv += ["-c", raw]
+
     # Invariant 1.
     argv += toml_cfg("sandbox_mode", meta["sandbox"])
 
@@ -79,8 +157,6 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
         argv += toml_cfg("service_tier", "priority")
     if meta.get("effort"):
         argv += toml_cfg("model_reasoning_effort", meta["effort"])
-    for raw in meta.get("extra_config") or []:
-        argv += ["-c", raw]
 
     if meta.get("model"):
         argv += ["-m", meta["model"]]
@@ -226,10 +302,14 @@ def supervise(run_dir: Path, timeout=None) -> int:
     out = events_path.open("ab")
     err = (run_dir / "stderr.log").open("ab")
     kwargs = {}
-    if timeout is not None and meta.get("foreground"):
+    if meta.get("foreground"):
         # Foreground only: the supervisor *is* the caller's process here, so
-        # Codex needs its own group for a timeout to kill the tree without
-        # killing the caller.
+        # Codex needs its own group — for a timeout to kill the tree without
+        # killing the caller, and equally so that the `pgid` this run records
+        # is its own. Gated on `timeout is not None` until measured, which meant
+        # a foreground run without one recorded the *caller's* process group and
+        # a later `stop --run` would have signalled the caller. A run's recorded
+        # pgid has to belong to the run whatever else is true of it.
         #
         # Doing the same in the background would be a silent bug rather than a
         # nicety. There the supervisor is already a session leader, and Codex

@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+import unicodedata
 import unittest
 from pathlib import Path
 
 from helpers import BridgeTestCase      # puts the scripts dir on sys.path
 
 from _registry import TERMINAL_STATES   # noqa: E402
+from _worktree import repo_identity     # noqa: E402
 
 
 class WorktreeTestCase(BridgeTestCase):
@@ -44,6 +46,15 @@ class WorktreeTestCase(BridgeTestCase):
         f = self.tmp / "tasks.jsonl"
         f.write_text("\n".join(json.dumps(o) for o in objs) + "\n")
         return str(f)
+
+    def plant(self, run_id, abs_paths):
+        ev = self.project / ".codex-runs" / run_id / "events.jsonl"
+        with ev.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "type": "item.completed",
+                "item": {"id": f"fc-{run_id}", "type": "file_change",
+                         "changes": [{"path": p, "kind": "modify"} for p in abs_paths]},
+            }) + "\n")
 
 
 class Assignment(WorktreeTestCase):
@@ -224,15 +235,6 @@ class OverlapsUnderIsolation(WorktreeTestCase):
     three members each creating `shared.txt` in their own worktree produced
     `overlaps: {}`. The cleaner the isolation, the more reliably it lied."""
 
-    def plant(self, run_id, abs_paths):
-        ev = self.project / ".codex-runs" / run_id / "events.jsonl"
-        with ev.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
-                "type": "item.completed",
-                "item": {"id": f"fc-{run_id}", "type": "file_change",
-                         "changes": [{"path": p, "kind": "modify"} for p in abs_paths]},
-            }) + "\n")
-
     def test_the_same_repo_path_in_two_worktrees_is_an_overlap(self):
         out = self.start_group()
         for r in out["runs"]:
@@ -306,6 +308,159 @@ class OverlapsUnderIsolation(WorktreeTestCase):
             self.plant(r["run_id"], [outside])
         res = self.bridge("result", "--group", "p1")
         self.assertEqual(list(res["overlaps"]), [outside])
+
+
+NFC = unicodedata.normalize("NFC", "공유")
+NFD = unicodedata.normalize("NFD", "공유")
+
+
+class OverlapsAdversarial(WorktreeTestCase):
+    """`overlaps` has been wrong three times, and the third design had never been
+    attacked. These are the shapes the existing tests do not reach.
+
+    The Unicode ones matter more than they look. APFS is normalisation-
+    *preserving* and normalisation-*insensitive* — it stores whichever form it
+    was handed and opens the file under either — so NFC and NFD are two names
+    for one file that can both be true at once on disk. HFS+ used to fold every
+    name to NFD, which would at least have been consistent. `git rev-parse
+    --show-toplevel` reports the form on disk no matter which form its `-C`
+    argument had (measured), so a run whose events carry the other form fails
+    `relative_to` and falls back to an absolute key — a silent miss in exactly
+    the field that exists to catch two members writing one file."""
+
+    def test_one_file_named_two_ways_is_one_overlap(self):
+        out = self.start_group()
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        for r, form in zip(out["runs"], (NFD, NFC)):
+            self.plant(r["run_id"], [str(Path(r["worktree"]) / "src" / f"{form}.py")])
+        res = self.bridge("result", "--group", "p1")
+        self.assertEqual(list(res["overlaps"]), [f"src/{NFC}.py"],
+                         "NFD and NFC name the same file on APFS; keys must fold")
+        self.assertEqual(len(res["overlaps"][f"src/{NFC}.py"]), 2)
+
+    def test_a_repository_stored_nfd_still_relativises_an_nfc_path(self):
+        """The directory, not the file. `top` comes from git and carries the
+        on-disk form; the event path may carry the other one."""
+        repo = self.tmp / unicodedata.normalize("NFD", "프로젝트")
+        (repo / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+        (repo / "src" / "x.py").write_text("x = 1\n")
+        self.git("add", "-A", cwd=repo)
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init",
+                 cwd=repo)
+
+        tf = self.tasks_file({"prompt": "a", "cwd": str(repo)},
+                             {"prompt": "b", "cwd": str(repo)})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        nfc_repo = self.tmp / unicodedata.normalize("NFC", "프로젝트")
+        for r, root in zip(out["runs"], (repo, nfc_repo)):
+            self.wait_for_state(r["run_id"])
+            self.plant(r["run_id"], [str(Path(root) / "src" / "x.py")])
+        self.assertEqual(list(self.bridge("result", "--group", "p1")["overlaps"]),
+                         ["src/x.py"],
+                         "a path spelled in the other normalisation must still "
+                         "relativise instead of falling back to absolute")
+
+    def test_a_submodule_is_not_its_parent_repository(self):
+        """A submodule's `--git-common-dir` is `<parent>/.git/modules/<name>`
+        (measured), so the same relative path in both is two files. The existing
+        two-repositories test cannot reach this: here one repository is nested
+        inside the other's checkout."""
+        src = self.tmp / "subsrc"
+        src.mkdir()
+        subprocess.run(["git", "init", "-q", str(src)], check=True, capture_output=True)
+        (src / "f.txt").write_text("x\n")
+        self.git("add", "-A", cwd=src)
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init",
+                 cwd=src)
+        self.git("-c", "protocol.file.allow=always", "submodule", "add", "-q",
+                 str(src), "vendor")
+
+        parent_repo, _ = repo_identity(self.project)
+        sub_repo, sub_top = repo_identity(self.project / "vendor")
+        self.assertNotEqual(parent_repo, sub_repo,
+                            "a submodule must not share its parent's identity")
+
+        tf = self.tasks_file({"prompt": "a"},
+                             {"prompt": "b", "cwd": str(self.project / "vendor")})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        for r, root in zip(out["runs"], (self.project, sub_top)):
+            self.wait_for_state(r["run_id"])
+            self.plant(r["run_id"], [str(Path(root) / "f.txt")])
+        self.assertEqual(self.bridge("result", "--group", "p1")["overlaps"], {},
+                         "parent/f.txt and vendor/f.txt are two files")
+
+    def test_two_worktrees_of_a_bare_repository_share_one_key(self):
+        """A bare repository has no working tree of its own, so every checkout
+        is a worktree — the isolation case with nothing to fall back on."""
+        bare = self.tmp / "bare.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True,
+                       capture_output=True)
+        self.git("remote", "add", "o", str(self.project), cwd=bare)
+        self.git("fetch", "-q", "o", cwd=bare)
+        head = self.git("rev-parse", "o/HEAD", cwd=bare).stdout.strip()
+        roots = []
+        for name in ("w1", "w2"):
+            self.git("worktree", "add", "-q", "--detach", str(self.tmp / name), head,
+                     cwd=bare)
+            roots.append(self.tmp / name)
+
+        ids = [repo_identity(r)[0] for r in roots]
+        self.assertEqual(ids[0], ids[1],
+                         "two worktrees of one bare repository are one repository")
+
+        tf = self.tasks_file(*({"prompt": "x", "cwd": str(r)} for r in roots))
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        for r, root in zip(out["runs"], roots):
+            self.wait_for_state(r["run_id"])
+            self.plant(r["run_id"], [str(root / "tracked.txt")])
+        self.assertEqual(list(self.bridge("result", "--group", "p1")["overlaps"]),
+                         ["tracked.txt"])
+
+    def test_phase_two_does_not_overlap_its_own_predecessor(self):
+        """D30's reason for keying by run rather than by worktree: a resumed
+        member lands in the same tree its predecessor used, so a worktree key
+        would make every phase-2 member overlap the run it continues."""
+        first = self.start_group(n=2)
+        for r in first["runs"]:
+            self.wait_for_state(r["run_id"])
+            self.plant(r["run_id"], [str(Path(r["worktree"]) / "src" / "shared.py")])
+
+        second = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+                             "--task", "go on", "--task", "go on")
+        for r in second["runs"]:
+            self.wait_for_state(r["run_id"])
+            # A resumed member has no worktree of its own — it inherits its
+            # predecessor's as its cwd, which is the whole reason this matters.
+            self.plant(r["run_id"], [str(Path(r["cwd"]) / "src" / "shared.py")])
+
+        res = self.bridge("result", "--group", "p2")
+        members = sorted(r["run_id"] for r in second["runs"])
+        self.assertEqual(sorted(res["overlaps"]["src/shared.py"]), members,
+                         "phase 2's overlap is between its own members only")
+        for rid in (r["run_id"] for r in first["runs"]):
+            self.assertNotIn(rid, res["overlaps"]["src/shared.py"])
+
+    def test_a_newline_in_a_path_is_carried_intact(self):
+        """`log` writes bare text lines for Monitor to read, so a path is one
+        place a newline could split a record in two."""
+        out = self.start_group()
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        for r in out["runs"]:
+            self.plant(r["run_id"], [str(Path(r["worktree"]) / "src" / "two\nlines.py")])
+        res = self.bridge("result", "--group", "p1")
+        self.assertEqual(list(res["overlaps"]), ["src/two\nlines.py"])
+
+    def test_repo_identity_degrades_where_git_cannot_answer(self):
+        """`meta.json` keeps the path a run was given, and the directory can be
+        gone by the time results are collected — moved, or removed from under a
+        live run. `changed_paths` must get `(None, None)` and keep the path
+        absolute, not raise on the way to a group result."""
+        self.assertEqual(repo_identity(self.project / "does-not-exist"), (None, None))
+        self.assertEqual(repo_identity(self.project / ".git"), (None, None))
+        self.assertEqual(repo_identity(self.tmp), (None, None))
 
 
 class Preamble(WorktreeTestCase):
@@ -740,7 +895,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
         most likely to still say `running` for a supervisor that has gone."""
         first = self.hanging_writer("one")
         second = self.hanging_writer("two")
-        self.assertTrue(any("live runs share" in w
+        self.assertTrue(any("live runs overlap in" in w
                             for w in self.bridge("doctor")["warnings"]))
         self.bridge("stop", "--run", second["run_id"])
         # Plant the state a dead supervisor leaves: the file still says running.
@@ -751,7 +906,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
         meta_path.write_text(json.dumps(meta))
 
         rep = self.bridge("doctor")
-        self.assertFalse(any("live runs share" in w for w in rep["warnings"]),
+        self.assertFalse(any("live runs overlap in" in w for w in rep["warnings"]),
                          "a dead supervisor must not be reported as a live writer")
         self.bridge("stop", "--all")
 
@@ -759,9 +914,9 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
         self.hanging_writer("one")
         self.hanging_writer("two")
         rep = self.bridge("doctor")
-        shared = [w for w in rep["warnings"] if "live runs share" in w]
+        shared = [w for w in rep["warnings"] if "live runs overlap in" in w]
         self.assertEqual(len(shared), 1, rep["warnings"])
-        self.assertIn("2 of which can write", shared[0])
+        self.assertIn("2 of which can write there", shared[0])
         self.assertTrue(rep["ok"], "sharing a directory is not a blocker")
         self.bridge("stop", "--all")
 

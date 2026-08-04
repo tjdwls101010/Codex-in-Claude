@@ -106,5 +106,78 @@ class TurnFailedFixture(BridgeTestCase):
         self.assertIn("rate limit exceeded", out["turn_failed"])
 
 
+class FollowNeedsAGroup(BridgeTestCase):
+    """`--follow` is registered on `status` as a whole but only the `--group`
+    branch reads it: the others emit a snapshot and exit. Accepting it silently
+    hands the caller an answer they read as "I waited for this", and everything
+    they conclude from that instant's state is then correctly reasoned from a
+    false premise — R13's failure, not a usage error."""
+
+    def test_follow_without_a_group_is_refused(self):
+        r = self.start("do a thing")
+        for args in (("status", "--run", r["run_id"], "--follow"),
+                     ("status", "--follow"),
+                     ("status", "--all", "--follow")):
+            out = self.bridge(*args, expect_rc=1)
+            self.assertIn("--follow needs --group", out["error"])
+            self.assertIn("log --run", out["error"],
+                          "the refusal has to name the command that does work")
+
+    def test_a_run_and_a_group_together_are_refused(self):
+        """The first guard only asked whether `--group` was present, so
+        `--run X --group g --follow` walked past it and the `--run` branch then
+        won — a snapshot again, with `--group` dropped entirely. Found by a
+        Codex `review` member reading the commit that added the guard."""
+        r = self.start("do a thing")
+        self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        for args in (("status", "--run", r["run_id"], "--group", "p1"),
+                     ("status", "--run", r["run_id"], "--group", "p1", "--follow")):
+            out = self.bridge(*args, expect_rc=1)
+            self.assertIn("different questions", out["error"])
+
+    def test_follow_with_a_group_is_still_accepted(self):
+        self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        # `--follow` streams text and ends on a terminal line; it is the one
+        # subcommand path that does not answer in JSON.
+        p = self.bridge_raw("status", "--group", "p1", "--follow",
+                            "--follow-timeout", "20")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertRegex(p.stdout.strip().splitlines()[-1],
+                         r"^group\.(completed|partial|still-running) ")
+
+
+class ExternalThreadTitles(BridgeTestCase):
+    """Codex stores the whole prompt as a thread's title, preamble included,
+    and this listing returns up to fifty of them. Capped for the same reason
+    `result --group` caps a member's message."""
+
+    def test_the_cap_announces_what_it_dropped(self):
+        """The guard itself, at the boundary. A test in this tier cannot reach
+        the payload: `--include-external` reads Codex's own thread database
+        filtered to the project's cwd, and a temp project has no threads in it,
+        so asserting over an empty list would pass while the cap did nothing.
+        That the cap is actually applied in `cmd_status` is a T5 measurement
+        against the real CLI, not a T1
+        one — which is the whole distinction this round is about. The measured
+        numbers live on `EXTERNAL_TITLE_CAP` so there is one copy of them."""
+        import codex_bridge
+        cap = codex_bridge.EXTERNAL_TITLE_CAP
+        short = "already short"
+        self.assertEqual(codex_bridge.clip(short, cap), short)
+        long_title = "x" * (cap + 500)
+        capped = codex_bridge.clip(long_title, cap)
+        self.assertLess(len(capped), len(long_title))
+        self.assertIn("+500 chars", capped)
+
+    def test_the_flag_still_returns_the_note_and_the_threads_key(self):
+        self.start("do a thing")
+        out = self.bridge("status", "--include-external")
+        self.assertIn("external_threads", out)
+        self.assertIn("external_note", out)
+        self.assertIn("--sandbox", out["external_note"],
+                      "an outside thread has no recorded sandbox to re-assert, "
+                      "and the note is the only place that is said")
+
+
 if __name__ == "__main__":
     unittest.main()

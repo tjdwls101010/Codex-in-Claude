@@ -34,11 +34,12 @@ from pathlib import Path
 
 from _events import read_events, scan_progress
 from _registry import (
-    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir,
+    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, meta_unreadable,
+    read_meta, reap, resolve_project, resolve_runs_dir, unreadable_runs,
 )
+from _codex import review_argv
 from _run import (
-    WRITING_SANDBOXES, create_run, refuse_concurrent_turn, run_row,
+    WRITING_SANDBOXES, create_run, run_row,
 )
 from _util import (
     BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,
@@ -94,11 +95,20 @@ def _write_atomic(path: Path, manifest: dict):
     tmp.replace(path)
 
 
-def claim_group(runs_dir: Path, name: str, derived_from=None) -> dict:
+def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> dict:
     """Take the name, atomically, before any run is spawned.
 
     Raises FileExistsError if the name is taken. Claiming first means a
     duplicate name costs nothing — no Codex process has started yet.
+
+    `requested` is written here, before the first spawn, because it is the one
+    fact that cannot be recovered afterwards. `members` grows as the loop
+    reaches each task, so a `batch start` killed partway through leaves a
+    manifest that is internally consistent and wrong: asked for three, given
+    two, and indistinguishable from a group that only ever asked for two. That
+    reports `completed` — the same lie R12 exists to prevent, arriving by a
+    different road. A manifest written before v0.2.1 has no `requested`, and
+    falls back to counting only the slots it does have.
 
     The claim is `os.link`, not `O_CREAT|O_EXCL` on the destination, and the
     difference is not cosmetic. `O_EXCL` creates the file empty and fills it
@@ -110,8 +120,16 @@ def claim_group(runs_dir: Path, name: str, derived_from=None) -> dict:
     """
     d = groups_dir(runs_dir)
     d.mkdir(parents=True, exist_ok=True)
-    manifest = {"group": name, "created_at": now_iso(),
-                "derived_from": derived_from, "members": []}
+    # An identity for THIS claim, not for the name. A name can be released by
+    # `batch clean` and claimed again by someone else while the first claimant
+    # is still spawning, and `write_members` is a read-modify-write that would
+    # then merge one batch's members into another batch's manifest — leaving a
+    # file with C's `requested` and A's members, which is the "asked for three,
+    # given two" lie this very field was added to prevent, wearing a different
+    # hat. The epoch is what lets a writer notice the file stopped being its
+    # own.
+    manifest = {"group": name, "created_at": now_iso(), "epoch": uuid.uuid4().hex,
+                "derived_from": derived_from, "requested": requested, "members": []}
     path = group_path(runs_dir, name)
     tmp = _tmp_path(path)
     tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -122,7 +140,7 @@ def claim_group(runs_dir: Path, name: str, derived_from=None) -> dict:
     return manifest
 
 
-def write_members(runs_dir: Path, name: str, members: list) -> dict:
+def write_members(runs_dir: Path, name: str, members: list, epoch=None) -> dict:
     """Record the member list so far, in start order.
 
     Called after **every** member rather than once at the end. Writing once was
@@ -136,6 +154,16 @@ def write_members(runs_dir: Path, name: str, members: list) -> dict:
     path = group_path(runs_dir, name)
     manifest = read_group(runs_dir, name) or {"group": name, "created_at": now_iso(),
                                               "derived_from": None}
+    if epoch is not None and manifest.get("epoch") != epoch:
+        # Either the manifest is gone (cleaned) or it belongs to a later claim
+        # of the same name. Writing into it would corrupt a batch that has
+        # nothing to do with this one, so this fails instead — loudly, and
+        # naming what has already been spawned, because those runs are real and
+        # still reachable: each one records its own group, and `batch clean`
+        # resolves members through the registry as well as the manifest.
+        fail(f"group {name!r} was released and re-claimed while this batch was "
+             f"still starting; its manifest is no longer this batch's",
+             spawned=[m.get("run_id") for m in members if m.get("run_id")])
     manifest["members"] = members
     _write_atomic(path, manifest)
     return manifest
@@ -147,6 +175,33 @@ def member_run_ids(runs_dir: Path, name: str):
     if not g:
         return None
     return [m["run_id"] for m in g.get("members", []) if m.get("run_id")]
+
+
+def owned_run_ids(runs_dir: Path, name: str):
+    """Every run that says it belongs to this group, manifest first.
+
+    The manifest is `batch start`'s record and it lags what is already on disk:
+    `create_run` mints the run id, cuts the worktree and writes `meta.json`
+    before it returns, and only then does the spawn loop learn the id and put it
+    in the manifest. A batch killed inside that window — up to THREAD_ID_WAIT
+    wide — leaves a full checkout whose slot has no run id, and anything that
+    resolves membership through `member_run_ids` alone can never reach it.
+
+    So membership is asked of the registry as well: a run records its own group
+    at the moment its directory is claimed. This is R10 again, and for the same
+    reason — a run's own record cannot go stale the way a manifest entry that
+    was never written cannot be recovered. Manifest order comes first because
+    `--resume-from` pairs positionally against it; registry-only members are
+    appended, since by definition nothing ever recorded an order for them.
+    """
+    ids = member_run_ids(runs_dir, name)
+    if ids is None:
+        return None
+    seen = set(ids)
+    extra = [m["run_id"] for _rd, m in iter_runs(runs_dir)
+             if m.get("group") == name and m.get("run_id")
+             and m["run_id"] not in seen]
+    return ids + extra
 
 
 def derived_groups(runs_dir: Path, name: str):
@@ -170,6 +225,8 @@ TASK_FIELDS = ("prompt", "kind", "label", "model", "effort", "sandbox", "schema"
 # the earlier members have already spawned; a tasks file this broken should
 # cost nothing, and the way to make it cost nothing is to read it fully before
 # starting anything.
+REVIEW_FIELDS = ("uncommitted", "base", "commit", "title")
+
 TASK_FIELD_TYPES = {"prompt": str, "kind": str, "label": str, "model": str,
                     "effort": str, "sandbox": str, "schema": str, "cwd": str,
                     "resume": str, "image": list, "review": dict}
@@ -212,6 +269,13 @@ def load_tasks(args):
             if any(not isinstance(i, str) for i in item.get("image") or []):
                 fail(f"tasks file line {n}: 'image' must be a list of paths",
                      line=clip(line, 200))
+            # The same rule one level down. `review` is the only nested object
+            # a task has, and typing `titel` into it was silently a no-op while
+            # typing it at the top level was a loud refusal.
+            unknown_review = set(item.get("review") or {}) - set(REVIEW_FIELDS)
+            if unknown_review:
+                fail(f"tasks file line {n} has unknown 'review' field(s): "
+                     f"{sorted(unknown_review)}", known_fields=list(REVIEW_FIELDS))
             item.setdefault("kind", "start")
             if item["kind"] not in ("start", "resume", "review"):
                 fail(f"tasks file line {n}: kind must be start, resume or review",
@@ -250,17 +314,23 @@ def task_args(base_args, item):
 
 
 def projected_cost(runs_dir: Path, n_runs: int):
-    """What N runs will cost at the floor, computed from this project's own
-    history rather than a constant.
+    """What N runs are likely to cost, computed from this project's own history
+    rather than a constant.
 
     D37. A baked-in number rots: the isolation overhead measured at design time
     moved 2.92x -> 1.09x within two weeks (R8), so any constant written here
     would be wrong by the time anyone read it. The median input_tokens over
     recent isolated, completed runs is the same measurement taken fresh.
 
-    It is a floor and it is reported, not enforced (D10): the caller decides
-    whether N runs is worth it, and this only makes the decision informed
-    instead of blind.
+    It was called a *floor* until this was measured against the registry it is
+    computed from: 6 of 11 real runs came in **below** it. Of course they did —
+    a median is exceeded by half its samples by construction, and the word
+    invited a caller to read "at least this much" from a number that is under
+    the truth as often as over it. A misleading name is a false premise the
+    caller then reasons correctly from, which is R19 in a different place.
+
+    Reported, not enforced (D10): the caller decides whether N runs is worth
+    it, and this only makes the decision informed instead of blind.
     """
     samples = []
     for _rd, m in reversed(list(iter_runs(runs_dir))):
@@ -272,17 +342,19 @@ def projected_cost(runs_dir: Path, n_runs: int):
         if len(samples) >= 10:
             break
     if len(samples) < 3:
-        return {"runs": n_runs, "input_floor_per_run": None, "input_floor_total": None,
-                "samples": len(samples),
+        return {"runs": n_runs, "input_median_per_run": None,
+                "input_median_total": None, "samples": len(samples),
                 "note": "not enough completed isolated runs in this project to "
-                        "measure a floor yet (need 3)"}
+                        "measure a median yet (need 3)"}
     samples.sort()
     per_run = samples[len(samples) // 2]
-    return {"runs": n_runs, "input_floor_per_run": per_run,
-            "input_floor_total": per_run * n_runs, "samples": len(samples),
-            "note": "floor only, measured from this project's recent isolated runs. "
-                    "Real cost is higher and grows with each resume. Do not budget "
-                    "from this number — re-measure."}
+    return {"runs": n_runs, "input_median_per_run": per_run,
+            "input_median_total": per_run * n_runs, "samples": len(samples),
+            "note": "median input tokens of this project's recent isolated runs, "
+                    "times N. About half of real runs come in under it and half "
+                    "over — measured 6 under of 11 — and a resume grows from "
+                    "there. It is a scale, not a bound: re-measure rather than "
+                    "budgeting from it."}
 
 
 def wants_worktree(item, args):
@@ -453,11 +525,16 @@ def cmd_batch_start(args):
     # against exactly that list. Failing here costs nothing — no Codex process
     # has started yet.
     try:
-        claim_group(runs_dir, args.group, derived_from=previous)
+        epoch = claim_group(runs_dir, args.group, derived_from=previous,
+                            requested=len(tasks))["epoch"]
     except FileExistsError:
         existing = read_group(runs_dir, args.group) or {}
         fail(f"group {args.group!r} already exists in this project; group names "
-             f"are single-use so that membership and start order stay unambiguous",
+             f"are single-use so that membership and start order stay unambiguous. "
+             f"`batch clean --group {args.group}` releases the name once its "
+             f"worktrees are gone — which is also how a name is reclaimed from a "
+             f"batch whose members all failed to spawn, since the claim happens "
+             f"before the first one is tried",
              created_at=existing.get("created_at"),
              members=len(existing.get("members") or []))
 
@@ -468,6 +545,15 @@ def cmd_batch_start(args):
     for index, item in enumerate(tasks):
         entry = {"index": index, "kind": item["kind"],
                  "label": item.get("label") or args.label}
+        # The slot goes in before the spawn, not after it. `spawn_task` cuts the
+        # member's worktree and claims its run directory before it returns, and
+        # recording the slot afterwards left that whole window unaccounted: a
+        # batch killed inside it leaves a checkout belonging to no member of any
+        # group, which `batch clean --group` will therefore never remove. Two
+        # writes of a few hundred bytes per member is the price of the manifest
+        # never trailing what is already on disk.
+        members.append(entry)
+        write_members(runs_dir, args.group, members, epoch=epoch)
         try:
             with failures_raise():
                 out = spawn_task(task_args(args, item), item, group=args.group,
@@ -489,9 +575,8 @@ def cmd_batch_start(args):
             entry["error"] = e.msg if isinstance(e, BridgeError) else str(e)
             entry.update(e.extra if isinstance(e, BridgeError)
                          else {"error_type": type(e).__name__})
-            members.append(entry)
             results.append(entry)
-            write_members(runs_dir, args.group, members)
+            write_members(runs_dir, args.group, members, epoch=epoch)
             continue
         entry["run_id"] = out["run_id"]
         entry["thread_id"] = out.get("thread_id")
@@ -499,12 +584,11 @@ def cmd_batch_start(args):
         entry["sandbox"] = out.get("sandbox")
         if out.get("worktree"):
             entry["worktree"] = out["worktree"]["path"]
-        members.append(entry)
         results.append({**entry, "state": out.get("state")})
         # After every member, not once at the end: see write_members. A member
         # that has spawned is a live process, and it must be reachable through
         # the group from the instant it exists.
-        write_members(runs_dir, args.group, members)
+        write_members(runs_dir, args.group, members, epoch=epoch)
     spawned = [m for m in members if m.get("run_id")]
     isolated = [m for m in members if m.get("worktree")]
     out = {"group": args.group, "runs": results,
@@ -558,19 +642,14 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
             # outside this skill, so pass the ref through rather than refusing.
             return create_run(ns, kind="resume", thread_ref=item["resume"],
                               group=group, batch=batch)
-        refuse_concurrent_turn(runs_dir, base.get("thread_id"),
-                               getattr(ns, "force", False))
         return create_run(ns, kind="resume", base=base,
                           thread_ref=base.get("thread_id"), group=group,
                           batch=batch)
     review = item.get("review") or {}
-    review_args = []
-    if review.get("uncommitted"):
-        review_args.append("--uncommitted")
-    if review.get("base"):
-        review_args += ["--base", str(review["base"])]
-    if review.get("commit"):
-        review_args += ["--commit", str(review["commit"])]
+    review_args = review_argv(uncommitted=review.get("uncommitted"),
+                              base=review.get("base"), commit=review.get("commit"),
+                              title=review.get("title"),
+                              prompt=item.get("prompt"), fail=fail)
     return create_run(ns, kind="review", review_args=review_args, group=group,
                       batch=batch)
 
@@ -594,9 +673,19 @@ def cmd_batch_clean(args):
              known_groups=list_groups(runs_dir)[:20])
 
     live, removed, kept = [], [], []
-    for rid in member_run_ids(runs_dir, args.group) or []:
+    for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
         if not meta:
+            # A run whose meta.json will not parse is not thereby dead. Skipping
+            # it here left it out of the live-member guard while the removal
+            # loop below still found its worktree by convention, so a run last
+            # recorded `running` had its only copy of its work deleted without
+            # `--force` ever being passed. Unknown is not terminal: refuse, and
+            # make the caller say --force if they mean it.
+            if rd is not None and meta_unreadable(rd):
+                live.append({"run_id": rid, "state": "unreadable",
+                             "reason": "its meta.json will not parse, so whether "
+                                       "it is still running cannot be determined"})
             continue
         meta = reap(rd, meta)
         if meta.get("state") not in TERMINAL_STATES:
@@ -626,12 +715,18 @@ def cmd_batch_clean(args):
         overrode["derived_groups"] = children
 
     worktree_prune(project)
-    for rid in member_run_ids(runs_dir, args.group) or []:
+    for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
-        wt = (meta or {}).get("worktree")
-        if not wt:
+        if rd is None:
             continue
-        path = Path(wt["path"])
+        wt = (meta or {}).get("worktree")
+        # `git worktree add` and the `write_meta` that records its path cannot
+        # be one operation, so there is a window — now milliseconds rather than
+        # the fifteen seconds it used to be — where the checkout exists and
+        # `meta["worktree"]` is still null. The path is not a guess: a member's
+        # worktree is always `<run_dir>/wt` (`create_run`), so the convention is
+        # the recovery. Without it that checkout is removable by nothing.
+        path = Path(wt["path"]) if wt else rd / "wt"
         if not path.exists():
             continue
         # 3. Uncommitted changes in the worktree, i.e. results nobody collected.
@@ -711,9 +806,24 @@ def unstarted_members(runs_dir: Path, name: str):
     the moment that one line of JSON scrolls past, and every later question
     about the group answers as if the caller had asked for fewer things."""
     g = read_group(runs_dir, name) or {}
-    return [{"index": m.get("index"), "label": m.get("label"),
-             "kind": m.get("kind"), "error": m.get("error")}
-            for m in g.get("members", []) if not m.get("run_id")]
+    members = g.get("members", [])
+    never = [{"index": m.get("index"), "label": m.get("label"),
+              "kind": m.get("kind"), "error": m.get("error")}
+             for m in members if not m.get("run_id")]
+    # Slots the manifest never got to record at all, because `batch start` was
+    # killed before it reached them. Without this the group looks like it asked
+    # for however many it managed to start.
+    #
+    # The wording claims only what this view knows. A slot with no run id may
+    # still have got as far as a run directory and a worktree — the manifest
+    # lags `create_run` by up to THREAD_ID_WAIT — and `batch clean` finds those
+    # through the registry (`owned_run_ids`). This view deliberately does not:
+    # it is the one a caller polls once a second, and walking the registry per
+    # tick is the cost this module's docstring exists to refuse.
+    for i in range(len(members), g.get("requested") or 0):
+        never.append({"index": i, "label": None, "kind": None,
+                      "error": "batch start recorded no run for this task"})
+    return never
 
 
 def vanished_members(runs_dir: Path, name: str):
@@ -730,10 +840,25 @@ def vanished_members(runs_dir: Path, name: str):
     gone = []
     for m in g.get("members", []):
         rid = m.get("run_id")
-        if rid and not find_run(runs_dir, rid)[1]:
-            gone.append({"index": m.get("index"), "label": m.get("label"),
-                         "run_id": rid,
-                         "error": "its run directory is no longer in the registry"})
+        if not rid:
+            continue
+        rd, meta = find_run(runs_dir, rid)
+        if meta:
+            continue
+        # Two different things reach here and they need different words. A
+        # directory that is gone was removed by hand or by something outside
+        # this skill. A directory that is present with an unparseable meta.json
+        # still holds its event stream and possibly its worktree — telling the
+        # caller it is "no longer in the registry" would send them away from
+        # work that is still on disk, while the same payload's `unreadable`
+        # field says the opposite.
+        present = rd is not None and meta_unreadable(rd)
+        gone.append({"index": m.get("index"), "label": m.get("label"),
+                     "run_id": rid,
+                     "error": ("its meta.json will not parse; the run directory "
+                               "is still there and may still hold results"
+                               if present else
+                               "its run directory is no longer in the registry")})
     return gone
 
 
@@ -783,9 +908,15 @@ def follow_group(args, project, runs_dir):
     """
     members = resolve_group(runs_dir, args.group)
     never = unstarted_members(runs_dir, args.group) + vanished_members(runs_dir, args.group)
+    # The other two `status` branches report this; the one a caller actually
+    # polls did not, so a group whose only member had a corrupt meta.json
+    # printed `group.empty` — indistinguishable from a group that never started
+    # anything, while the member's run directory and worktree were still there.
+    bad = len(unreadable_runs(runs_dir))
+    tail = ((f" unstarted={len(never)}" if never else "")
+            + (f" unreadable={bad}" if bad else ""))
     if not members:
-        sys.stdout.write(f"group.empty group={args.group}"
-                         + (f" unstarted={len(never)}" if never else "") + "\n")
+        sys.stdout.write(f"group.empty group={args.group}" + tail + "\n")
         sys.stdout.flush()
         return
     seen = {}
@@ -807,8 +938,7 @@ def follow_group(args, project, runs_dir):
         running, done, failed, gstate = group_snapshot(rows, len(never))
         if not running:
             sys.stdout.write(f"group.{gstate} group={args.group} "
-                             f"done={len(done)} failed={len(failed)}"
-                             + (f" unstarted={len(never)}" if never else "") + "\n")
+                             f"done={len(done)} failed={len(failed)}" + tail + "\n")
             sys.stdout.flush()
             return
         if deadline and time.time() >= deadline:
@@ -874,6 +1004,9 @@ def changed_paths(events_path: Path, root=None):
 def cmd_result_group(args, project, runs_dir):
     members = resolve_group(runs_dir, args.group)
     results, per_run_paths, totals = [], {}, {"input_tokens": 0, "output_tokens": 0}
+    # Members whose usage is a zero that means "unavailable", not "free".
+    # Named rather than folded in, so a total that undercounts says so.
+    unmeasured = []
 
     for rd, meta in members:
         meta = reap(rd, meta)
@@ -887,6 +1020,14 @@ def cmd_result_group(args, project, runs_dir):
         # the guess D07's cap exists to replace with a fact.
         raw = message.encode("utf-8", "replace")
         truncated = len(raw) > GROUP_MESSAGE_CAP
+        # The same caveat the single-run surfaces carry. A review turn reports
+        # all-zero usage after doing real work, so a plain zero here is a wrong
+        # number, not a free run — and summed into `totals` it silently
+        # understates a batch that mixed a reviewer with writers, which is the
+        # documented normal pattern. `run_row` and `cmd_result` have said so
+        # since v0.1.0; this surface did not, which is R28's shape yet again.
+        review_zero = (meta.get("kind") == "review" and info["usage"] is not None
+                       and not any((info["usage"] or {}).values()))
         row = {"run_id": meta["run_id"], "label": meta.get("label"),
                "state": meta.get("state"), "exit_code": meta.get("exit_code"),
                # D07: capped per run, with the real size stated. Whether to pull
@@ -900,9 +1041,13 @@ def cmd_result_group(args, project, runs_dir):
                            if truncated else message),
                "message_bytes": len(raw),
                "message_truncated": truncated,
-               "usage": info["usage"], "files_changed": info["files_changed"],
+               "usage": None if review_zero else info["usage"],
+               "files_changed": info["files_changed"],
                "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
                                if info["turn_failed"] else None)}
+        if review_zero:
+            row["usage_note"] = ("review runs report zero usage; unavailable, "
+                                 "not free — excluded from totals")
         if meta.get("worktree"):
             row["worktree"] = meta["worktree"]
         results.append(row)
@@ -911,8 +1056,11 @@ def cmd_result_group(args, project, runs_dir):
         # report every member as overlapping with its own past self.
         per_run_paths[meta["run_id"]] = changed_paths(
             rd / "events.jsonl", (meta.get("worktree") or {}).get("path") or meta.get("cwd"))
-        for key in totals:
-            totals[key] += int((info["usage"] or {}).get(key) or 0)
+        if review_zero:
+            unmeasured.append(meta["run_id"])
+        else:
+            for key in totals:
+                totals[key] += int((info["usage"] or {}).get(key) or 0)
 
     # D30: the intersection only. A full path list per run inverts the context
     # discipline this skill exists for, and `log` already prints file_change
@@ -935,7 +1083,8 @@ def cmd_result_group(args, project, runs_dir):
         [{"run_id": r["run_id"], "state": r["state"]} for r in results],
         len(never) + len(gone))
     out = {"group": args.group, "project": str(project), "results": results,
-           "overlaps": overlaps, "totals": totals, "group_state": gstate,
+           "overlaps": overlaps, "totals": totals,
+           "usage_unmeasured": unmeasured or None, "group_state": gstate,
            "done": done, "failed": failed, "running": running,
            "unstarted": never + gone,
            "overlaps_note": ("paths written by more than one member. Under worktree "

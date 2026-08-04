@@ -24,11 +24,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from _codex import THREAD_ID_WAIT, apply_preamble, build_argv, spawn_supervised, supervise
+from _codex import (
+    RESERVED_CONFIG_KEYS, THREAD_ID_WAIT, apply_preamble, build_argv,
+    reserved_config_key, spawn_supervised, supervise,
+)
 from _events import scan_progress
 from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir, write_meta,
+    resolve_project, resolve_runs_dir, thread_turn_lock, write_meta,
 )
 from _util import clip, fail, git_toplevel, is_within, now_iso
 
@@ -133,10 +136,26 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
     warning. A resumed run shares its parent's process group with nothing —
     two live turns on the same thread would race on the same rollout file —
     so a live turn on the target thread is refused unless the caller opts in
-    with --force."""
+    with --force.
+
+    Called from inside `create_run`, under `thread_turn_lock`, and from nowhere
+    else. It used to be the caller's job, which left the check and the new run's
+    publication in different critical sections — i.e. in none — so two resumes
+    a fraction of a second apart both passed it. One caller, one lock, one
+    place: the same reason `review_argv` has one home (R20)."""
     if not thread_id or force:
         return
-    live = [reap(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id") == thread_id]
+    # Matched on the recorded thread id OR on the ref the run was launched
+    # against. They are usually the same string, and when they are not, the
+    # second is the only one that exists yet: a resume of a ref this registry
+    # has never seen publishes with `thread_id: null`, because the real id only
+    # arrives later, from the spawned Codex process's `thread.started`. That is
+    # after this lock is released, so comparing on `thread_id` alone left the
+    # headline case — picking up a thread started in the Codex TUI — completely
+    # unguarded. Reproduced 5 times in 5: two resumes of one fresh ref, both
+    # rc 0, both spawning `codex exec resume <same ref>`.
+    live = [reap(rd, m) for rd, m in iter_runs(runs_dir)
+            if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
     live = [m for m in live if m.get("state") not in TERMINAL_STATES]
     if live:
         fail("thread already has a live turn; pass --force to run a second turn "
@@ -158,6 +177,23 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     prompt = read_prompt(args)
     if kind != "review" and not prompt.strip():
         fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
+
+    # Raw `-c` entries, checked before anything is claimed on disk. Four keys
+    # are this wrapper's own — it records them in the registry and re-asserts
+    # them on every turn, which is the only reason a resumed run cannot quietly
+    # change its sandbox. A raw override of one makes that record a lie for the
+    # rest of the thread, because `extra_config` is inherited by every resume
+    # that does not pass `--config` itself.
+    extra_config = (list(args.config) if getattr(args, "config", None)
+                    else (base.get("extra_config") if base else [])) or []
+    for raw in extra_config:
+        key = reserved_config_key(raw)
+        if key:
+            fail(f"--config may not set {key!r}: this skill records that setting "
+                 f"and re-asserts it on every turn, so a raw override makes "
+                 f"`status` report something the run is not doing. Use "
+                 f"{RESERVED_CONFIG_KEYS[key]} instead.",
+                 config=raw, reserved=sorted(RESERVED_CONFIG_KEYS))
 
     if kind == "resume" and not thread_ref:
         # `build_argv` omits the ref when there is none, producing a bare
@@ -188,63 +224,93 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         # new isolation state rather than carrying over the parent's value.
         priority = isolated
 
-    try:
-        run_id, run_dir = claim_run_dir(
-            runs_dir, args.label or (base.get("label") if base else None))
-    except FileExistsError as e:
-        fail(str(e), runs_dir=str(runs_dir))
+    # From here to the first `write_meta` is one critical section per thread:
+    # the answer to "is this thread busy?" is only true until someone else
+    # publishes, and publishing is what the lock waits for.
+    with thread_turn_lock(runs_dir, thread_ref):
+        refuse_concurrent_turn(runs_dir, thread_ref,
+                               getattr(args, "force", False))
+        try:
+            run_id, run_dir = claim_run_dir(
+                runs_dir, args.label or (base.get("label") if base else None))
+        except FileExistsError as e:
+            fail(str(e), runs_dir=str(runs_dir))
 
-    meta = {
-        "run_id": run_id,
-        "run_dir": str(run_dir),
-        "thread_id": base.get("thread_id") if base else None,
-        "parent_run_id": base.get("run_id") if base else None,
-        "kind": kind,
-        "label": args.label or (base.get("label") if base else None),
-        "prompt_preview": clip(prompt, 300),
-        "cwd": str(cwd),
-        "project": str(project),
-        "sandbox": sandbox,
-        "model": args.model or (base.get("model") if base else None),
-        "effort": args.effort or (base.get("effort") if base else None),
-        "isolated": isolated,
-        "priority": priority,
-        "schema_path": (str(Path(args.schema).expanduser().resolve())
-                        if getattr(args, "schema", None)
-                        else (base.get("schema_path") if base else None)),
-        "images": [str(Path(i).expanduser().resolve())
-                   for i in (getattr(args, "image", None) or [])],
-        "add_dirs": [str(Path(d).expanduser().resolve())
-                     for d in (getattr(args, "add_dir", None) or [])],
-        "extra_config": (list(args.config) if getattr(args, "config", None)
-                         else (base.get("extra_config") if base else [])) or [],
-        # Only where Codex's own guard does not apply. The wrapper does not
-        # silently disable a Codex safety default just to keep its own argv
-        # uniform.
-        "skip_git_repo_check": git_toplevel(cwd) is None,
-        "preamble": not args.no_preamble,
-        "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
-        "foreground": bool(getattr(args, "foreground", False)),
-        "timeout_seconds": getattr(args, "timeout", None),
-        # The manifest is the authority on membership and order; this copy lets
-        # a single run say which group it belongs to without one, so `status`
-        # can still answer that after a manifest is lost or hand-deleted.
-        "group": group,
-        "worktree": None,       # filled in below, once nothing can still refuse
-        "started_at": now_iso(),
-        "ended_at": None, "exit_code": None, "state": "starting",
-        "codex_pid": None, "supervisor_pid": None, "pgid": None,
-    }
+        meta = {
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+            "thread_id": base.get("thread_id") if base else None,
+            "parent_run_id": base.get("run_id") if base else None,
+            "kind": kind,
+            "label": args.label or (base.get("label") if base else None),
+            "prompt_preview": clip(prompt, 300),
+            "cwd": str(cwd),
+            "project": str(project),
+            "sandbox": sandbox,
+            "model": args.model or (base.get("model") if base else None),
+            "effort": args.effort or (base.get("effort") if base else None),
+            "isolated": isolated,
+            "priority": priority,
+            "schema_path": (str(Path(args.schema).expanduser().resolve())
+                            if getattr(args, "schema", None)
+                            else (base.get("schema_path") if base else None)),
+            "images": [str(Path(i).expanduser().resolve())
+                       for i in (getattr(args, "image", None) or [])],
+            "add_dirs": [str(Path(d).expanduser().resolve())
+                         for d in (getattr(args, "add_dir", None) or [])],
+            "extra_config": extra_config,
+            # Only where Codex's own guard does not apply. The wrapper does not
+            # silently disable a Codex safety default just to keep its own argv
+            # uniform.
+            "skip_git_repo_check": git_toplevel(cwd) is None,
+            "preamble": not args.no_preamble,
+            "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
+            "foreground": bool(getattr(args, "foreground", False)),
+            "timeout_seconds": getattr(args, "timeout", None),
+            # The manifest is the authority on membership and order; this copy lets
+            # a single run say which group it belongs to without one, so `status`
+            # can still answer that after a manifest is lost or hand-deleted.
+            "group": group,
+            "worktree": None,       # filled in below, once nothing can still refuse
+            "started_at": now_iso(),
+            "ended_at": None, "exit_code": None, "state": "starting",
+            "codex_pid": None, "supervisor_pid": None, "pgid": None,
+            # What this run was launched against, recorded even when it is not (yet)
+        # a thread id. `thread_id` cannot hold it — a ref may be a thread *name*
+        # — and leaving it nowhere is what made `refuse_concurrent_turn` blind
+        # to a thread the registry has not seen before.
+        "resume_ref": thread_ref,
+        # Who is building this run, so `reap` can ask instead of guessing from
+            # meta.json's mtime. There is a real window between publishing the run
+            # and handing it to a supervisor — `git worktree add` may take a minute
+            # — and during it this pid is the only evidence the run is alive.
+            "creator_pid": os.getpid(),
+        }
 
-    if base and args.sandbox and args.sandbox != base["sandbox"]:
-        # A sandbox change is never silent, in either direction.
-        meta["sandbox_changed_from"] = base["sandbox"]
+        if base and args.sandbox and args.sandbox != base["sandbox"]:
+            # A sandbox change is never silent, in either direction.
+            meta["sandbox_changed_from"] = base["sandbox"]
 
-    if meta["schema_path"] and not Path(meta["schema_path"]).exists():
-        fail(f"schema file not found: {meta['schema_path']}")
-    for img in meta["images"]:
-        if not Path(img).exists():
-            fail(f"image not found: {img}")
+        if meta["schema_path"] and not Path(meta["schema_path"]).exists():
+            fail(f"schema file not found: {meta['schema_path']}")
+        for img in meta["images"]:
+            if not Path(img).exists():
+                fail(f"image not found: {img}")
+
+        # Every check that could still refuse this run has passed, so publish it
+        # before cutting anything. `write_meta` is what makes the run — and the
+        # group it names — visible to `iter_runs`, and a checkout that exists while
+        # the registry has never heard of the run is reachable by nothing at all:
+        # not `batch clean --group`, which needs a run id, and not `status`, which
+        # needs a meta.json. This process can die at any instant from here on, and
+        # what it has already put on disk has to be findable without it.
+        #
+        # The reasoning below was written about *rejection* and is still right; it
+        # was silent about *death*, which is the case that actually leaked.
+        write_meta(run_dir, meta)
+    # Lock released here, before the worktree is cut: `git worktree add` is
+    # allowed a minute, and holding a thread's turn lock across it would turn
+    # a loud refusal into a silent wait.
 
     # Cut the worktree last, after every check that can still refuse this run.
     # It cannot be cut before `claim_run_dir` — it lives at `<run_dir>/wt`, and
@@ -267,6 +333,13 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
                    "source": str(source)}
         meta["cwd"] = str(cwd)
         meta["worktree"] = wt_info
+        # Immediately, not with the rest of meta at the end of this function.
+        # Between here and there lies `THREAD_ID_WAIT`, up to fifteen seconds
+        # of waiting for Codex to name its thread, and a checkout whose path is
+        # written nowhere is one `batch clean` skips: its loop takes the path
+        # from `meta["worktree"]`. Publishing the run without it closes half a
+        # hole and leaves the other half exactly as wide.
+        write_meta(run_dir, meta)
 
     if batch and wt_info:
         batch = {**batch, "worktree": wt_info["path"], "base": wt_info["base"],

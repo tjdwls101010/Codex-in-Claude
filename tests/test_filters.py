@@ -7,12 +7,14 @@ filter exists is gone, and nothing else in the system would notice.
 
 import json
 import re
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
 from helpers import FIXTURES, BridgeTestCase
-from _events import (DEFAULT_LEVEL, format_events, head_tail, read_events,
-                     scan_progress, strip_wrapper)
+from _events import (DEFAULT_LEVEL, final_usage, format_events, head_tail,
+                     read_events, scan_progress, strip_wrapper)
 
 BIG = FIXTURES / "mixed-bigout-and-failure.jsonl"
 
@@ -136,6 +138,26 @@ class LevelsPure(unittest.TestCase):
         self.assertEqual(DEFAULT_LEVEL, "compact",
                          "the shipped default is chosen from "
                          "docs/measurements/filter-calibration.md")
+
+
+class FinalUsage(unittest.TestCase):
+    """Codex reports usage cumulatively per turn, so `final_usage` reads from
+    the end and the last record wins. The docstring says so; nothing asserted
+    it, and the whole behaviour is one `reversed(...)` in a comprehension —
+    R17's category exactly. Found by a Codex member asked to name one untested
+    behaviour of this module."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.f = self.tmp / "events.jsonl"
+
+    def test_the_latest_usage_record_wins(self):
+        first = {"input_tokens": 10, "output_tokens": 1}
+        second = {"input_tokens": 25, "output_tokens": 3}
+        self.f.write_text(json.dumps({"type": "turn.completed", "usage": first}) + "\n"
+                          + json.dumps({"type": "turn.completed", "usage": second}) + "\n")
+        self.assertEqual(final_usage(self.f), second)
 
 
 class CursorExactness(unittest.TestCase):

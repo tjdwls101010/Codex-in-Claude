@@ -76,6 +76,25 @@ def read_events(path: Path, since: int = 0):
     if since == size:
         return [], since
     with path.open("rb") as fh:
+        # A cursor always lands just after a newline, because that is the only
+        # place this function ever leaves one. One that does not is not a
+        # cursor from this file — overwhelmingly it is one fed back from a
+        # different run, which the trailer prints `run=<id>` to make visible.
+        #
+        # The guard above only caught the too-far-out version of that mistake.
+        # An offset that happens to be *inside* this file sailed through, and
+        # the damage was quiet: the read starts mid-line, so the event that
+        # straddles the offset is delivered as an anonymous `_unparsed` blob
+        # with its first half missing, and the cursor then advances past it.
+        # One event silently destroyed, exit 0, and the docstring above
+        # promising that nothing is skipped.
+        if since:
+            fh.seek(since - 1)
+            if fh.read(1) != b"\n":
+                raise CursorOutOfRange(
+                    f"--since {since} does not land on an event boundary in this "
+                    f"file, so it is not a cursor this run produced — check the "
+                    f"`run=` field of the trailer the cursor came from")
         fh.seek(since)
         blob = fh.read()
     cut = blob.rfind(b"\n")

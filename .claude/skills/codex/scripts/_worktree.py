@@ -118,10 +118,18 @@ def remove(source: Path, target: Path, force: bool = False):
 
     Not forced by default, so git's own refusal of a dirty worktree is what
     stops `batch clean` from discarding work nobody collected (D06).
+
+    Forced means *forced*, which git spells `-f -f`. A single `--force` covers a
+    dirty tree but not a locked one, and `git worktree add` holds a lock reading
+    `initializing` for the duration of the checkout — so a `batch start` killed
+    inside `git worktree add` leaves a worktree that stays locked forever and
+    that `--force` then refuses, while `batch clean` reports having lifted every
+    protection. Measured: `cannot remove a locked working tree, lock reason:
+    initializing / use 'remove -f -f' to override or unlock first`.
     """
     args = ["worktree", "remove"]
     if force:
-        args.append("--force")
+        args += ["--force", "--force"]
     r = _git(source, *args, str(target))
     if r.returncode != 0:
         return False, (r.stderr or r.stdout).strip()[:400]

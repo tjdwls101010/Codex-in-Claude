@@ -91,11 +91,65 @@ def claim_run_dir(runs_dir: Path, label=None, attempts: int = 5):
 
 # -- meta.json --------------------------------------------------------------
 
+def thread_turn_lock(runs_dir: Path, thread_ref):
+    """Serialise "is this thread free?" across processes, from the question to
+    the answer becoming visible.
+
+    `refuse_concurrent_turn` reads the registry and the caller then builds a run
+    — and the new run only becomes visible to the next reader when `create_run`
+    writes its meta.json. Between those two points the answer is true and
+    unpublished, so two `resume` invocations a fraction of a second apart both
+    saw an idle thread and both started a turn on it. Reproduced: two real
+    resumes, both rc 0, both reporting a run started, both recording the same
+    thread id, and two Codex processes then appending to one rollout file. That
+    is the exact F4 corruption the guard was written to refuse.
+
+    The window is not small, either: the check walks every run's meta.json in
+    the project before it can answer, so it widens with the registry.
+
+    Held only across check-and-publish, never across the run itself — a
+    foreground turn would otherwise hold it for minutes and turn a loud refusal
+    into a silent wait. A registry that cannot be locked degrades to the old
+    check-then-act rather than refusing to run, same as `_meta_lock`.
+    """
+    if not thread_ref or thread_ref == "--last":
+        return contextlib.nullcontext()
+    return _flock_path(runs_dir / ".locks" / (nfc(str(thread_ref)).replace("/", "_") + ".lock"))
+
+
+@contextlib.contextmanager
+def _flock_path(lock: Path):
+    fh = None
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fh = lock.open("a+")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
+    except OSError:
+        yield
+    finally:
+        if fh is not None:
+            with contextlib.suppress(Exception):
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            with contextlib.suppress(Exception):
+                fh.close()
+
+
 def read_meta(run_dir: Path):
     try:
         return json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def meta_unreadable(run_dir: Path) -> bool:
+    """Distinguish a corrupt run from one whose metadata is gone.
+
+    `read_meta` returns None for both a missing file and one that will not
+    parse. These three callers have established whether the file is there, so
+    they need one shared answer to the remaining question: corrupt or gone.
+    """
+    return (run_dir / "meta.json").is_file() and read_meta(run_dir) is None
 
 
 @contextlib.contextmanager
@@ -204,6 +258,27 @@ def iter_runs(runs_dir: Path):
         yield pair
 
 
+def unreadable_runs(runs_dir: Path):
+    """Run directories `iter_runs` had to skip because their meta.json would not
+    parse, newest-looking first by name.
+
+    `read_meta` swallowing a parse error is right — one corrupt run must not
+    take down every view of every other one. Dropping it *silently* is not: the
+    caller then gets a complete-looking answer with the broken run missing from
+    it, which is the failure D27 refuses. Counting them costs one extra stat per
+    skipped directory and turns a disappearance into a fact.
+    """
+    if not runs_dir.is_dir():
+        return []
+    bad = []
+    for d in runs_dir.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        if meta_unreadable(d):
+            bad.append(d.name)
+    return sorted(bad)
+
+
 def find_run(runs_dir: Path, ref: str):
     """Resolve a run id, a thread id, or a run-id prefix; newest wins."""
     d = runs_dir / ref
@@ -232,8 +307,23 @@ def reap(run_dir: Path, meta: dict) -> dict:
     if sup and pid_alive(sup):
         return meta
     if meta.get("state") == "starting" and not sup:
-        # The supervisor writes its pid as its first act; give it a moment
-        # before calling a just-spawned run dead.
+        # A run with no supervisor yet is still being built, and the process
+        # building it says so: `create_run` records its own pid before it does
+        # anything slow. Ask that directly rather than guessing from a clock.
+        #
+        # The clock guess was safe while meta.json was written once, at the very
+        # end. It stopped being safe the moment meta.json started being written
+        # *before* `git worktree add`, which `_worktree._git` allows sixty
+        # seconds — twice this grace period. A large checkout on a slow disk
+        # would leave a live run looking thirty seconds dead, and `orphaned` is
+        # terminal, so it drops out of `batch clean`'s live-member guard and out
+        # of the occupancy check that protects its worktree. Combined with
+        # `-f -f`, which exists to defeat git's own "initializing" lock on a
+        # worktree whose owner died, that removes a checkout whose owner is
+        # alive and still writing into it.
+        creator = meta.get("creator_pid")
+        if creator and pid_alive(creator):
+            return meta
         try:
             if time.time() - os.path.getmtime(run_dir / "meta.json") < 30:
                 return meta

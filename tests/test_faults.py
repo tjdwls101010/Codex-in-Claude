@@ -362,6 +362,57 @@ class WhenAMembersMetaCannotBeParsed(FaultTestCase):
                       "the branch a caller polls has to say it too")
 
 
+class WhenTwoResumesRaceOnOneThread(FaultTestCase):
+    """`refuse_concurrent_turn` used to be the caller's job, which put the
+    check and the new run's publication in different critical sections — in
+    none, in other words. Two resumes a fraction of a second apart both saw an
+    idle thread and both started a turn on it, each reporting success, and two
+    Codex processes then appended to one rollout file.
+
+    With the check and the publish inside one per-thread lock, this is
+    deterministic rather than lucky: whichever process takes the lock second
+    sees the first one's run and refuses."""
+
+    def test_exactly_one_of_two_simultaneous_resumes_wins(self):
+        first = self.bridge("start", "seed")
+        self.wait_for_state(first["run_id"])
+
+        procs = [subprocess.Popen(
+            [sys.executable, str(BRIDGE), "resume", first["run_id"],
+             "--project", str(self.project), "second turn"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env,
+            text=True) for _ in range(2)]
+        outs = [p.communicate() for p in procs]
+        codes = [p.returncode for p in procs]
+
+        self.assertEqual(sorted(codes), [0, 1],
+                         f"exactly one resume may win; got {codes}\n"
+                         + "\n".join(o[0] or o[1] for o in outs))
+        refused = next(o[0] for o, c in zip(outs, codes) if c == 1)
+        self.assertIn("live turn", refused)
+
+        started = [json.loads(o[0].strip().splitlines()[-1])["run_id"]
+                   for o, c in zip(outs, codes) if c == 0]
+        live = [r for r in self.bridge("status")["runs"]
+                if r["thread_id"] == first["thread_id"]
+                and r["run_id"] != first["run_id"]]
+        self.assertEqual([r["run_id"] for r in live], started,
+                         "the registry must hold exactly the one run that won")
+        for rid in started:
+            self.wait_for_state(rid)
+
+    def test_force_still_lets_a_second_turn_through(self):
+        first = self.bridge("start", "seed")
+        self.wait_for_state(first["run_id"])
+        a = self.bridge("resume", first["run_id"], "one",
+                        env_extra={"FAKE_CODEX_HANG": "1"})
+        b = self.bridge("resume", first["run_id"], "--force", "two")
+        self.assertNotEqual(a["run_id"], b["run_id"])
+        self.bridge("stop", "--run", a["run_id"])
+        for rid in (a["run_id"], b["run_id"]):
+            self.wait_for_state(rid)
+
+
 class WhenGitHasLockedAWorktree(FaultTestCase):
     """`git worktree add` holds a lock for the duration of the checkout, so a
     `batch start` killed inside it leaves one locked forever. A single
@@ -404,3 +455,102 @@ class WhenAWorktreeIsRemovedFromUnderALiveRun(FaultTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhenAGroupNameIsReclaimedMidSpawn(FaultTestCase):
+    """`batch clean` can release a name whose manifest has been claimed but has
+    no members yet — it looks abandoned, because a just-claimed manifest and an
+    abandoned one are the same file. A third process can then claim the name,
+    and the first batch's `write_members` is a read-modify-write that would
+    merge its members into the stranger's manifest: C's `requested`, A's
+    members, and D36's single-use guarantee silently gone."""
+
+    def groups_dir(self):
+        return self.runs_dir() / ".groups"
+
+    def test_a_writer_notices_the_manifest_stopped_being_its_own(self):
+        from _batch import claim_group, write_members
+        runs = self.runs_dir()
+        runs.mkdir(parents=True, exist_ok=True)
+        mine = claim_group(runs, "p1", requested=2)["epoch"]
+
+        # Cleaned, then claimed again by someone else.
+        (self.groups_dir() / "p1.json").unlink()
+        theirs = claim_group(runs, "p1", requested=5)["epoch"]
+        self.assertNotEqual(mine, theirs)
+
+        with self.assertRaises(SystemExit):
+            write_members(runs, "p1", [{"index": 0, "run_id": "r-a"}], epoch=mine)
+
+        after = json.loads((self.groups_dir() / "p1.json").read_text())
+        self.assertEqual(after["requested"], 5, "the other batch's manifest is intact")
+        self.assertEqual(after["members"], [])
+
+    def test_the_owner_still_writes_normally(self):
+        from _batch import claim_group, write_members
+        runs = self.runs_dir()
+        runs.mkdir(parents=True, exist_ok=True)
+        epoch = claim_group(runs, "p1", requested=1)["epoch"]
+        write_members(runs, "p1", [{"index": 0, "run_id": "r-a"}], epoch=epoch)
+        after = json.loads((self.groups_dir() / "p1.json").read_text())
+        self.assertEqual([m["run_id"] for m in after["members"]], ["r-a"])
+
+
+class WhenLiveWritersOverlapWithoutMatchingExactly(FaultTestCase):
+    """`concurrent_writers`, at run creation, has always treated `/p` and
+    `/p/sub` as one tree via `is_within`. `doctor` grouped by the exact `cwd`
+    string, so the same two runs landed in two buckets of one and it warned
+    about neither — the after-the-fact report blind to what the creation-time
+    check had already seen."""
+
+    def test_doctor_sees_a_parent_child_overlap(self):
+        sub = self.project / "sub"
+        sub.mkdir()
+        a = self.bridge("start", "--sandbox", "workspace-write", "a",
+                        env_extra={"FAKE_CODEX_HANG": "1"})
+        b = self.bridge("start", "--sandbox", "workspace-write", "--cwd", str(sub), "b",
+                        env_extra={"FAKE_CODEX_HANG": "1"})
+        self.addCleanup(self.bridge, "stop", "--all")
+
+        doctor = self.bridge("doctor", expect_rc=doctor_rc(self))
+        overlap = [w for w in doctor["warnings"] if "overlap in" in w]
+        self.assertTrue(overlap, f"no overlap warning; got {doctor['warnings']}")
+        self.assertIn(a["run_id"], overlap[0])
+        self.assertIn(b["run_id"], overlap[0])
+
+
+class WhenACursorComesFromAnotherRun(FaultTestCase):
+    """`--since` was only refused when it pointed past the end of the file. An
+    offset that happened to be *inside* it was accepted, the read started
+    mid-line, and the event straddling that offset was delivered as an
+    anonymous `_unparsed` blob with its first half missing — one event
+    destroyed, exit 0, under a docstring promising nothing is skipped."""
+
+    def test_an_offset_that_is_not_an_event_boundary_is_refused(self):
+        from _events import read_events, CursorOutOfRange
+        r = self.bridge("start", "work")
+        self.wait_for_state(r["run_id"])
+        events = self.runs_dir() / r["run_id"] / "events.jsonl"
+        raw = events.read_bytes()
+        boundaries = {0}
+        off = 0
+        for line in raw.split(b"\n")[:-1]:
+            off += len(line) + 1
+            boundaries.add(off)
+        mid = next(i for i in range(1, len(raw)) if i not in boundaries)
+
+        with self.assertRaises(CursorOutOfRange):
+            read_events(events, mid)
+        for good in sorted(boundaries):
+            evs, _ = read_events(events, good)
+            self.assertEqual([e for e in evs if e.get("type") == "_unparsed"], [],
+                             "a real boundary must never produce a mangled event")
+
+    def test_the_cli_refuses_it_too_and_says_where_to_look(self):
+        r = self.bridge("start", "work")
+        self.wait_for_state(r["run_id"])
+        events = self.runs_dir() / r["run_id"] / "events.jsonl"
+        p = self.bridge_raw("log", "--run", r["run_id"], "--since",
+                            str(len(events.read_bytes().split(b"\n")[0]) - 3))
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("run=", p.stdout + p.stderr)

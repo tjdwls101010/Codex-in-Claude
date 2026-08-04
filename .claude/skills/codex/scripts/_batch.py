@@ -39,7 +39,7 @@ from _registry import (
 )
 from _codex import review_argv
 from _run import (
-    WRITING_SANDBOXES, create_run, refuse_concurrent_turn, run_row,
+    WRITING_SANDBOXES, create_run, run_row,
 )
 from _util import (
     BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,
@@ -120,7 +120,15 @@ def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> di
     """
     d = groups_dir(runs_dir)
     d.mkdir(parents=True, exist_ok=True)
-    manifest = {"group": name, "created_at": now_iso(),
+    # An identity for THIS claim, not for the name. A name can be released by
+    # `batch clean` and claimed again by someone else while the first claimant
+    # is still spawning, and `write_members` is a read-modify-write that would
+    # then merge one batch's members into another batch's manifest — leaving a
+    # file with C's `requested` and A's members, which is the "asked for three,
+    # given two" lie this very field was added to prevent, wearing a different
+    # hat. The epoch is what lets a writer notice the file stopped being its
+    # own.
+    manifest = {"group": name, "created_at": now_iso(), "epoch": uuid.uuid4().hex,
                 "derived_from": derived_from, "requested": requested, "members": []}
     path = group_path(runs_dir, name)
     tmp = _tmp_path(path)
@@ -132,7 +140,7 @@ def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> di
     return manifest
 
 
-def write_members(runs_dir: Path, name: str, members: list) -> dict:
+def write_members(runs_dir: Path, name: str, members: list, epoch=None) -> dict:
     """Record the member list so far, in start order.
 
     Called after **every** member rather than once at the end. Writing once was
@@ -146,6 +154,16 @@ def write_members(runs_dir: Path, name: str, members: list) -> dict:
     path = group_path(runs_dir, name)
     manifest = read_group(runs_dir, name) or {"group": name, "created_at": now_iso(),
                                               "derived_from": None}
+    if epoch is not None and manifest.get("epoch") != epoch:
+        # Either the manifest is gone (cleaned) or it belongs to a later claim
+        # of the same name. Writing into it would corrupt a batch that has
+        # nothing to do with this one, so this fails instead — loudly, and
+        # naming what has already been spawned, because those runs are real and
+        # still reachable: each one records its own group, and `batch clean`
+        # resolves members through the registry as well as the manifest.
+        fail(f"group {name!r} was released and re-claimed while this batch was "
+             f"still starting; its manifest is no longer this batch's",
+             spawned=[m.get("run_id") for m in members if m.get("run_id")])
     manifest["members"] = members
     _write_atomic(path, manifest)
     return manifest
@@ -507,7 +525,8 @@ def cmd_batch_start(args):
     # against exactly that list. Failing here costs nothing — no Codex process
     # has started yet.
     try:
-        claim_group(runs_dir, args.group, derived_from=previous, requested=len(tasks))
+        epoch = claim_group(runs_dir, args.group, derived_from=previous,
+                            requested=len(tasks))["epoch"]
     except FileExistsError:
         existing = read_group(runs_dir, args.group) or {}
         fail(f"group {args.group!r} already exists in this project; group names "
@@ -534,7 +553,7 @@ def cmd_batch_start(args):
         # writes of a few hundred bytes per member is the price of the manifest
         # never trailing what is already on disk.
         members.append(entry)
-        write_members(runs_dir, args.group, members)
+        write_members(runs_dir, args.group, members, epoch=epoch)
         try:
             with failures_raise():
                 out = spawn_task(task_args(args, item), item, group=args.group,
@@ -557,7 +576,7 @@ def cmd_batch_start(args):
             entry.update(e.extra if isinstance(e, BridgeError)
                          else {"error_type": type(e).__name__})
             results.append(entry)
-            write_members(runs_dir, args.group, members)
+            write_members(runs_dir, args.group, members, epoch=epoch)
             continue
         entry["run_id"] = out["run_id"]
         entry["thread_id"] = out.get("thread_id")
@@ -569,7 +588,7 @@ def cmd_batch_start(args):
         # After every member, not once at the end: see write_members. A member
         # that has spawned is a live process, and it must be reachable through
         # the group from the instant it exists.
-        write_members(runs_dir, args.group, members)
+        write_members(runs_dir, args.group, members, epoch=epoch)
     spawned = [m for m in members if m.get("run_id")]
     isolated = [m for m in members if m.get("worktree")]
     out = {"group": args.group, "runs": results,
@@ -623,8 +642,6 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
             # outside this skill, so pass the ref through rather than refusing.
             return create_run(ns, kind="resume", thread_ref=item["resume"],
                               group=group, batch=batch)
-        refuse_concurrent_turn(runs_dir, base.get("thread_id"),
-                               getattr(ns, "force", False))
         return create_run(ns, kind="resume", base=base,
                           thread_ref=base.get("thread_id"), group=group,
                           batch=batch)

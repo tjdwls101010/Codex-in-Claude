@@ -31,7 +31,7 @@ from _codex import (
 from _events import scan_progress
 from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir, write_meta,
+    resolve_project, resolve_runs_dir, thread_turn_lock, write_meta,
 )
 from _util import clip, fail, git_toplevel, is_within, now_iso
 
@@ -136,7 +136,13 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
     warning. A resumed run shares its parent's process group with nothing —
     two live turns on the same thread would race on the same rollout file —
     so a live turn on the target thread is refused unless the caller opts in
-    with --force."""
+    with --force.
+
+    Called from inside `create_run`, under `thread_turn_lock`, and from nowhere
+    else. It used to be the caller's job, which left the check and the new run's
+    publication in different critical sections — i.e. in none — so two resumes
+    a fraction of a second apart both passed it. One caller, one lock, one
+    place: the same reason `review_argv` has one home (R20)."""
     if not thread_id or force:
         return
     live = [reap(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id") == thread_id]
@@ -208,79 +214,88 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         # new isolation state rather than carrying over the parent's value.
         priority = isolated
 
-    try:
-        run_id, run_dir = claim_run_dir(
-            runs_dir, args.label or (base.get("label") if base else None))
-    except FileExistsError as e:
-        fail(str(e), runs_dir=str(runs_dir))
+    # From here to the first `write_meta` is one critical section per thread:
+    # the answer to "is this thread busy?" is only true until someone else
+    # publishes, and publishing is what the lock waits for.
+    with thread_turn_lock(runs_dir, thread_ref):
+        refuse_concurrent_turn(runs_dir, thread_ref,
+                               getattr(args, "force", False))
+        try:
+            run_id, run_dir = claim_run_dir(
+                runs_dir, args.label or (base.get("label") if base else None))
+        except FileExistsError as e:
+            fail(str(e), runs_dir=str(runs_dir))
 
-    meta = {
-        "run_id": run_id,
-        "run_dir": str(run_dir),
-        "thread_id": base.get("thread_id") if base else None,
-        "parent_run_id": base.get("run_id") if base else None,
-        "kind": kind,
-        "label": args.label or (base.get("label") if base else None),
-        "prompt_preview": clip(prompt, 300),
-        "cwd": str(cwd),
-        "project": str(project),
-        "sandbox": sandbox,
-        "model": args.model or (base.get("model") if base else None),
-        "effort": args.effort or (base.get("effort") if base else None),
-        "isolated": isolated,
-        "priority": priority,
-        "schema_path": (str(Path(args.schema).expanduser().resolve())
-                        if getattr(args, "schema", None)
-                        else (base.get("schema_path") if base else None)),
-        "images": [str(Path(i).expanduser().resolve())
-                   for i in (getattr(args, "image", None) or [])],
-        "add_dirs": [str(Path(d).expanduser().resolve())
-                     for d in (getattr(args, "add_dir", None) or [])],
-        "extra_config": extra_config,
-        # Only where Codex's own guard does not apply. The wrapper does not
-        # silently disable a Codex safety default just to keep its own argv
-        # uniform.
-        "skip_git_repo_check": git_toplevel(cwd) is None,
-        "preamble": not args.no_preamble,
-        "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
-        "foreground": bool(getattr(args, "foreground", False)),
-        "timeout_seconds": getattr(args, "timeout", None),
-        # The manifest is the authority on membership and order; this copy lets
-        # a single run say which group it belongs to without one, so `status`
-        # can still answer that after a manifest is lost or hand-deleted.
-        "group": group,
-        "worktree": None,       # filled in below, once nothing can still refuse
-        "started_at": now_iso(),
-        "ended_at": None, "exit_code": None, "state": "starting",
-        "codex_pid": None, "supervisor_pid": None, "pgid": None,
-        # Who is building this run, so `reap` can ask instead of guessing from
-        # meta.json's mtime. There is a real window between publishing the run
-        # and handing it to a supervisor — `git worktree add` may take a minute
-        # — and during it this pid is the only evidence the run is alive.
-        "creator_pid": os.getpid(),
-    }
+        meta = {
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+            "thread_id": base.get("thread_id") if base else None,
+            "parent_run_id": base.get("run_id") if base else None,
+            "kind": kind,
+            "label": args.label or (base.get("label") if base else None),
+            "prompt_preview": clip(prompt, 300),
+            "cwd": str(cwd),
+            "project": str(project),
+            "sandbox": sandbox,
+            "model": args.model or (base.get("model") if base else None),
+            "effort": args.effort or (base.get("effort") if base else None),
+            "isolated": isolated,
+            "priority": priority,
+            "schema_path": (str(Path(args.schema).expanduser().resolve())
+                            if getattr(args, "schema", None)
+                            else (base.get("schema_path") if base else None)),
+            "images": [str(Path(i).expanduser().resolve())
+                       for i in (getattr(args, "image", None) or [])],
+            "add_dirs": [str(Path(d).expanduser().resolve())
+                         for d in (getattr(args, "add_dir", None) or [])],
+            "extra_config": extra_config,
+            # Only where Codex's own guard does not apply. The wrapper does not
+            # silently disable a Codex safety default just to keep its own argv
+            # uniform.
+            "skip_git_repo_check": git_toplevel(cwd) is None,
+            "preamble": not args.no_preamble,
+            "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
+            "foreground": bool(getattr(args, "foreground", False)),
+            "timeout_seconds": getattr(args, "timeout", None),
+            # The manifest is the authority on membership and order; this copy lets
+            # a single run say which group it belongs to without one, so `status`
+            # can still answer that after a manifest is lost or hand-deleted.
+            "group": group,
+            "worktree": None,       # filled in below, once nothing can still refuse
+            "started_at": now_iso(),
+            "ended_at": None, "exit_code": None, "state": "starting",
+            "codex_pid": None, "supervisor_pid": None, "pgid": None,
+            # Who is building this run, so `reap` can ask instead of guessing from
+            # meta.json's mtime. There is a real window between publishing the run
+            # and handing it to a supervisor — `git worktree add` may take a minute
+            # — and during it this pid is the only evidence the run is alive.
+            "creator_pid": os.getpid(),
+        }
 
-    if base and args.sandbox and args.sandbox != base["sandbox"]:
-        # A sandbox change is never silent, in either direction.
-        meta["sandbox_changed_from"] = base["sandbox"]
+        if base and args.sandbox and args.sandbox != base["sandbox"]:
+            # A sandbox change is never silent, in either direction.
+            meta["sandbox_changed_from"] = base["sandbox"]
 
-    if meta["schema_path"] and not Path(meta["schema_path"]).exists():
-        fail(f"schema file not found: {meta['schema_path']}")
-    for img in meta["images"]:
-        if not Path(img).exists():
-            fail(f"image not found: {img}")
+        if meta["schema_path"] and not Path(meta["schema_path"]).exists():
+            fail(f"schema file not found: {meta['schema_path']}")
+        for img in meta["images"]:
+            if not Path(img).exists():
+                fail(f"image not found: {img}")
 
-    # Every check that could still refuse this run has passed, so publish it
-    # before cutting anything. `write_meta` is what makes the run — and the
-    # group it names — visible to `iter_runs`, and a checkout that exists while
-    # the registry has never heard of the run is reachable by nothing at all:
-    # not `batch clean --group`, which needs a run id, and not `status`, which
-    # needs a meta.json. This process can die at any instant from here on, and
-    # what it has already put on disk has to be findable without it.
-    #
-    # The reasoning below was written about *rejection* and is still right; it
-    # was silent about *death*, which is the case that actually leaked.
-    write_meta(run_dir, meta)
+        # Every check that could still refuse this run has passed, so publish it
+        # before cutting anything. `write_meta` is what makes the run — and the
+        # group it names — visible to `iter_runs`, and a checkout that exists while
+        # the registry has never heard of the run is reachable by nothing at all:
+        # not `batch clean --group`, which needs a run id, and not `status`, which
+        # needs a meta.json. This process can die at any instant from here on, and
+        # what it has already put on disk has to be findable without it.
+        #
+        # The reasoning below was written about *rejection* and is still right; it
+        # was silent about *death*, which is the case that actually leaked.
+        write_meta(run_dir, meta)
+    # Lock released here, before the worktree is cut: `git worktree add` is
+    # allowed a minute, and holding a thread's turn lock across it would turn
+    # a loud refusal into a silent wait.
 
     # Cut the worktree last, after every check that can still refuse this run.
     # It cannot be cut before `claim_run_dir` — it lives at `<run_dir>/wt`, and

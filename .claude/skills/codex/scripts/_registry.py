@@ -91,6 +91,50 @@ def claim_run_dir(runs_dir: Path, label=None, attempts: int = 5):
 
 # -- meta.json --------------------------------------------------------------
 
+def thread_turn_lock(runs_dir: Path, thread_ref):
+    """Serialise "is this thread free?" across processes, from the question to
+    the answer becoming visible.
+
+    `refuse_concurrent_turn` reads the registry and the caller then builds a run
+    — and the new run only becomes visible to the next reader when `create_run`
+    writes its meta.json. Between those two points the answer is true and
+    unpublished, so two `resume` invocations a fraction of a second apart both
+    saw an idle thread and both started a turn on it. Reproduced: two real
+    resumes, both rc 0, both reporting a run started, both recording the same
+    thread id, and two Codex processes then appending to one rollout file. That
+    is the exact F4 corruption the guard was written to refuse.
+
+    The window is not small, either: the check walks every run's meta.json in
+    the project before it can answer, so it widens with the registry.
+
+    Held only across check-and-publish, never across the run itself — a
+    foreground turn would otherwise hold it for minutes and turn a loud refusal
+    into a silent wait. A registry that cannot be locked degrades to the old
+    check-then-act rather than refusing to run, same as `_meta_lock`.
+    """
+    if not thread_ref or thread_ref == "--last":
+        return contextlib.nullcontext()
+    return _flock_path(runs_dir / ".locks" / (nfc(str(thread_ref)).replace("/", "_") + ".lock"))
+
+
+@contextlib.contextmanager
+def _flock_path(lock: Path):
+    fh = None
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fh = lock.open("a+")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
+    except OSError:
+        yield
+    finally:
+        if fh is not None:
+            with contextlib.suppress(Exception):
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            with contextlib.suppress(Exception):
+                fh.close()
+
+
 def read_meta(run_dir: Path):
     try:
         return json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))

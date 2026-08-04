@@ -57,11 +57,10 @@ from _registry import (  # noqa: E402
     resolve_runs_dir, unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
-    WRITING_SANDBOXES, create_run, refuse_concurrent_turn, resolve_implicit_run,
-    run_row,
+    WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
 )
 from _util import (  # noqa: E402
-    clip, codex_home, emit, fail, git_toplevel, now_iso, pid_alive,
+    clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
 )
 
 # `show --item` default cap. A silently truncated blob is worse than a loud one,
@@ -143,11 +142,6 @@ def cmd_resume(args):
         # An unknown ref is not an error: `codex exec resume` also accepts a
         # thread name, so pass it through.
         thread_ref = (base or {}).get("thread_id") or args.ref
-
-    # F4's second reproduction: two turns run concurrently on one thread, rc 0,
-    # no warning. Refuse a second live turn on the same thread unless the
-    # caller explicitly opts in.
-    refuse_concurrent_turn(runs_dir, thread_ref, args.force)
 
     # A resumed run is a NEW run pointing at the SAME thread, so each turn gets
     # its own event log while the thread stays linked.
@@ -649,7 +643,7 @@ def cmd_doctor(args):
         # §1.7. Grouped by recorded cwd, never by git top level — one
         # repository's worktrees all share a top level, so that comparison
         # would warn on exactly the arrangement that makes it safe.
-        by_cwd = {}
+        live = []
         for rd, m in iter_runs(runs_dir):
             # Reaped, like `concurrent_writers`. meta.json says `running` until
             # something notices the supervisor died, so grouping on it as
@@ -659,15 +653,35 @@ def cmd_doctor(args):
             m = reap(rd, m)
             if m.get("state") in TERMINAL_STATES:
                 continue
-            by_cwd.setdefault(m.get("cwd"), []).append(m)
-        for cwd, ms in sorted(by_cwd.items(), key=lambda kv: str(kv[0])):
-            writers = [m for m in ms if m.get("sandbox") in WRITING_SANDBOXES]
-            if len(ms) > 1 and writers:
-                warnings.append(
-                    f"{len(ms)} live runs share {cwd}, {len(writers)} of which can "
-                    f"write to it: {', '.join(m.get('run_id') for m in ms)}. None of "
-                    f"them can tell another agent's change from its own. Runs in "
-                    f"their own worktrees are exempt and will not appear here.")
+            live.append(m)
+        # Overlap, not string equality. `concurrent_writers` — the same check,
+        # made at the moment a run is created — has always used `is_within` in
+        # both directions, because a run in `/p` and a run in `/p/sub` are two
+        # writers in one tree. Grouping on the exact `cwd` string put them in
+        # two buckets of one and warned about neither, so the report a caller
+        # consults *afterwards* was blind to what the check at creation time had
+        # already seen. Two implementations of one question is how they drift;
+        # this is the second time that has cost something (R20).
+        seen = set()
+        for i, m in enumerate(live):
+            group = [m] + [o for j, o in enumerate(live) if j != i
+                           and (is_within(o.get("cwd"), m.get("cwd"))
+                                or is_within(m.get("cwd"), o.get("cwd")))]
+            if len(group) < 2:
+                continue
+            key = tuple(sorted(x.get("run_id") or "" for x in group))
+            if key in seen:
+                continue
+            seen.add(key)
+            writers = [x for x in group if x.get("sandbox") in WRITING_SANDBOXES]
+            if not writers:
+                continue
+            warnings.append(
+                f"{len(group)} live runs overlap in {m.get('cwd')}, "
+                f"{len(writers)} of which can write there: "
+                f"{', '.join(x.get('run_id') for x in group)}. None of them can "
+                f"tell another agent's change from its own. Runs in their own "
+                f"worktrees are exempt and will not appear here.")
 
         live_wt = [p for p in worktrees_registered(project) if p.exists()]
         report["worktrees"] = len(live_wt)

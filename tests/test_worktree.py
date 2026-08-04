@@ -895,7 +895,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
         most likely to still say `running` for a supervisor that has gone."""
         first = self.hanging_writer("one")
         second = self.hanging_writer("two")
-        self.assertTrue(any("live runs share" in w
+        self.assertTrue(any("live runs overlap in" in w
                             for w in self.bridge("doctor")["warnings"]))
         self.bridge("stop", "--run", second["run_id"])
         # Plant the state a dead supervisor leaves: the file still says running.
@@ -906,7 +906,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
         meta_path.write_text(json.dumps(meta))
 
         rep = self.bridge("doctor")
-        self.assertFalse(any("live runs share" in w for w in rep["warnings"]),
+        self.assertFalse(any("live runs overlap in" in w for w in rep["warnings"]),
                          "a dead supervisor must not be reported as a live writer")
         self.bridge("stop", "--all")
 
@@ -914,9 +914,9 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
         self.hanging_writer("one")
         self.hanging_writer("two")
         rep = self.bridge("doctor")
-        shared = [w for w in rep["warnings"] if "live runs share" in w]
+        shared = [w for w in rep["warnings"] if "live runs overlap in" in w]
         self.assertEqual(len(shared), 1, rep["warnings"])
-        self.assertIn("2 of which can write", shared[0])
+        self.assertIn("2 of which can write there", shared[0])
         self.assertTrue(rep["ok"], "sharing a directory is not a blocker")
         self.bridge("stop", "--all")
 

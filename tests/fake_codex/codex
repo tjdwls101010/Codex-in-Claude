@@ -18,6 +18,7 @@ knowledge that it is talking to a fake:
   FAKE_CODEX_STDERR     text to write to stderr
   FAKE_CODEX_VERSION    what `--version` prints (default: codex-cli 0.144.1-fake)
   FAKE_CODEX_LOGIN_RC   exit code for `login status` (default 0)
+  FAKE_CODEX_LOGIN_OUT  what `login status` prints (default matches the code)
   FAKE_CODEX_THREAD_ID  thread id to substitute into the replayed stream
   FAKE_CODEX_IGNORE_SIGINT  ignore SIGINT instead of exiting, so the caller's
                             signal ladder has to escalate to SIGTERM/SIGKILL
@@ -153,7 +154,11 @@ def main():
         return 0
     if argv[:2] == ["login", "status"]:
         rc = int(os.environ.get("FAKE_CODEX_LOGIN_RC", "0"))
-        print("Logged in using ChatGPT" if rc == 0 else "Not logged in")
+        # The text matters, not only the code: the real CLI fails this command
+        # for reasons that have nothing to do with auth — a config.toml it
+        # cannot parse, for one — and `doctor` has to tell those apart.
+        default = "Logged in using ChatGPT" if rc == 0 else "Not logged in"
+        print(os.environ.get("FAKE_CODEX_LOGIN_OUT", default))
         return rc
 
     # Reject exactly as the real CLI does when option parsing ate the prompt.

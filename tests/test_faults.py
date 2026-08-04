@@ -554,3 +554,126 @@ class WhenACursorComesFromAnotherRun(FaultTestCase):
                             str(len(events.read_bytes().split(b"\n")[0]) - 3))
         self.assertEqual(p.returncode, 1, p.stdout)
         self.assertIn("run=", p.stdout + p.stderr)
+
+
+class WhenTheRefIsOneTheRegistryHasNeverSeen(FaultTestCase):
+    """The per-thread guard compares against each run's recorded `thread_id`,
+    and a resume of a ref this project has never recorded publishes with
+    `thread_id: null` — the real id only arrives later, from the spawned
+    process, long after the lock is released. So the guard was blind to
+    precisely the case SKILL.md leads with: picking up a thread started in the
+    Codex TUI."""
+
+    def test_two_resumes_of_one_unknown_ref_do_not_both_win(self):
+        ref = "019fc000-0000-7000-8000-000000000abc"
+        procs = [subprocess.Popen(
+            [sys.executable, str(BRIDGE), "resume", ref,
+             "--project", str(self.project), "--sandbox", "read-only", "go"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env,
+            text=True) for _ in range(2)]
+        outs = [p.communicate() for p in procs]
+        codes = [p.returncode for p in procs]
+        self.assertEqual(sorted(codes), [0, 1],
+                         f"exactly one may win; got {codes}\n"
+                         + "\n".join(o[0] or o[1] for o in outs))
+        self.assertIn("live turn", next(o[0] for o, c in zip(outs, codes) if c == 1))
+        for o, c in zip(outs, codes):
+            if c == 0:
+                self.wait_for_state(json.loads(o[0].strip().splitlines()[-1])["run_id"])
+
+    def test_the_ref_is_recorded_so_a_later_reader_can_see_it(self):
+        ref = "some-thread-name"
+        out = self.bridge("resume", ref, "--sandbox", "read-only", "go")
+        self.wait_for_state(out["run_id"])
+        meta = read_meta(self.runs_dir() / out["run_id"])
+        self.assertEqual(meta["resume_ref"], ref)
+
+
+class WhenAForegroundRunRecordsItsProcessGroup(FaultTestCase):
+    """`start_new_session` was set only when `--timeout` was also given, so a
+    plain foreground run wrote the *caller's* process group into its meta —
+    and `stop --run` on it would have signalled the caller."""
+
+    def test_the_pgid_belongs_to_the_run_not_the_caller(self):
+        out = self.bridge("start", "--foreground", "work")
+        meta = read_meta(self.runs_dir() / out["run_id"])
+        self.assertIsNotNone(meta["pgid"])
+        self.assertNotEqual(int(meta["pgid"]), os.getpgid(0),
+                            "a foreground run must not record the caller's group")
+
+
+class WhenDoctorCannotEvenAsk(FaultTestCase):
+    """`codex login status` also fails when it cannot load config at all, with
+    a perfectly good auth.json present. Calling that "not authenticated" sends
+    the caller to `codex login`, which fails identically, forever."""
+
+    def test_a_config_error_is_not_reported_as_an_auth_problem(self):
+        rep = self.bridge("doctor", expect_rc=2,
+                          env_extra={"FAKE_CODEX_LOGIN_RC": "1",
+                                     "FAKE_CODEX_LOGIN_OUT":
+                                         "Error loading configuration: config.toml:1:26"})
+        blocker = next(b for b in rep["blockers"] if "login status" in b)
+        self.assertIn("not an auth one", blocker)
+        self.assertNotIn("not authenticated", blocker)
+
+    def test_a_real_auth_failure_still_says_so(self):
+        rep = self.bridge("doctor", expect_rc=2,
+                          env_extra={"FAKE_CODEX_LOGIN_RC": "1",
+                                     "FAKE_CODEX_LOGIN_OUT": "Not logged in"})
+        self.assertTrue(any("not authenticated" in b for b in rep["blockers"]))
+
+
+class WhenTheUserHasTheirOwnWorktree(FaultTestCase):
+    """`registered()` is `git worktree list` for the whole repository. Reporting
+    someone else's checkout as "from batch runs, checked out under
+    .codex-runs" is false twice over, and `batch clean` cannot touch it."""
+
+    def test_doctor_only_counts_the_ones_it_cut(self):
+        # A registry that exists, which is when doctor reports worktrees at all.
+        self.wait_for_state(self.bridge("start", "seed")["run_id"])
+        mine = self.tmp / "my-own-worktree"
+        self.git("worktree", "add", "--detach", str(mine), "HEAD")
+        self.addCleanup(self.git, "worktree", "remove", "--force", str(mine))
+
+        rep = self.bridge("doctor", expect_rc=doctor_rc(self))
+        self.assertEqual(rep["worktrees"], 0)
+        self.assertFalse(any("from batch runs" in w for w in rep["warnings"]),
+                         "a checkout this skill did not cut is not its business")
+
+
+class WhenAReviewMemberReportsZeroUsage(FaultTestCase):
+    """A review turn reports all-zero usage after real work. The single-run
+    surfaces have said "unavailable, not free" since v0.1.0; the group one
+    reported a confident zero and summed it into `totals`, undercounting any
+    batch that mixed a reviewer with writers."""
+
+    fixture = "review-clean-tree.jsonl"
+
+    def test_the_group_result_does_not_call_it_free(self):
+        tf = self.tmp / "tasks.jsonl"
+        tf.write_text(json.dumps({"kind": "review",
+                                  "review": {"uncommitted": True}}) + "\n")
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", str(tf))
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+        res = self.bridge("result", "--group", "p1")
+        row = res["results"][0]
+        self.assertIsNone(row["usage"])
+        self.assertIn("unavailable, not free", row["usage_note"])
+        self.assertEqual(res["usage_unmeasured"], [row["run_id"]])
+
+
+class WhenTwoSelectorsArePassedTogether(FaultTestCase):
+    """`status` learned that `--run` and `--group` are different questions.
+    `stop` and `result` never did, and they honoured opposite ones — so
+    `stop --group G --run L` left every member of G running and said nothing."""
+
+    def test_stop_and_result_refuse_the_pair_like_status_does(self):
+        r = self.bridge("start", "one")
+        self.wait_for_state(r["run_id"])
+        self.bridge("batch", "start", "--group", "p1", "--task", "a")
+        for cmd in ("stop", "result", "status"):
+            with self.subTest(cmd=cmd):
+                out = self.bridge(cmd, "--run", r["run_id"], "--group", "p1",
+                                  expect_rc=1)
+                self.assertIn("different questions", out["error"])

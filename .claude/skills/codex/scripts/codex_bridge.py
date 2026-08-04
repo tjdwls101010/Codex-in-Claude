@@ -167,6 +167,22 @@ def cmd_review(args):
 # status
 # --------------------------------------------------------------------------
 
+def refuse_run_and_group(args, command):
+    """`--run` and `--group` name different things; passing both silently drops
+    one of them, and which one depends on which branch happens to come first.
+
+    `status` learned this and was fixed; `stop` and `result` were not, and they
+    had drifted in opposite directions — `stop` honoured `--run` and left the
+    group's other members running, `result` honoured `--group` and answered a
+    different question in a different shape. A caller with a stray `--run` in a
+    copy-pasted `stop --group` line got a success reply while the group carried
+    on. Three commands, one rule, one place (R28)."""
+    if getattr(args, "run", None) and getattr(args, "group", None):
+        fail(f"--run and --group are different questions; pass one. "
+             f"`{command} --run` acts on one run, `{command} --group` acts on "
+             f"the whole group.", run=args.run, group=args.group)
+
+
 def note_unreadable(out: dict, runs_dir):
     """A run whose meta.json will not parse is skipped by `iter_runs`, which is
     what keeps one broken run from breaking every view. Saying nothing about it
@@ -190,11 +206,7 @@ def cmd_status(args):
     # have made `--follow` mean something. Found by a `review` member reading
     # the commit that added the check below, which is the kind of hole a fix
     # leaves when it guards a symptom instead of the precedence underneath it.
-    if args.run and args.group:
-        fail("--run and --group are different questions; pass one. "
-             "`--run` reports one run, `--group` reports a whole group and is "
-             "the one `--follow` can wait on.",
-             run=args.run, group=args.group)
+    refuse_run_and_group(args, "status")
     # `--follow` only ever meant "--group --follow": the other branches emit a
     # snapshot and exit. Accepting it silently is the shape of mistake R13 was
     # about — the tool hands back an answer the caller reads as "I waited for
@@ -438,6 +450,7 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
 
 
 def cmd_stop(args):
+    refuse_run_and_group(args, "stop")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     session = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -476,6 +489,7 @@ def cmd_stop(args):
 # --------------------------------------------------------------------------
 
 def cmd_result(args):
+    refuse_run_and_group(args, "result")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
@@ -562,7 +576,25 @@ def cmd_doctor(args):
             report["login_status"] = (r.stdout or r.stderr).strip()[:400]
             report["login_ok"] = r.returncode == 0
             if r.returncode != 0:
-                blockers.append("`codex login status` exited non-zero — not authenticated")
+                # Non-zero does not mean "not authenticated". It means the
+                # command did not succeed, and `codex login status` also fails
+                # outright when it cannot load config at all — a malformed
+                # `config.toml` gives `Error loading configuration: ...` and
+                # exit 1 with a perfectly good auth.json sitting right there.
+                # Calling that "not authenticated" sends the caller to
+                # `codex login`, which fails the same way for the same reason,
+                # forever. Measured against codex-cli 0.146.0.
+                text = report["login_status"] or ""
+                if re.search(r"(?i)error loading config|config\.toml|"
+                             r"permission denied|invalid|parse", text):
+                    blockers.append(
+                        f"`codex login status` could not run at all — an "
+                        f"environment or config problem, not an auth one, so "
+                        f"`codex login` will fail the same way: "
+                        f"{clip(text, 200)}")
+                else:
+                    blockers.append(
+                        "`codex login status` exited non-zero — not authenticated")
         except Exception as e:
             report["login_ok"] = None
             warnings.append(f"could not run `codex login status`: {e}")
@@ -683,7 +715,14 @@ def cmd_doctor(args):
                 f"tell another agent's change from its own. Runs in their own "
                 f"worktrees are exempt and will not appear here.")
 
-        live_wt = [p for p in worktrees_registered(project) if p.exists()]
+        # `registered` is `git worktree list` for the whole repository, so it
+        # includes checkouts a user made themselves. Saying "N worktrees from
+        # batch runs are checked out under .codex-runs" about one of those is
+        # false twice over — it was not from a batch run and it is not under
+        # that directory — and `batch clean` cannot touch it either. This
+        # command only speaks for what this skill cut.
+        live_wt = [p for p in worktrees_registered(project)
+                   if p.exists() and is_within(str(p), str(runs_dir))]
         report["worktrees"] = len(live_wt)
         if live_wt:
             warnings.append(

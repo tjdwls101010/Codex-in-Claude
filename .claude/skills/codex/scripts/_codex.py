@@ -302,10 +302,14 @@ def supervise(run_dir: Path, timeout=None) -> int:
     out = events_path.open("ab")
     err = (run_dir / "stderr.log").open("ab")
     kwargs = {}
-    if timeout is not None and meta.get("foreground"):
+    if meta.get("foreground"):
         # Foreground only: the supervisor *is* the caller's process here, so
-        # Codex needs its own group for a timeout to kill the tree without
-        # killing the caller.
+        # Codex needs its own group — for a timeout to kill the tree without
+        # killing the caller, and equally so that the `pgid` this run records
+        # is its own. Gated on `timeout is not None` until measured, which meant
+        # a foreground run without one recorded the *caller's* process group and
+        # a later `stop --run` would have signalled the caller. A run's recorded
+        # pgid has to belong to the run whatever else is true of it.
         #
         # Doing the same in the background would be a silent bug rather than a
         # nicety. There the supervisor is already a session leader, and Codex

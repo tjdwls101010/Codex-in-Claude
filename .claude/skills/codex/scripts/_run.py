@@ -145,7 +145,17 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
     place: the same reason `review_argv` has one home (R20)."""
     if not thread_id or force:
         return
-    live = [reap(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id") == thread_id]
+    # Matched on the recorded thread id OR on the ref the run was launched
+    # against. They are usually the same string, and when they are not, the
+    # second is the only one that exists yet: a resume of a ref this registry
+    # has never seen publishes with `thread_id: null`, because the real id only
+    # arrives later, from the spawned Codex process's `thread.started`. That is
+    # after this lock is released, so comparing on `thread_id` alone left the
+    # headline case — picking up a thread started in the Codex TUI — completely
+    # unguarded. Reproduced 5 times in 5: two resumes of one fresh ref, both
+    # rc 0, both spawning `codex exec resume <same ref>`.
+    live = [reap(rd, m) for rd, m in iter_runs(runs_dir)
+            if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
     live = [m for m in live if m.get("state") not in TERMINAL_STATES]
     if live:
         fail("thread already has a live turn; pass --force to run a second turn "
@@ -265,7 +275,12 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
             "started_at": now_iso(),
             "ended_at": None, "exit_code": None, "state": "starting",
             "codex_pid": None, "supervisor_pid": None, "pgid": None,
-            # Who is building this run, so `reap` can ask instead of guessing from
+            # What this run was launched against, recorded even when it is not (yet)
+        # a thread id. `thread_id` cannot hold it — a ref may be a thread *name*
+        # — and leaving it nowhere is what made `refuse_concurrent_turn` blind
+        # to a thread the registry has not seen before.
+        "resume_ref": thread_ref,
+        # Who is building this run, so `reap` can ask instead of guessing from
             # meta.json's mtime. There is a real window between publishing the run
             # and handing it to a supervisor — `git worktree add` may take a minute
             # — and during it this pid is the only evidence the run is alive.

@@ -1004,6 +1004,9 @@ def changed_paths(events_path: Path, root=None):
 def cmd_result_group(args, project, runs_dir):
     members = resolve_group(runs_dir, args.group)
     results, per_run_paths, totals = [], {}, {"input_tokens": 0, "output_tokens": 0}
+    # Members whose usage is a zero that means "unavailable", not "free".
+    # Named rather than folded in, so a total that undercounts says so.
+    unmeasured = []
 
     for rd, meta in members:
         meta = reap(rd, meta)
@@ -1017,6 +1020,14 @@ def cmd_result_group(args, project, runs_dir):
         # the guess D07's cap exists to replace with a fact.
         raw = message.encode("utf-8", "replace")
         truncated = len(raw) > GROUP_MESSAGE_CAP
+        # The same caveat the single-run surfaces carry. A review turn reports
+        # all-zero usage after doing real work, so a plain zero here is a wrong
+        # number, not a free run — and summed into `totals` it silently
+        # understates a batch that mixed a reviewer with writers, which is the
+        # documented normal pattern. `run_row` and `cmd_result` have said so
+        # since v0.1.0; this surface did not, which is R28's shape yet again.
+        review_zero = (meta.get("kind") == "review" and info["usage"] is not None
+                       and not any((info["usage"] or {}).values()))
         row = {"run_id": meta["run_id"], "label": meta.get("label"),
                "state": meta.get("state"), "exit_code": meta.get("exit_code"),
                # D07: capped per run, with the real size stated. Whether to pull
@@ -1030,9 +1041,13 @@ def cmd_result_group(args, project, runs_dir):
                            if truncated else message),
                "message_bytes": len(raw),
                "message_truncated": truncated,
-               "usage": info["usage"], "files_changed": info["files_changed"],
+               "usage": None if review_zero else info["usage"],
+               "files_changed": info["files_changed"],
                "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
                                if info["turn_failed"] else None)}
+        if review_zero:
+            row["usage_note"] = ("review runs report zero usage; unavailable, "
+                                 "not free — excluded from totals")
         if meta.get("worktree"):
             row["worktree"] = meta["worktree"]
         results.append(row)
@@ -1041,8 +1056,11 @@ def cmd_result_group(args, project, runs_dir):
         # report every member as overlapping with its own past self.
         per_run_paths[meta["run_id"]] = changed_paths(
             rd / "events.jsonl", (meta.get("worktree") or {}).get("path") or meta.get("cwd"))
-        for key in totals:
-            totals[key] += int((info["usage"] or {}).get(key) or 0)
+        if review_zero:
+            unmeasured.append(meta["run_id"])
+        else:
+            for key in totals:
+                totals[key] += int((info["usage"] or {}).get(key) or 0)
 
     # D30: the intersection only. A full path list per run inverts the context
     # discipline this skill exists for, and `log` already prints file_change
@@ -1065,7 +1083,8 @@ def cmd_result_group(args, project, runs_dir):
         [{"run_id": r["run_id"], "state": r["state"]} for r in results],
         len(never) + len(gone))
     out = {"group": args.group, "project": str(project), "results": results,
-           "overlaps": overlaps, "totals": totals, "group_state": gstate,
+           "overlaps": overlaps, "totals": totals,
+           "usage_unmeasured": unmeasured or None, "group_state": gstate,
            "done": done, "failed": failed, "running": running,
            "unstarted": never + gone,
            "overlaps_note": ("paths written by more than one member. Under worktree "

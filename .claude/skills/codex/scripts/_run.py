@@ -26,7 +26,8 @@ from pathlib import Path
 
 from _codex import (
     RESERVED_CONFIG_KEYS, THREAD_ID_WAIT, apply_preamble, build_argv,
-    reserved_config_key, spawn_supervised, supervise,
+    check_model_effort, model_catalog, reserved_config_key, spawn_supervised,
+    supervise,
 )
 from _events import scan_progress
 from _registry import (
@@ -194,6 +195,20 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
                  f"`status` report something the run is not doing. Use "
                  f"{RESERVED_CONFIG_KEYS[key]} instead.",
                  config=raw, reserved=sorted(RESERVED_CONFIG_KEYS))
+
+    # Same placement and the same reason as the refusal above: before anything
+    # is claimed on disk. Two things about this call are deliberate. It reads
+    # `args` rather than the resolved values computed below, so a model or
+    # effort inherited from the thread being resumed is never re-checked —
+    # otherwise a model retired upstream would turn every resume of that thread
+    # into a refusal. And it is guarded rather than left to
+    # `check_model_effort`'s own early return, because the catalog argument is
+    # evaluated first: calling it unconditionally spawns a `codex debug models`
+    # subprocess on the critical path of every run, including the overwhelming
+    # majority that name neither and have nothing to check.
+    if getattr(args, "model", None) or getattr(args, "effort", None):
+        check_model_effort(args.model, args.effort,
+                           catalog=model_catalog(), fail=fail)
 
     if kind == "resume" and not thread_ref:
         # `build_argv` omits the ref when there is none, producing a bare

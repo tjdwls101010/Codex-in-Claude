@@ -37,7 +37,7 @@ from _registry import (
     TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, meta_unreadable,
     read_meta, reap, resolve_project, resolve_runs_dir, unreadable_runs,
 )
-from _codex import review_argv
+from _codex import check_model_effort, model_catalog, review_argv
 from _run import (
     WRITING_SANDBOXES, create_run, run_row,
 )
@@ -289,6 +289,30 @@ def load_tasks(args):
             tasks.append(item)
     if not tasks:
         fail("batch start needs at least one --task or a --tasks-file")
+
+    # Checked here as well as in `create_run`, for the reason the type checks
+    # above give: read the whole file before starting anything. `create_run`
+    # would catch the same typo, but one member at a time — a bad effort in the
+    # eighth task would be found with seven runs already spawned, which is the
+    # cost this function exists to avoid. One catalog lookup covers every task.
+    group_model = getattr(args, "model", None)
+    group_effort = getattr(args, "effort", None)
+    named = [t for t in tasks if t.get("model") or t.get("effort")]
+    catalog = (model_catalog() if group_model or group_effort or named else None)
+    if catalog:
+        check_model_effort(group_model, group_effort, catalog=catalog, fail=fail)
+        for n, item in enumerate(tasks, 1):
+            if not (item.get("model") or item.get("effort")):
+                continue
+
+            def fail_at(msg, _n=n, **extra):
+                fail(f"task {_n}: {msg}", **extra)
+
+            # The task's own fields over the group's, matching `task_args` —
+            # checking the pair that will actually be used is the whole point.
+            check_model_effort(item.get("model") or group_model,
+                               item.get("effort") or group_effort,
+                               catalog=catalog, fail=fail_at)
     return tasks
 
 

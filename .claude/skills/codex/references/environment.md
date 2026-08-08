@@ -143,6 +143,10 @@ Neither is pinned by default. Codex picks its own defaults, and inheriting them 
 
 `--model` and `--effort` override per run and are then re-asserted on every subsequent turn of that run's thread, because effort drifts on resume exactly like the sandbox does.
 
+"Codex picks its own defaults" resolves to one concrete value per model, not one value for the skill: each model's `default_reasoning_level`. `models` reports it as `default_effort` — measured today, `low` for `gpt-5.6-sol` and `medium` for the rest, which is itself the reason not to memorise it. Reasoning efforts are per-model too, not a shared ladder every model climbs the same way: `models` lists each model's `efforts` alongside its `default_effort` (measured: `gpt-5.6-sol` and `gpt-5.6-terra` take `low`/`medium`/`high`/`xhigh`/`max`/`ultra`, `gpt-5.6-luna` has no `ultra`, and `gpt-5.5`/`gpt-5.4`/`gpt-5.4-mini` stop at `xhigh`). Both fields come from `codex debug models`, which reads `CODEX_HOME/models_cache.json` without refreshing it; `codex exec` refreshes that cache on every run, and because this skill runs `codex exec` for every run, the cache `models` reads back is never staler than the caller's own last run.
+
+`start`, `resume` and `batch start` check a passed `--model`/`--effort` against this catalog before the run spawns, and refuse locally with the valid efforts for that model rather than letting a typo reach the API. When the catalog cannot be read — no `codex` on PATH, a non-zero exit, unparseable output — the check is skipped entirely, never fail-closed: the run still spawns and an invalid value is caught by the API instead, exactly as it was before this check existed. `doctor` reports `models_catalog` as null when that is happening, with a warning explaining why.
+
 ## Reading `doctor`
 
 `doctor` exits 0 when healthy and **2** when there is a blocker, so it is usable in a conditional. It separates two categories deliberately:

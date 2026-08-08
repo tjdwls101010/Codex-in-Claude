@@ -17,6 +17,10 @@ knowledge that it is talking to a fake:
   FAKE_CODEX_EXIT       exit code (default 0)
   FAKE_CODEX_STDERR     text to write to stderr
   FAKE_CODEX_VERSION    what `--version` prints (default: codex-cli 0.144.1-fake)
+  FAKE_CODEX_MODELS     what `debug models` prints. Unset gives a two-model
+                        catalog; "" empty stdout, "!fail" a non-zero exit,
+                        "!garbage" unparseable output — the three ways the
+                        lookup can fail, which must all leave runs working
   FAKE_CODEX_LOGIN_RC   exit code for `login status` (default 0)
   FAKE_CODEX_LOGIN_OUT  what `login status` prints (default matches the code)
   FAKE_CODEX_THREAD_ID  thread id to substitute into the replayed stream
@@ -147,6 +151,48 @@ def find_prompt(argv):
 
 def main():
     argv = sys.argv[1:]
+
+    if argv[:2] == ["debug", "models"]:
+        # Answered above `log_invocation`, and deliberately outside it. The argv
+        # log is the record of what the bridge asked Codex to RUN, and tests
+        # assert exact invocation counts against it ("one start and one
+        # resume"). A catalog lookup is not a run; logging it made those counts
+        # depend on how often the bridge happens to consult the catalog.
+        #
+        # Answered before the delay/hang knobs too: the bridge asks for this on
+        # the critical path of a run start, and the real command reads a local
+        # cache file in ~30 ms, so a shim that slept here would model a `codex`
+        # that does not exist.
+        raw = os.environ.get("FAKE_CODEX_MODELS")
+        if raw == "":
+            return 0                       # empty stdout — unparseable
+        if raw == "!fail":
+            return 1                       # non-zero exit
+        if raw == "!garbage":
+            print("not json at all")
+            return 0
+        if raw:
+            sys.stdout.write(raw if raw.endswith("\n") else raw + "\n")
+            return 0
+        # Two models, differing in which efforts they take, because that
+        # difference is the whole reason the catalog is asked for rather than
+        # written down.
+        print(json.dumps({"models": [
+            {"slug": "fake-big", "display_name": "Fake Big",
+             "default_reasoning_level": "low", "context_window": 400000,
+             "visibility": "list", "supported_in_api": True,
+             "base_instructions": "x" * 4096,
+             "supported_reasoning_levels": [{"effort": e} for e in
+                                            ("low", "medium", "high", "xhigh", "ultra")]},
+            {"slug": "fake-small", "display_name": "Fake Small",
+             "default_reasoning_level": "medium", "context_window": 200000,
+             "visibility": "list", "supported_in_api": True,
+             "base_instructions": "y" * 4096,
+             "supported_reasoning_levels": [{"effort": e} for e in
+                                            ("low", "medium", "high")]},
+        ]}))
+        return 0
+
     log_invocation(argv)
 
     if "--version" in argv or "-V" in argv:

@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
-    review_argv,
+    codex_version, model_catalog, review_argv,
     SANDBOX_MODES, query_threads, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
@@ -538,6 +538,29 @@ def cmd_result(args):
 
 
 # --------------------------------------------------------------------------
+# models
+# --------------------------------------------------------------------------
+
+def cmd_models(args):
+    """Which models and reasoning efforts this Codex install offers.
+
+    Exists so that choosing either is a lookup rather than a guess. It is a
+    command and not a paragraph in SKILL.md for the reason `model_catalog`
+    states: a list written down here would be stale on some Codex version, and
+    per-model effort support means it would be wrong for some model
+    immediately.
+    """
+    catalog = model_catalog()
+    if catalog is None:
+        emit({"models": None,
+              "error": "could not read the catalog from `codex debug models`; "
+                       "`doctor` reports why. Runs are unaffected — an invalid "
+                       "--model or --effort is caught by the API instead.",
+              "codex_path": shutil.which("codex")}, code=1)
+    emit({"models": catalog, "codex_version": codex_version()})
+
+
+# --------------------------------------------------------------------------
 # doctor
 # --------------------------------------------------------------------------
 
@@ -620,6 +643,17 @@ def cmd_doctor(args):
             "is how a read-only thread becomes fully privileged on its second turn. "
             "This wrapper passes -c sandbox_mode= on every invocation, so that fallback "
             "is never reached — but a bare `codex` command you run yourself will hit it.")
+
+    catalog = model_catalog()
+    report["models_catalog"] = len(catalog) if catalog else None
+    if catalog is None:
+        # Says why the pre-flight check is off rather than leaving the caller to
+        # notice it never fires. Nothing is broken here — this degrades back to
+        # the behaviour before the check existed.
+        warnings.append(
+            "could not read `codex debug models`, so `start`/`resume`/`batch` "
+            "cannot check --model or --effort before spawning. Runs still work; "
+            "an invalid value is caught by the API instead, one wasted run later.")
 
     report["skill_dir"] = str(Path(__file__).resolve().parent.parent)
     report["bridge_path"] = str(Path(__file__).resolve())
@@ -897,6 +931,10 @@ def build_parser():
                         "and ignore live members and dependent groups. This "
                         "discards work nothing else has a copy of.")
     b.set_defaults(func=cmd_batch_clean)
+
+    p = sub.add_parser("models", help="models and reasoning efforts this install offers")
+    add_common(p)
+    p.set_defaults(func=cmd_models)
 
     p = sub.add_parser("doctor", help="diagnose the Codex environment")
     add_common(p)

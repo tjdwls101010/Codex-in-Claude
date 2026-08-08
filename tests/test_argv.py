@@ -70,12 +70,12 @@ class ArgvComposition(BridgeTestCase):
         img.write_bytes(b"\x89PNG\r\n\x1a\n")
         extra = self.tmp / "extra"
         extra.mkdir()
-        r = self.start("x", "--model", "gpt-5.6-sol", "--effort", "high",
+        r = self.start("x", "--model", "fake-big", "--effort", "high",
                        "--schema", str(schema), "--image", str(img),
                        "--add-dir", str(extra), "--config", "foo.bar=1")
         self.wait_for_state(r["run_id"])
         argv = self.last_argv()
-        self.assertFlagPair(argv, "-m", "gpt-5.6-sol")
+        self.assertFlagPair(argv, "-m", "fake-big")
         self.assertIn('model_reasoning_effort="high"', argv)
         self.assertFlagPair(argv, "--output-schema", str(schema))
         self.assertFlagPair(argv, "-i", str(img))
@@ -209,14 +209,14 @@ class SandboxDriftRegression(BridgeTestCase):
         # extra_config=[]) this test would pass even if inheritance were
         # broken, because start's own derivation happens to match.
         r, r2 = self._start_and_resume(
-            start_args=("--sandbox", "read-only", "--model", "gpt-5.6-sol",
+            start_args=("--sandbox", "read-only", "--model", "fake-big",
                         "--effort", "low", "--no-priority",
                         "--config", "tools.web_search=true"))
         argv = self.argv_records()[1]["argv"]
         self.assertIn('sandbox_mode="read-only"', argv)
         self.assertIn('model_reasoning_effort="low"', argv,
                       "effort drifts to null on an unre-asserted resume")
-        self.assertFlagPair(argv, "-m", "gpt-5.6-sol")
+        self.assertFlagPair(argv, "-m", "fake-big")
         self.assertIn("--ignore-user-config", argv)
         self.assertFalse([a for a in argv if a.startswith("service_tier=")],
                          "priority must not be re-derived from isolation on resume")

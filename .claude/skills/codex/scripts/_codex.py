@@ -13,8 +13,10 @@ of by remembering to special-case two subcommands.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -69,6 +71,149 @@ def toml_cfg(key: str, value: str):
     """`-c` values are parsed as TOML, falling back to a raw string only if that
     fails — so a string value is emitted quoted. This is the canonical form."""
     return ["-c", f'{key}="{value}"']
+
+
+# -- the model catalog ------------------------------------------------------
+# Nothing about models or efforts is written down in this skill. It is asked of
+# Codex, because both lists move: `--model` is not pinned for the reason D19
+# gives — a hardcoded model name is a guaranteed future bug — and the effort
+# list rots faster still, since which efforts are valid depends on the model.
+# Measured on codex-cli 0.146.0: `ultra` is offered by gpt-5.6-sol and
+# gpt-5.6-terra, absent from gpt-5.6-luna, and gpt-5.5 stops at `xhigh`. Any
+# static list is already wrong for some model on the day it is written.
+
+# Deliberately short. The lookup reads a local cache file and returns in ~30 ms
+# measured; anything slower than this is a `codex` that is not answering, and
+# the honest response to that is to skip the check rather than to hold up the
+# run. A generous window here is paid on the critical path of every run start.
+CATALOG_TIMEOUT = 5.0
+
+# One lookup per process. The catalog cannot change inside a single CLI
+# invocation, and without this a `batch start` of N members pays N+1 identical
+# subprocess calls — once in `load_tasks` and once per `create_run`.
+_CATALOG_CACHE = []
+
+
+def codex_version():
+    exe = shutil.which("codex")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                           timeout=20, stdin=subprocess.DEVNULL)
+    except Exception:
+        return None
+    return (r.stdout or r.stderr).strip() or None
+
+
+def model_catalog():
+    """What this Codex install actually offers, or None if it cannot be read.
+
+    `codex debug models` reports the catalog Codex fetched from the server into
+    `CODEX_HOME/models_cache.json`. Measured: it reads that cache without
+    refreshing it, while `codex exec` refreshes on every run — so asking costs
+    nothing and changes nothing, and because this skill runs `codex exec` for
+    every run, the cache is never staler than the caller's last run.
+
+    Returns None on every failure — no binary, non-zero exit, unparseable
+    output, missing fields. Callers treat that as "cannot check", never as
+    "invalid": a check that blocks a run because its own lookup broke is worse
+    than no check, and `doctor` is where the caller learns it is off.
+    """
+    if _CATALOG_CACHE:
+        return _CATALOG_CACHE[0]
+    _CATALOG_CACHE.append(None)
+
+    exe = shutil.which("codex")
+    if not exe:
+        return None
+    # ONE try around everything, parsing included, and the boundary is the
+    # point. It first wrapped only the subprocess and `json.loads`, leaving the
+    # shaping loop outside — so a catalog that was valid JSON but wrong-typed
+    # (`"supported_reasoning_levels": 5`, truthy, so `or []` does not save it)
+    # raised TypeError straight past this function into the CLI's top-level
+    # handler, and `start` died with `internal error` having spawned nothing.
+    # A batch was worse: one malformed entry blocked every member. That is
+    # precisely the fail-closed outcome the None-on-failure contract exists to
+    # prevent, reached by trusting the shape of someone else's JSON.
+    try:
+        r = subprocess.run([exe, "debug", "models"], capture_output=True,
+                           text=True, timeout=CATALOG_TIMEOUT,
+                           stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            return None
+        models = json.loads(r.stdout)["models"]
+        if not isinstance(models, list):
+            return None
+
+        out = []
+        for m in models:
+            if not isinstance(m, dict) or not m.get("slug"):
+                continue
+            levels = m.get("supported_reasoning_levels")
+            # These fields and no others. The raw payload is ~346 KB, almost all
+            # of it each model's `base_instructions` — passing it through would
+            # make `models` the largest single context leak in a skill whose
+            # default event filter exists to withhold a 22 KB `cat`.
+            out.append({
+                "slug": m["slug"],
+                "display_name": m.get("display_name"),
+                "default_effort": m.get("default_reasoning_level"),
+                "efforts": [lv["effort"] for lv in (levels if isinstance(levels, list) else [])
+                            if isinstance(lv, dict) and lv.get("effort")],
+                "context_window": m.get("context_window"),
+                "visibility": m.get("visibility"),
+                "supported_in_api": m.get("supported_in_api"),
+            })
+    except Exception:
+        return None
+    _CATALOG_CACHE[0] = out or None
+    return _CATALOG_CACHE[0]
+
+
+def check_model_effort(model, effort, *, catalog, fail):
+    """Refuse a model or effort this Codex install does not offer.
+
+    Only values the caller just passed reach here — never one inherited from
+    the thread being resumed. A recorded setting was checked when it was first
+    passed, and re-checking it would mean a model retired upstream turns every
+    resume of an existing thread into a refusal, breaking the continuity
+    `resume` exists to provide.
+
+    Checked locally because the alternative is measured: an unknown value
+    spawns the run, reaches the API, and returns `turn.failed` with exit 1 —
+    loud, but a wasted run late, and for a background run not seen until the
+    next `status`. Reading the catalog instead costs ~30 ms and no API call.
+
+    `fail` is passed in for the same reason `review_argv` takes it: the CLI
+    exits, a batch member raises inside `failures_raise`.
+    """
+    if not catalog or (not model and not effort):
+        return
+    by_slug = {m["slug"]: m for m in catalog}
+    if model and model not in by_slug:
+        fail(f"unknown model {model!r}: this Codex install does not offer it. "
+             f"The catalog refreshes on any Codex run, so if this name is newer "
+             f"than your last run, start one and retry.",
+             known_models=sorted(by_slug),
+             hint="`models` prints the catalog with each model's efforts")
+    if not effort:
+        return
+    if model:
+        allowed = by_slug[model]["efforts"]
+        if allowed and effort not in allowed:
+            fail(f"model {model!r} does not accept effort {effort!r} — valid "
+                 f"efforts differ per model.", model=model, valid_efforts=allowed,
+                 default_effort=by_slug[model].get("default_effort"))
+        return
+    # No model named, so no single list governs. The union still catches a typo;
+    # a value valid only on some other model passes here and is refused by the
+    # API exactly as it is today. No new hole, one fewer.
+    union = sorted({e for m in catalog for e in m["efforts"]})
+    if union and effort not in union:
+        fail(f"unknown effort {effort!r}: no model in this Codex install accepts it.",
+             valid_efforts=union,
+             hint="efforts are per-model; `models` shows which model takes which")
 
 
 REVIEW_SELECTORS = ("uncommitted", "base", "commit", "prompt")

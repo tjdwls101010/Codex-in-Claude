@@ -373,9 +373,23 @@ BATCH_PREAMBLE = (
 WORKTREE_PREAMBLE = (
     "[Working tree: yours is an isolated git worktree at {path}, created from "
     "commit {base}. It is not the tree the person who started you is looking at, "
-    "and it does not contain the {uncommitted} uncommitted file(s) that exist in "
-    "theirs.]"
+    "and {uncommitted}]"
 )
+
+
+def uncommitted_clause(n) -> str:
+    """The caller's uncommitted work is absent from this checkout either way;
+    only the count can be unknown.
+
+    This paragraph exists to correct a confident falsehood — Codex otherwise
+    assumes it is looking at the caller's tree — so it is the last place that
+    should manufacture one. `uncommitted_count` answering 0 for "git would not
+    say" put a clean-tree claim in front of the model on evidence it never had.
+    """
+    if n is None:
+        return ("it does not contain the uncommitted file(s) that exist in "
+                "theirs — git could not count them, so how many is unknown.")
+    return f"it does not contain the {n} uncommitted file(s) that exist in theirs."
 
 
 def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
@@ -390,7 +404,7 @@ def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
         if batch.get("worktree"):
             parts.append(WORKTREE_PREAMBLE.format(
                 path=batch["worktree"], base=(batch.get("base") or "?")[:12],
-                uncommitted=batch.get("uncommitted", 0)))
+                uncommitted=uncommitted_clause(batch.get("uncommitted"))))
     return "\n\n".join(parts + [prompt])
 
 

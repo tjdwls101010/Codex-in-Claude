@@ -91,16 +91,23 @@ def missing_at_base(cwd: Path, base: str, names=("AGENTS.md", "CLAUDE.md")):
     return missing
 
 
-def uncommitted_count(cwd: Path) -> int:
-    """Files that differ from HEAD in the caller's tree, tracked or not.
+def uncommitted_count(cwd: Path):
+    """Files that differ from HEAD in the caller's tree, tracked or not, or
+    `None` if git would not say.
 
     Reported, never acted on (D17): the preamble tells Codex the count so it
     knows its worktree is not what the caller is looking at, and `batch start`
     tells the caller the same thing. Neither refuses.
+
+    `None` rather than 0 on failure, matching `resolve_base` and `repo_identity`
+    above. Answering 0 here is not a conservative default — it is the preamble
+    stating to Codex, as fact, that the caller's tree is clean. A corrupt
+    `.git/index` makes `status` exit 128 while `rev-parse` and `worktree add`
+    both still succeed, so this branch sits behind operations that just worked.
     """
     r = _git(cwd, "status", "--porcelain")
     if r.returncode != 0:
-        return 0
+        return None
     return len([ln for ln in r.stdout.splitlines() if ln.strip()])
 
 

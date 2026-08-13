@@ -167,20 +167,31 @@ def cmd_review(args):
 # status
 # --------------------------------------------------------------------------
 
-def refuse_run_and_group(args, command):
-    """`--run` and `--group` name different things; passing both silently drops
-    one of them, and which one depends on which branch happens to come first.
+def refuse_competing_selectors(args, command, *selectors):
+    """Two selectors name different things; passing both silently drops one of
+    them, and which one depends on which branch happens to come first.
 
     `status` learned this and was fixed; `stop` and `result` were not, and they
     had drifted in opposite directions — `stop` honoured `--run` and left the
     group's other members running, `result` honoured `--group` and answered a
     different question in a different shape. A caller with a stray `--run` in a
     copy-pasted `stop --group` line got a success reply while the group carried
-    on. Three commands, one rule, one place (R28)."""
-    if getattr(args, "run", None) and getattr(args, "group", None):
-        fail(f"--run and --group are different questions; pass one. "
-             f"`{command} --run` acts on one run, `{command} --group` acts on "
-             f"the whole group.", run=args.run, group=args.group)
+    on. Three commands, one rule, one place (R28).
+
+    R28 fixed the pair it was written for and left `--all` sitting next to it,
+    so `stop --run X --all` still stopped one run and reported success. Which
+    flags compete is per command and cannot be inferred here: `stop --all` is a
+    third selector, while `status --all` only lifts a row-count cap and is
+    meaningful alongside `--run`. Each caller states its own set."""
+    given = {name: getattr(args, name.lstrip("-").replace("-", "_"), None)
+             for name in selectors}
+    given = {k: v for k, v in given.items() if v}
+    if len(given) > 1:
+        names = " and ".join(sorted(given))
+        fail(f"{names} are different questions; pass one. "
+             f"`{command}` acts on whichever it sees first, which is not "
+             f"necessarily the one you meant.", **{
+                 k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
 
 
 def note_unreadable(out: dict, runs_dir):
@@ -206,7 +217,7 @@ def cmd_status(args):
     # have made `--follow` mean something. Found by a `review` member reading
     # the commit that added the check below, which is the kind of hole a fix
     # leaves when it guards a symptom instead of the precedence underneath it.
-    refuse_run_and_group(args, "status")
+    refuse_competing_selectors(args, "status", "--run", "--group")
     # `--follow` only ever meant "--group --follow": the other branches emit a
     # snapshot and exit. Accepting it silently is the shape of mistake R13 was
     # about — the tool hands back an answer the caller reads as "I waited for
@@ -450,7 +461,7 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
 
 
 def cmd_stop(args):
-    refuse_run_and_group(args, "stop")
+    refuse_competing_selectors(args, "stop", "--run", "--group", "--all")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     session = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -489,7 +500,7 @@ def cmd_stop(args):
 # --------------------------------------------------------------------------
 
 def cmd_result(args):
-    refuse_run_and_group(args, "result")
+    refuse_competing_selectors(args, "result", "--run", "--group")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:

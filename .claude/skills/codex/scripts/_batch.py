@@ -535,6 +535,18 @@ def cmd_batch_start(args):
         # after the name was claimed would burn that name on a typo, against
         # the whole point of claiming before anything is spawned.
         fail("--worktree and --no-worktree contradict each other; pass one")
+    if getattr(args, "foreground", False):
+        # Checked here for the same reason, and because nothing downstream ever
+        # looks at the flag: `task_args` copies the caller's whole namespace
+        # onto each member, and `create_run` calls `supervise()` synchronously
+        # whenever it sees `foreground`. The spawn loop then waits out each
+        # member's entire turn before starting the next, so a batch of three
+        # two-second members takes six seconds and reports the same shape it
+        # would have concurrently — the caller's only clue is that it was slow.
+        fail("--foreground turns batch start into a serial loop: it blocks on "
+             "each member in turn, which is the opposite of what batch is for. "
+             "Start the batch and wait for it with "
+             "`status --group <name> --follow`.")
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args)

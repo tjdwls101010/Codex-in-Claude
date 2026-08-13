@@ -75,6 +75,24 @@ def read_group(runs_dir: Path, name: str):
         return None
 
 
+def group_unreadable(runs_dir: Path, name: str) -> bool:
+    """A manifest that is present but will not parse, as distinct from absent.
+
+    The same distinction `meta_unreadable` draws for one run, and for the same
+    reason: `read_group` returns None for both, so every `--group` operation
+    answered "no such group" to a caller whose members and worktrees were
+    sitting on disk. For `batch clean` that was not just the wrong diagnosis but
+    a trap — the check ran before `--force` was consulted, so the flag that
+    exists to get past every other protection could not reach this one.
+
+    Membership survives the manifest: each run records its own group when its
+    directory is claimed, which is why `owned_run_ids` asks the registry too.
+    What is genuinely lost is start ORDER, and only `--resume-from` needs it.
+    """
+    return (group_path(runs_dir, name).is_file()
+            and read_group(runs_dir, name) is None)
+
+
 def list_groups(runs_dir: Path):
     d = groups_dir(runs_dir)
     if not d.is_dir():
@@ -173,7 +191,10 @@ def member_run_ids(runs_dir: Path, name: str):
     """Run ids in start order, skipping members that never spawned."""
     g = read_group(runs_dir, name)
     if not g:
-        return None
+        # A manifest that will not parse names no members; that is not the same
+        # as there being none. `owned_run_ids` still reaches them through the
+        # registry. `None` stays reserved for a group that is genuinely absent.
+        return [] if group_unreadable(runs_dir, name) else None
     return [m["run_id"] for m in g.get("members", []) if m.get("run_id")]
 
 
@@ -457,6 +478,16 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     """
     manifest = read_group(runs_dir, previous)
     if manifest is None:
+        if group_unreadable(runs_dir, previous):
+            # Positional pairing is the one thing the registry cannot supply:
+            # a run records which group it is in, never which slot. Refusing is
+            # the only honest answer — inferring an order here would silently
+            # land each phase-2 task on some other task's thread.
+            fail(f"group {previous!r} has a manifest that will not parse, and "
+                 f"--resume-from pairs task to member by position, which only "
+                 f"the manifest records",
+                 manifest=str(group_path(runs_dir, previous)),
+                 members_recorded_by_runs=owned_run_ids(runs_dir, previous))
         fail(f"no such group to resume from: {previous}",
              known_groups=list_groups(runs_dir)[:20])
     started = [m for m in manifest.get("members") or [] if m.get("run_id")]
@@ -492,7 +523,18 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     live = []
     for m in prior:
         rd, meta = find_run(runs_dir, m["run_id"])
-        if meta and reap(rd, meta).get("state") not in TERMINAL_STATES:
+        if meta is None:
+            # Dropping an unresolvable member left it out of the very check that
+            # protects the whole batch, and the per-member guard downstream
+            # cannot stand in for it: by the time that one fires, the earlier
+            # tasks have already resumed, which is the half-started phase 2 this
+            # check exists to prevent. Unknown is not terminal (R23).
+            if rd is not None and meta_unreadable(rd):
+                live.append({"run_id": m["run_id"], "state": "unreadable",
+                             "reason": "its meta.json will not parse, so whether "
+                                       "its turn has finished cannot be determined"})
+            continue
+        if reap(rd, meta).get("state") not in TERMINAL_STATES:
             live.append({"run_id": m["run_id"], "state": meta.get("state")})
     if live and not force:
         fail(f"group {previous!r} still has members running; resuming a thread "
@@ -704,9 +746,21 @@ def cmd_batch_clean(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     manifest = read_group(runs_dir, args.group)
-    if manifest is None:
+    lost_manifest = manifest is None and group_unreadable(runs_dir, args.group)
+    if manifest is None and not lost_manifest:
         fail(f"no such group in this project: {args.group}",
              known_groups=list_groups(runs_dir)[:20])
+    if lost_manifest and not args.force:
+        # The fourth thing that stops a clean, and the only one that used to be
+        # unliftable. `--force` already overrides a member's corrupt meta.json;
+        # a corrupt manifest left the group unaddressable by anything, with its
+        # worktrees — the only copy of what its runs produced — stranded.
+        fail(f"group {args.group!r} has a manifest that will not parse, so what "
+             f"it was and what order it ran in cannot be read. Its members are "
+             f"still recoverable from the registry; pass --force to remove their "
+             f"worktrees and release the name",
+             manifest=str(group_path(runs_dir, args.group)),
+             members_recorded_by_runs=owned_run_ids(runs_dir, args.group))
 
     live, removed, kept = [], [], []
     for rid in owned_run_ids(runs_dir, args.group) or []:
@@ -738,6 +792,8 @@ def cmd_batch_clean(args):
     overrode = {}
     if args.force and live:
         overrode["running_members"] = live
+    if lost_manifest:
+        overrode["unreadable_manifest"] = str(group_path(runs_dir, args.group))
 
     # 2. A group that another group resumed into. `--resume-from` puts phase 2
     #    in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
@@ -822,6 +878,13 @@ def resolve_group(runs_dir: Path, name: str):
     unknown. Members that never spawned have no run id to resolve, so they are
     not here — `unstarted_members` is how the rest of the group views learn
     they exist."""
+    if group_unreadable(runs_dir, name):
+        fail(f"group {name!r} has a manifest that will not parse, so its "
+             f"membership and start order cannot be read from it",
+             manifest=str(group_path(runs_dir, name)),
+             members_recorded_by_runs=owned_run_ids(runs_dir, name),
+             remedy=f"`batch clean --group {name} --force` removes their "
+                    f"worktrees and releases the name")
     ids = member_run_ids(runs_dir, name)
     if ids is None:
         fail(f"no such group: {name}", runs_dir=str(runs_dir),

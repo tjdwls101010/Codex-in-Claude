@@ -53,8 +53,8 @@ from _batch import (  # noqa: E402
 )
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
-    TERMINAL_STATES, find_run, iter_runs, read_meta, reap, resolve_project,
-    resolve_runs_dir, unreadable_runs, update_meta_if,
+    TERMINAL_STATES, find_run, iter_runs, meta_unreadable, read_meta, reap,
+    resolve_project, resolve_runs_dir, unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
     WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
@@ -194,6 +194,27 @@ def refuse_competing_selectors(args, command, *selectors):
                  k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
 
 
+def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
+    """"I cannot read that run" and "there is no such run" are different answers
+    and were sent through the same door.
+
+    `find_run` hands back `(run_dir, None)` when the directory is there and its
+    meta.json will not parse. Five commands tested only the meta and told the
+    caller the run never existed, while its directory — and its events.jsonl,
+    which is a separate file and usually intact — sat on disk. That is R23's
+    failure at a different guard: a caller sent away from work that is still
+    there, with nothing to say where to look."""
+    if meta:
+        return
+    if run_dir is not None and meta_unreadable(run_dir):
+        fail(f"run {ref} exists but its meta.json will not parse, so nothing "
+             f"can be said about its state. Its event stream is a separate "
+             f"file and may still be readable.",
+             run_id=run_dir.name, run_dir=str(run_dir),
+             events=str(run_dir / "events.jsonl"))
+    fail(f"no such run: {ref}", runs_dir=str(runs_dir))
+
+
 def note_unreadable(out: dict, runs_dir):
     """A run whose meta.json will not parse is skipped by `iter_runs`, which is
     what keeps one broken run from breaking every view. Saying nothing about it
@@ -231,8 +252,7 @@ def cmd_status(args):
     rows = []
     if args.run:
         rd, m = find_run(runs_dir, args.run)
-        if not m:
-            fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+        refuse_unresolved_run(args.run, rd, m, runs_dir)
         rows.append(run_row(rd, m, project))
     elif args.group:
         if args.follow:
@@ -317,8 +337,7 @@ def cmd_log(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.run:
         rd, meta = find_run(runs_dir, args.run)
-        if not meta:
-            fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+        refuse_unresolved_run(args.run, rd, meta, runs_dir)
     else:
         # F4: this used to be `runs[-1]` with no filter at all. Apply the same
         # D27 resolution as `resume --last` — exactly one non-terminal run is
@@ -376,8 +395,7 @@ def cmd_show(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     rd, meta = find_run(runs_dir, args.run)
-    if not meta:
-        fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+    refuse_unresolved_run(args.run, rd, meta, runs_dir)
 
     found, events = find_item(rd / "events.jsonl", args.item)
     if not found:
@@ -469,8 +487,7 @@ def cmd_stop(args):
         targets = []
         for ref in args.run:
             rd, m = find_run(runs_dir, ref)
-            if not m:
-                fail(f"no such run: {ref}", runs_dir=str(runs_dir))
+            refuse_unresolved_run(ref, rd, m, runs_dir)
             targets.append((rd, m))
     elif args.group:
         # Not a name match on process or label — B8 forbids that, and for good
@@ -508,8 +525,7 @@ def cmd_result(args):
     if not args.run:
         fail("result needs --run <id> or --group <name>")
     rd, meta = find_run(runs_dir, args.run)
-    if not meta:
-        fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+    refuse_unresolved_run(args.run, rd, meta, runs_dir)
     meta = reap(rd, meta)
     info = scan_progress(rd / "events.jsonl")
 

@@ -32,7 +32,8 @@ from _codex import (
 from _events import scan_progress
 from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir, thread_turn_lock, write_meta,
+    resolve_project, resolve_runs_dir, thread_turn_lock, unreadable_runs,
+    write_meta,
 )
 from _util import clip, fail, git_toplevel, is_within, now_iso
 
@@ -157,12 +158,22 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
     # rc 0, both spawning `codex exec resume <same ref>`.
     live = [reap(rd, m) for rd, m in iter_runs(runs_dir)
             if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
-    live = [m for m in live if m.get("state") not in TERMINAL_STATES]
+    live = [{"run_id": m.get("run_id"), "state": m.get("state")}
+            for m in live if m.get("state") not in TERMINAL_STATES]
+    # `iter_runs` drops a run whose meta.json will not parse, which is what
+    # keeps one broken run from breaking every view — but it made this guard
+    # blind in the one direction that matters. The thread id lives in the file
+    # that will not parse, so such a run cannot be shown to be on another
+    # thread, and its state lives there too, so it cannot be shown to be
+    # finished. Unknown is not terminal (R23), and this guard is the only thing
+    # standing between two turns and one rollout file.
+    live += [{"run_id": name, "state": "unreadable",
+              "reason": "its meta.json will not parse, so neither the thread it "
+                        "is on nor whether it is still running can be determined"}
+             for name in unreadable_runs(runs_dir)]
     if live:
         fail("thread already has a live turn; pass --force to run a second turn "
-             "concurrently", thread_id=thread_id,
-             live_runs=[{"run_id": m.get("run_id"), "state": m.get("state")}
-                        for m in live])
+             "concurrently", thread_id=thread_id, live_runs=live)
 
 
 def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,

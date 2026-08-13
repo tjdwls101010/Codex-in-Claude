@@ -32,6 +32,16 @@ from _util import git_toplevel, nfc, now_iso, pid_alive
 
 TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned", "timed_out")
 
+# Everything that is not terminal. Most callers ask "is this finished?" and get
+# the answer by negating TERMINAL_STATES, which is why they needed no change
+# when `waiting` was added. Six others ask "is this active?" and each had the
+# list written out by hand, so one new state was invisible at all six at once —
+# `stop` skipped it, `group_snapshot` bucketed a group of waiters as done, and
+# `reap` never looked at one again. Named here so the next state is added once.
+# `stalled` is derived by `run_row` rather than stored, and is included so a
+# caller holding a row rather than a meta can use the same tuple.
+ACTIVE_STATES = ("starting", "waiting", "running", "stalled")
+
 
 # -- locating things --------------------------------------------------------
 
@@ -301,7 +311,7 @@ def reap(run_dir: Path, meta: dict) -> dict:
     killed without getting to write its outcome. Say so, rather than reporting a
     dead process as live — a stale `running` row is how a caller ends up waiting
     forever on something that died minutes ago."""
-    if meta.get("state") not in ("running", "starting"):
+    if meta.get("state") not in ACTIVE_STATES:
         return meta
     sup = meta.get("supervisor_pid")
     if sup and pid_alive(sup):
@@ -334,5 +344,5 @@ def reap(run_dir: Path, meta: dict) -> dict:
     # while we are still deciding. Commit conditionally so that a real outcome
     # always beats our stale one — `orphaned, exit_code: 0` is a lie that never
     # self-heals once written.
-    return update_meta_if(run_dir, ("running", "starting"),
+    return update_meta_if(run_dir, ACTIVE_STATES,
                           state="orphaned", ended_at=now_iso())

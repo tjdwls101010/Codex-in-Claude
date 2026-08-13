@@ -53,7 +53,8 @@ from _batch import (  # noqa: E402
 )
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
-    TERMINAL_STATES, find_run, iter_runs, meta_unreadable, read_meta, reap,
+    ACTIVE_STATES, TERMINAL_STATES, find_run, iter_runs, meta_unreadable,
+    read_meta, reap,
     resolve_project, resolve_runs_dir, unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
@@ -471,7 +472,7 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
     # Compare-and-set, not a plain write: the supervisor may have recorded its
     # own outcome (`completed`, or `timed_out` if its deadline fired) between
     # the last signal and this line, and that outcome is the true one.
-    m = update_meta_if(run_dir, ("running", "starting", "stalled"),
+    m = update_meta_if(run_dir, ACTIVE_STATES,
                        state="interrupted", ended_at=now_iso())
     result["state"] = m.get("state")
     result["thread_id"] = m.get("thread_id")
@@ -498,13 +499,13 @@ def cmd_stop(args):
         targets = []
         for rd, m in resolve_group(runs_dir, args.group):
             m = reap(rd, m)
-            if m.get("state") in ("running", "starting", "stalled"):
+            if m.get("state") in ACTIVE_STATES:
                 targets.append((rd, m))
     elif args.all:
         targets = []
         for rd, m in iter_runs(runs_dir):
             m = reap(rd, m)
-            if m.get("state") in ("running", "starting", "stalled"):
+            if m.get("state") in ACTIVE_STATES:
                 targets.append((rd, m))
     else:
         fail("stop needs --run <id> (repeatable), --group <name>, or --all")
@@ -948,6 +949,13 @@ def build_parser():
                    help="continue an earlier group: task i resumes member i of "
                         "that group, in its start order, keeping its thread and "
                         "its working directory. One task per started member.")
+    b.add_argument("--as-ready", action="store_true",
+                   help="with --resume-from: start each member as soon as the "
+                        "member it continues reaches a terminal state, instead "
+                        "of refusing until every one of them has. Any terminal "
+                        "state releases, including a failure. --timeout still "
+                        "bounds only the Codex turn, never the wait; "
+                        "`stop --group` ends a wait.")
     b.set_defaults(func=cmd_batch_start)
 
     b = bsub.add_parser("clean", help="remove a finished group's worktrees")

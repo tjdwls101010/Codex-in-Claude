@@ -133,7 +133,7 @@ def resolve_implicit_run(candidates):
     return rd, m, "the newest run (no non-terminal runs)"
 
 
-def refuse_concurrent_turn(runs_dir, thread_id, force):
+def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     """F4 reproduced two turns run concurrently on one thread: rc 0, no
     warning. A resumed run shares its parent's process group with nothing —
     two live turns on the same thread would race on the same rollout file —
@@ -158,8 +158,17 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
     # rc 0, both spawning `codex exec resume <same ref>`.
     live = [reap(rd, m) for rd, m in iter_runs(runs_dir)
             if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
+    # `--as-ready` publishes a member while its predecessor is still mid-turn,
+    # which is exactly what this guard refuses — so the exemption is scoped to
+    # that one run id rather than granted by `--force`. `--force` waives the
+    # check for every collision on the thread, including ones nobody planned;
+    # this waives it for the one run whose finishing is the precondition the
+    # supervisor is about to block on. The invariant is re-established before
+    # Codex spawns, not abandoned.
     live = [{"run_id": m.get("run_id"), "state": m.get("state")}
-            for m in live if m.get("state") not in TERMINAL_STATES]
+            for m in live
+            if m.get("state") not in TERMINAL_STATES
+            and m.get("run_id") != waits_for]
     # `iter_runs` drops a run whose meta.json will not parse, which is what
     # keeps one broken run from breaking every view — but it made this guard
     # blind in the one direction that matters. The thread id lives in the file
@@ -177,7 +186,7 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
 
 
 def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
-               group=None, batch=None, worktree_base=None):
+               group=None, batch=None, worktree_base=None, waits_for=None):
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
 
@@ -255,7 +264,8 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     # publishes, and publishing is what the lock waits for.
     with thread_turn_lock(runs_dir, thread_ref):
         refuse_concurrent_turn(runs_dir, thread_ref,
-                               getattr(args, "force", False))
+                               getattr(args, "force", False),
+                               waits_for=waits_for)
         try:
             run_id, run_dir = claim_run_dir(
                 runs_dir, args.label or (base.get("label") if base else None))
@@ -299,8 +309,19 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
             "group": group,
             "worktree": None,       # filled in below, once nothing can still refuse
             "started_at": now_iso(),
+            # When Codex itself began, as distinct from when this run object was
+            # built. They were the same thing to within milliseconds until
+            # `--as-ready` put an unbounded wait between them, and everything
+            # that reasons about whether two turns overlapped on one thread has
+            # to use this one — a waiter's `started_at` precedes its
+            # predecessor's `ended_at` by construction, which reads as exactly
+            # the overlap the one-turn-per-thread invariant forbids.
+            "codex_started_at": None,
             "ended_at": None, "exit_code": None, "state": "starting",
             "codex_pid": None, "supervisor_pid": None, "pgid": None,
+            # Set only under `--as-ready`: the run this member's supervisor
+            # waits for before it spawns Codex, and how that run ended.
+            "waits_for": waits_for, "predecessor_state": None,
             # What this run was launched against, recorded even when it is not (yet)
         # a thread id. `thread_id` cannot hold it — a ref may be a thread *name*
         # — and leaving it nowhere is what made `refuse_concurrent_turn` blind
@@ -395,7 +416,14 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     while time.time() < deadline:
         m = read_meta(run_dir) or {}
         thread_id = m.get("thread_id")
-        if thread_id or m.get("state") in TERMINAL_STATES:
+        # `waiting` is the third exit. A member chained behind another reaches
+        # neither a thread id of its own nor a terminal state until its
+        # predecessor finishes, so without this the poll runs its full fifteen
+        # seconds per member — six minutes for a batch of twenty-four, in the
+        # command whose entire purpose is not making the caller wait. Nothing is
+        # lost by leaving early: the thread is the predecessor's and was already
+        # known at creation.
+        if thread_id or m.get("state") in TERMINAL_STATES + ("waiting",):
             break
         time.sleep(0.05)
     m = read_meta(run_dir) or {}

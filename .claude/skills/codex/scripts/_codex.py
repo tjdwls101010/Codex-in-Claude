@@ -26,7 +26,7 @@ import unicodedata
 from pathlib import Path
 
 from _events import final_usage, first_thread_id
-from _registry import read_meta, update_meta
+from _registry import TERMINAL_STATES, read_meta, reap, update_meta
 from _util import codex_home, nfc, now_iso
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
@@ -433,6 +433,65 @@ def spawn_supervised(run_dir: Path) -> int:
     return p.pid
 
 
+# How often a waiting supervisor asks whether its predecessor is done. A whole
+# turn is minutes; the cost of a slower tick is latency nobody notices, and the
+# cost of a faster one is a poll loop reading meta.json many times a second for
+# the entire length of somebody else's turn.
+WAIT_POLL = 0.5
+
+
+def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
+    """Block until the run this one is chained behind reaches a terminal state.
+
+    Returns the refreshed meta, or None if the wait was interrupted.
+
+    The waiting happens here, inside a supervisor that already exists, rather
+    than in a queue that some other process drains. That is what keeps
+    `--as-ready` clear of D34, where a queued run with no supervisor of its own
+    was branded `orphaned` within thirty seconds of being queued.
+
+    `supervisor_pid` and `pgid` are recorded BEFORE the wait, not after Codex
+    spawns as they are on the ordinary path. Everything that judges whether a
+    run is still alive asks those two fields, and a wait is unbounded — leaving
+    them null until Codex starts would make every waiter look like a run whose
+    supervisor had died, and make `stop` unable to signal it. `pgid` is valid
+    this early because `spawn_supervised` starts this process with
+    `start_new_session=True`, so it is already its own process-group leader and
+    Codex will join that same group.
+    """
+    predecessor = run_dir.parent / meta["waits_for"]
+    update_meta(run_dir, state="waiting", supervisor_pid=os.getpid(),
+                pgid=os.getpgid(os.getpid()))
+    while True:
+        if interrupted["flag"]:
+            update_meta(run_dir, state="interrupted", ended_at=now_iso(),
+                        error="interrupted while waiting for "
+                              f"{meta['waits_for']} to finish")
+            return None
+        pmeta = read_meta(predecessor)
+        if pmeta is None:
+            # Its directory is gone, or its meta will not parse. Either way this
+            # supervisor can no longer learn when the turn it is chained behind
+            # ends, and blocking forever on a question that can never be
+            # answered is the failure `reap` exists to refuse.
+            update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
+                        predecessor_state="unreadable",
+                        error=f"the run this one waits for ({meta['waits_for']}) "
+                              f"can no longer be read, so there is nothing left "
+                              f"to wait for")
+            return None
+        # `reap`, not `read_meta` alone: a predecessor whose supervisor died
+        # mid-turn says `running` until something calls `reap` on that specific
+        # run, and nothing else here ever would. `status --group` resolves only
+        # its own group's members, so a caller following phase 2 never touches
+        # phase 1 — and every waiter behind it would block forever.
+        pmeta = reap(predecessor, pmeta)
+        if pmeta.get("state") in TERMINAL_STATES:
+            update_meta(run_dir, predecessor_state=pmeta.get("state"))
+            return read_meta(run_dir) or meta
+        time.sleep(WAIT_POLL)
+
+
 def supervise(run_dir: Path, timeout=None) -> int:
     """Spawn Codex, record what happened, exit. Runs as its own process."""
     meta = read_meta(run_dir)
@@ -457,6 +516,11 @@ def supervise(run_dir: Path, timeout=None) -> int:
         except ValueError:
             pass
 
+    if meta.get("waits_for"):
+        meta = await_predecessor(run_dir, meta, interrupted)
+        if meta is None:
+            return 130
+
     events_path = run_dir / "events.jsonl"
     out = events_path.open("ab")
     err = (run_dir / "stderr.log").open("ab")
@@ -479,6 +543,19 @@ def supervise(run_dir: Path, timeout=None) -> int:
         # --timeout, that would surface as intermittent lifecycle-test failures
         # that read as flakiness.
         kwargs["start_new_session"] = True
+    if not Path(meta["cwd"]).is_dir():
+        # `Popen` raises the same FileNotFoundError for a missing cwd as for a
+        # missing executable, and the handler below reported both as "codex not
+        # found on PATH". The window between recording a cwd and using it was
+        # milliseconds until `--as-ready` made it as long as somebody else's
+        # turn — long enough for `batch clean --force` to remove the worktree a
+        # waiter is chained into — so the two have to be told apart.
+        update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
+                    error=f"the working directory recorded for this run is gone: "
+                          f"{meta['cwd']}")
+        out.close()
+        err.close()
+        return 1
     try:
         proc = subprocess.Popen(
             meta["argv"], cwd=meta["cwd"], stdout=out, stderr=err,
@@ -496,7 +573,8 @@ def supervise(run_dir: Path, timeout=None) -> int:
     except Exception:
         pgid = None
     update_meta(run_dir, state="running", codex_pid=proc.pid,
-                supervisor_pid=os.getpid(), pgid=pgid)
+                supervisor_pid=os.getpid(), pgid=pgid,
+                codex_started_at=now_iso())
 
     deadline = time.time() + THREAD_ID_WAIT
     tid = None

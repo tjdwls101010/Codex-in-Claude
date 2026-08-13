@@ -34,7 +34,8 @@ from pathlib import Path
 
 from _events import read_events, scan_progress
 from _registry import (
-    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, meta_unreadable,
+    ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,
+    meta_unreadable,
     read_meta, reap, resolve_project, resolve_runs_dir, unreadable_runs,
 )
 from _codex import check_model_effort, model_catalog, review_argv
@@ -464,7 +465,8 @@ def plan_worktrees(tasks, args, project):
     return eligible, base, None
 
 
-def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
+def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
+                       as_ready=False):
     """Turn each task into a resume of the corresponding member of `previous`.
 
     The pairing is positional against the manifest's member list, and that is
@@ -536,9 +538,17 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
             continue
         if reap(rd, meta).get("state") not in TERMINAL_STATES:
             live.append({"run_id": m["run_id"], "state": meta.get("state")})
-    if live and not force:
+    unreadable = [m for m in live if m.get("state") == "unreadable"]
+    if live and not force and not as_ready:
         fail(f"group {previous!r} still has members running; resuming a thread "
              f"mid-turn would run two turns on it at once", running=live)
+    if as_ready and unreadable:
+        # `--as-ready` waits for a predecessor to reach a terminal state, and a
+        # member whose meta will not parse can never be observed reaching one.
+        # Its waiter would block forever on a question that has no answer, so
+        # this is the one liveness case the flag cannot absorb.
+        fail(f"group {previous!r} has member(s) whose meta.json will not parse, "
+             f"so nothing can wait for them to finish", unreadable=unreadable)
 
     paired = []
     for slot, (task, prev) in enumerate(zip(tasks, prior)):
@@ -562,7 +572,10 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
         if named:
             paired.append(task)
             continue
-        paired.append({**task, "kind": "resume", "resume": prev["run_id"]})
+        entry = {**task, "kind": "resume", "resume": prev["run_id"]}
+        if as_ready:
+            entry["waits_for"] = prev["run_id"]
+        paired.append(entry)
     return paired, [m["run_id"] for m in prior]
 
 
@@ -589,6 +602,17 @@ def cmd_batch_start(args):
              "each member in turn, which is the opposite of what batch is for. "
              "Start the batch and wait for it with "
              "`status --group <name> --follow`.")
+    # Both refusals sit here, above `claim_group`, for the reason the two above
+    # them do: a combination that silently means nothing is worse than an error,
+    # and refusing after the claim would burn a single-use group name on a typo.
+    if getattr(args, "as_ready", False) and not getattr(args, "resume_from", None):
+        fail("--as-ready says when each member may start: as soon as the member "
+             "it continues has finished. Without --resume-from there is nothing "
+             "for any member to continue, so the flag would decide nothing.")
+    if getattr(args, "as_ready", False) and getattr(args, "force", False):
+        fail("--as-ready and --force are opposite answers to the same question. "
+             "--force starts a member while its predecessor's turn is still "
+             "running; --as-ready waits for that turn to end. Pass one.")
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args)
@@ -596,7 +620,8 @@ def cmd_batch_start(args):
     previous = getattr(args, "resume_from", None)
     if previous:
         tasks, paired_with = pair_with_previous(
-            tasks, runs_dir, previous, force=getattr(args, "force", False))
+            tasks, runs_dir, previous, force=getattr(args, "force", False),
+            as_ready=getattr(args, "as_ready", False))
 
     # Claim the name before spawning anything. D36: a reused group name would
     # make "the members of p1" ambiguous, and --resume-from pairs positionally
@@ -715,14 +740,19 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
                           worktree_base=worktree_base)
     if kind == "resume":
         rd, base = find_run(runs_dir, item["resume"])
+        # Only `pair_with_previous` knows which member this task was paired
+        # with, and it is the only thing that can: a run records the group it
+        # belongs to, never its slot in one. Carried on the task itself so the
+        # supervisor has it in meta.json before it starts waiting.
+        waits_for = item.get("waits_for")
         if not base:
             # Not in the registry: it may still be a real Codex thread started
             # outside this skill, so pass the ref through rather than refusing.
             return create_run(ns, kind="resume", thread_ref=item["resume"],
-                              group=group, batch=batch)
+                              group=group, batch=batch, waits_for=waits_for)
         return create_run(ns, kind="resume", base=base,
                           thread_ref=base.get("thread_id"), group=group,
-                          batch=batch)
+                          batch=batch, waits_for=waits_for)
     review = item.get("review") or {}
     review_args = review_argv(uncommitted=review.get("uncommitted"),
                               base=review.get("base"), commit=review.get("commit"),
@@ -972,7 +1002,7 @@ def group_snapshot(rows, unstarted=0):
     one would report `completed`, which is the group-level form of the failure
     a terminal `--follow` line exists to prevent.
     """
-    running = [r["run_id"] for r in rows if r["state"] in ("running", "starting", "stalled")]
+    running = [r["run_id"] for r in rows if r["state"] in ACTIVE_STATES]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
               if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]

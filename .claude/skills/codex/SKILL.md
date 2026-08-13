@@ -38,7 +38,7 @@ Every subcommand prints **one line of JSON**, except `log`, which prints text pl
 | `start [opts] "<prompt>"` | New thread. Background by default; returns `{run_id, thread_id, state, …}` |
 | `resume <ref\|--last> [opts] "<prompt>"` | Another turn on an existing thread. `<ref>` is a run id, thread id, or thread name |
 | `review [opts] --uncommitted \| --base <ref> \| --commit <sha> \| "<prompt>"` | `codex exec review`'s separate flag surface |
-| `batch start --group <name> --task "…" [--task "…"]…` | N runs as one addressable group. Also `--tasks-file <jsonl>`, `--resume-from <group>` |
+| `batch start --group <name> --task "…" [--task "…"]…` | N runs as one addressable group. Also `--tasks-file <jsonl>`, `--resume-from <group>`, `--as-ready` |
 | `batch clean --group <name> [--force]` | Remove that group's worktrees once you have collected them |
 | `status [--run <id>] [--group <name> [--follow]] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
 | `log --run <id> [--since <n>] [--level …] [--follow]` | Filtered events, incrementally |
@@ -102,6 +102,8 @@ These are the traps that cost a real failure to learn. Everything else about dri
 **Never kill Codex by process name.** `stop` signals one run's recorded process group. Matching `codex exec` by name kills every Codex on the machine, including runs started by another session or another person.
 
 **Only `batch start` can isolate writers — plain `resume` cannot.** `start` and `resume` tell you when you are walking into this: a writing run started in a directory another live writing run already occupies comes back with `concurrent_writers` naming them, and `doctor` reports the same thing across the whole registry. Runs in their own worktrees never appear there, because they are the arrangement that makes it safe. There is no `--worktree` on `resume`, and a resumed run inherits its thread's directory. So continuing three writing threads with three `resume` calls puts all three in one directory, editing at once, which is exactly what worktrees exist to prevent. Measured in an e2e session: it did precisely this, and got away with it only because the three bugs happened to be in three different files. To continue several writers at once, use `batch start --resume-from <group>` — that is the path that assigns worktrees.
+
+**`--resume-from` waits for the whole previous group unless you say otherwise.** It refuses while any member of phase 1 is live, so the slowest member holds up every phase-2 task including ones whose own predecessor finished minutes ago. The invariant behind that refusal is one turn per thread, which is per thread — `--as-ready` starts each member the moment the member it continues reaches a terminal state, and leaves the invariant intact. `references/orchestration.md` has the rules; the ones worth knowing up front are that any terminal state releases a member (a failed predecessor still starts its successor, and `predecessor_state` says so) and that a wait is unbounded, ended only by the predecessor finishing or by `stop`.
 
 **A batch outlives the session that started it, and is findable.** `status` lists this project's `groups`, and each run row carries its `group` and `worktree`. Reach for that before assuming a set of earlier runs were unrelated — the group name is what `status --group`, `result --group` and `--resume-from` all need, and it is the one thing about a batch you cannot re-derive.
 

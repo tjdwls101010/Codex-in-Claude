@@ -144,16 +144,23 @@ class SoakOracles(unittest.TestCase):
 
     # -- 5 ------------------------------------------------------------------
     def test_no_thread_ever_had_two_live_turns(self):
-        """D5's direct target, and the invariant `--as-ready` will rest on.
+        """D5's direct target, and the invariant `--as-ready` rests on.
 
         Read off the recorded intervals rather than sampled live, because the
         overlap this forbids may last milliseconds.
+
+        `codex_started_at`, not `started_at`. The latter is stamped when the run
+        object is built, which for a chained member is deliberately while its
+        predecessor is still mid-turn — so measuring from it reports every
+        correct `--as-ready` run as a violation of the very invariant that makes
+        `--as-ready` safe. The turn is what must not overlap, not the bookkeeping
+        around it.
         """
         spans = {}
         for rid, m in self.registry().items():
             if not m or not m.get("thread_id"):
                 continue
-            started, ended = m.get("started_at"), m.get("ended_at")
+            started, ended = m.get("codex_started_at"), m.get("ended_at")
             if started and ended:
                 spans.setdefault(m["thread_id"], []).append((started, ended, rid))
         overlaps = []

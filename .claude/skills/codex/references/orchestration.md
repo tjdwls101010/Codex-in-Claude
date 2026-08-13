@@ -48,10 +48,27 @@ Task *i* continues member *i* of `p1`, in the manifest's start order, keeping th
 
 - **One task per started member.** A count mismatch fails before anything starts, because pairing a short list lands a phase-2 task on the wrong phase-1 thread and every member after the mismatch continues work it was not written for.
 - **Every member must be resumable.** A phase-1 member whose Codex died before opening a thread has a run id and a terminal state but no conversation; it is refused by name rather than producing a `codex exec resume` with nothing to resume.
-- **No live members.** Two turns on one thread race on the same rollout file. Checked for the whole group up front, so you never get a phase 2 half-started against a phase 1 half-finished.
+- **No live members.** Two turns on one thread race on the same rollout file. Checked for the whole group up front, so you never get a phase 2 half-started against a phase 1 half-finished. `--as-ready` below is the way to lift this one without lifting the invariant under it.
 - **A task may name its own target** with `kind: resume` and a `resume` field, and keeps it. A `resume` field on a `kind: start` task is a contradiction and is refused; so is a `kind: review` task, which cannot be a continuation.
 
 Phase 2 inherits phase 1's worktrees — it does not get new ones — and the new group records `derived_from`, which is what makes `batch clean --group p1` refuse while phase 2 is still living there.
+
+### `--as-ready`: start each member as its own predecessor finishes
+
+```bash
+$CODEX batch start --group p2 --resume-from p1 --as-ready --tasks-file p2.jsonl
+```
+
+The barrier above waits for the *slowest* member of `p1`, which is a group-shaped answer to a thread-shaped question. One turn per thread is the actual invariant, and member 3's phase 2 is safe to begin the moment member 3's phase 1 is done, whatever member 1 is still doing. `--as-ready` starts each member exactly then. Without it, `--resume-from` behaves as it always has.
+
+- **Any terminal state releases a member**, including a failure — the barrier does not look at phase 1's success either, and "work out what went wrong here" is a legitimate phase-2 task. How the predecessor ended is recorded as `predecessor_state`, so the task can tell.
+- **A waiting member is `state: "waiting"`**, with `waits_for` naming the run it is behind. `waiting` is not terminal, which is what keeps a third turn off that thread while the member sits there.
+- **`--timeout` bounds the Codex turn, never the wait.** `stop --group` is what ends a wait, and it reaches a waiting member like any other.
+- **A wait is unbounded on purpose.** If a predecessor never finishes, its successor never starts; nothing times it out. Stopping the predecessor group releases the waiters rather than cancelling them, since `interrupted` is terminal — stop both groups if that is not what you want.
+
+Not compatible with `--force`, which is the opposite instruction (start now, accept two live turns on one thread), or with a `--resume-from`-less batch, where there is no predecessor for anything to wait on. Both combinations are refused before the group name is claimed.
+
+There is no queue and no group supervisor here: each member spawns its own supervisor immediately, exactly as it would have, and that supervisor waits before it starts Codex. A queued run with nothing supervising it is reaped as `orphaned` within thirty seconds, which is why the earlier `--max-concurrent` idea was abandoned.
 
 **Continuing several writing threads with individual `resume` calls is not the same thing, and it is not safe.** `resume` has no `--worktree`, and a resumed run takes its directory from its thread — so three `resume` calls put three writers in one directory, editing at once, which is the collision worktrees exist to prevent. `--resume-from` is the only path that can isolate them, because only `batch start` assigns worktrees. Measured: an e2e session continued three threads this way and escaped damage only because the three edits happened to land in three different files.
 

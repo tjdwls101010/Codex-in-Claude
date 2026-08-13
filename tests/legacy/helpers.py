@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
-REPO = TESTS_DIR.parent
+REPO = TESTS_DIR.parent.parent
 BRIDGE = REPO / ".claude" / "skills" / "codex" / "scripts" / "codex_bridge.py"
 FAKE_DIR = TESTS_DIR / "fake_codex"
 FIXTURES = TESTS_DIR / "fixtures"

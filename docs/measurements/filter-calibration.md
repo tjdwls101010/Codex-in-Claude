@@ -7,7 +7,7 @@ This is the measurement the shipped default filter level is chosen from. A numbe
 Reproduce with:
 
 ```bash
-python3 tests/measure_filter_calibration.py --project <repo-with-a-registry>
+python3 tests/legacy/measure_filter_calibration.py --project <repo-with-a-registry>
 ```
 
 ## Method

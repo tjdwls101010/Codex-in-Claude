@@ -21,7 +21,7 @@ import tempfile
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 BRIDGE = REPO / ".claude/skills/codex/scripts/codex_bridge.py"
 SIZES = [int(a) for a in sys.argv[1:]] or [3, 5, 8]
 

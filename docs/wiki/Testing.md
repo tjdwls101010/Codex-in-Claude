@@ -5,10 +5,13 @@ The four-tier test strategy behind this project, and how to run the tiers that l
 ## 1. T1 — Unit Tests Against a Fake Codex
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_*.py'
+python3 -m unittest discover -s tests/legacy -p 'test_*.py'
+python3 -m unittest discover -s tests/260813 -p 'test_*.py'
 ```
 
-**239 tests, passing in about two minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
+**301 tests in `tests/legacy`, passing in about two and a half minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/legacy/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
+
+`tests/260813` is the second start directory, and it holds the checks that the suite is there at all. They exist because moving `tests/` to `tests/legacy/` shifted every `__file__`-rooted path constant by one directory and the documented command answered `NO TESTS RAN` with exit status 0 — a suite reporting success by finding nothing. `test_suite_integrity.py` asserts that every discovery command in CONTRIBUTING.md and this file collects tests and imports cleanly, that every directory holding `test_*.py` is reachable from one of those commands, and that every path either suite computes by walking up from its own `__file__` still resolves to something on disk.
 
 This tier includes the single most load-bearing test in the suite: a regression assertion that a resumed run's *recorded argv* actually contains `-c sandbox_mode="read-only"` when its thread was created read-only — the specific defect described in [Sandbox Stability](Sandbox-Stability.md), caught at the argument-composition level before it ever reaches a real Codex process. It also covers Unicode/NFC path handling (Korean paths, spaces), the run registry's self-`.gitignore`ing behavior, cursor-exactness on partial trailing lines, all four filter levels, and all four `doctor` failure modes.
 
@@ -19,7 +22,7 @@ Run this tier before opening any pull request — it's fast, free, and covers mo
 ## 2. T2 — Real Codex Integration
 
 ```bash
-CODEX_SKILL_TEST_INTEGRATION=1 python3 tests/integration/run_integration.py
+CODEX_SKILL_TEST_INTEGRATION=1 python3 tests/legacy/integration/run_integration.py
 ```
 
 Gated behind an explicit environment variable so it never runs by accident, since it consumes real API usage. Spins up a throwaway git repository and drives the real bridge against the real, authenticated `codex` binary. **15 of 15 cases passing**, in about four minutes, verified against `codex-cli 0.146.0`:
@@ -49,7 +52,7 @@ Use `--only <case-id>` to run a single case while iterating. This tier isn't req
 ## 3. T3 — Filter Calibration
 
 ```bash
-python3 tests/measure_filter_calibration.py --project <repo-with-a-registry>
+python3 tests/legacy/measure_filter_calibration.py --project <repo-with-a-registry>
 ```
 
 Measures the byte cost of each filter level (`compact`/`normal`/`full`/`raw`) across four real workloads, producing the tables in [Context Discipline & Event Log Levels](Context-Discipline.md) and the raw data in [`docs/measurements/filter-calibration.md`](../measurements/filter-calibration.md). This is what the shipped default (`compact`) is chosen from — not an assumption.

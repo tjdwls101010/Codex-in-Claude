@@ -546,6 +546,8 @@ def cmd_result(args):
            "files_changed": info["files_changed"], "commands": info["commands"]}
     if review_zero:
         out["usage_note"] = "review runs report zero usage; unavailable, not free"
+    if info["unparsed_events"]:
+        out["unparsed_events"] = info["unparsed_events"]
     if meta.get("state") not in TERMINAL_STATES:
         out["note"] = f"run is still {meta.get('state')}; this is a partial result"
 

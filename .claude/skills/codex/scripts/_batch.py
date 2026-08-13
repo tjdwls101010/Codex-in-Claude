@@ -1177,6 +1177,8 @@ def cmd_result_group(args, project, runs_dir):
         if review_zero:
             row["usage_note"] = ("review runs report zero usage; unavailable, "
                                  "not free — excluded from totals")
+        if info["unparsed_events"]:
+            row["unparsed_events"] = info["unparsed_events"]
         if meta.get("worktree"):
             row["worktree"] = meta["worktree"]
         results.append(row)

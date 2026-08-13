@@ -40,7 +40,7 @@ Every subcommand prints **one line of JSON**, except `log`, which prints text pl
 | `review [opts] --uncommitted \| --base <ref> \| --commit <sha> \| "<prompt>"` | `codex exec review`'s separate flag surface |
 | `batch start --group <name> --task "…" [--task "…"]…` | N runs as one addressable group. Also `--tasks-file <jsonl>`, `--resume-from <group>`, `--as-ready` |
 | `batch clean --group <name> [--force]` | Remove that group's worktrees once you have collected them |
-| `status [--run <id>] [--group <name> [--follow]] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
+| `status [--run <id>] [--group <name> [--follow] [--follow-timeout <sec>]] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
 | `log --run <id> [--since <n>] [--level …] [--follow]` | Filtered events, incrementally |
 | `show --run <id> --item <item_id> [--max-bytes N]` | One item's full output |
 | `stop --run <id>… \| --group <name> \| --all` | Interrupt by process group |
@@ -48,7 +48,7 @@ Every subcommand prints **one line of JSON**, except `log`, which prints text pl
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, resolved paths, runs dir, worktrees |
 | `models` | Model slugs, each model's reasoning efforts, and its default effort |
 
-Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--timeout <sec>`, `--foreground`, `--no-preamble`, `--config k=v`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
+Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--timeout <sec>`, `--foreground`, `--no-preamble`, `--config k=v` (passed to Codex as its own `-c k=v`), `--no-priority`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
 
 `--timeout` works in the background too: at the deadline the run's process group gets SIGINT and the run is recorded `timed_out` — a state of its own, distinct from `interrupted` (you stopped it) and `failed` (Codex did), because only the third is answered by raising the timeout. The thread stays resumable across it, with the pre-timeout turn's context intact.
 
@@ -115,7 +115,7 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **`CODEX_HOME` may be overridden**, so `~/.codex` is not reliably where sessions, config and auth live. `doctor` prints the resolved value.
 
-**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** Measured: `gpt-5.6-sol` accepts effort up through `ultra`; `gpt-5.6-luna` has no `ultra` and tops out at `max`; `gpt-5.5` stops at `xhigh`. Leave `--effort` off and the CLI sends nothing at all — the server applies that model's own default reasoning level, and `models` reports it per model rather than this doc naming one. That the default is picked server-side, not by this wrapper, is visible in Codex's own thread DB: a thread started with no `--effort` records `reasoning_effort = NULL`, while one that inherited config records `xhigh` (V-31). A `--model` or `--effort` this Codex install does not offer is now refused before the run spawns, and the refusal names the valid efforts for that model — so a typo costs nothing instead of a wasted run discovered late.
+**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** Measured: `gpt-5.6-sol` accepts effort up through `ultra`; `gpt-5.6-luna` has no `ultra` and tops out at `max`; `gpt-5.5` stops at `xhigh`. Leave `--effort` off and the CLI sends nothing at all — the server applies that model's own default reasoning level, and `models` reports it per model rather than this doc naming one. That the default is picked server-side, not by this wrapper, is visible in Codex's own thread DB: a thread started with no `--effort` records `reasoning_effort = NULL`, while one that inherited config records `xhigh`. A `--model` or `--effort` this Codex install does not offer is now refused before the run spawns, and the refusal names the valid efforts for that model — so a typo costs nothing instead of a wasted run discovered late.
 
 ## Background work and parallelism
 

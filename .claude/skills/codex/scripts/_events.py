@@ -296,12 +296,20 @@ def scan_progress(events_path: Path):
     """One pass over the durable event log for everything `status` reports."""
     info = {"thread_id": None, "last_agent_message": None, "usage": None,
             "in_progress_item": None, "turns_completed": 0, "errors": 0,
-            "files_changed": 0, "commands": 0, "turn_failed": None}
+            "files_changed": 0, "commands": 0, "turn_failed": None,
+            # Kept apart from `errors`, which counts Codex reporting a problem
+            # with the work. This counts the bridge failing to read what Codex
+            # said, and summing the two would hide whichever is smaller. Every
+            # other summary here is derived from lines that parsed, so without
+            # this a damaged stream is summarised as a clean one.
+            "unparsed_events": 0}
     started, completed = {}, set()
     events, _ = read_events(events_path, 0)
     for ev in events:
         t = ev.get("type")
-        if t == "thread.started":
+        if t == "_unparsed":
+            info["unparsed_events"] += 1
+        elif t == "thread.started":
             info["thread_id"] = ev.get("thread_id")
         elif t == "turn.completed":
             info["turns_completed"] += 1

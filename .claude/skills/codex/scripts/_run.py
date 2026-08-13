@@ -510,6 +510,19 @@ def run_row(run_dir: Path, meta: dict, project: Path):
                         if info["turn_failed"] else None),
         "events": str(events_path),
     }
+    if info["unparsed_events"]:
+        # Only when there are some. Every row carrying a zero would put the
+        # field in front of a caller a thousand times for each time it means
+        # anything, which is how a field stops being read.
+        row["unparsed_events"] = info["unparsed_events"]
+    if meta.get("waits_for"):
+        row["waits_for"] = meta["waits_for"]
+    if meta.get("predecessor_state"):
+        row["predecessor_state"] = meta["predecessor_state"]
+    if meta.get("codex_started_at"):
+        # Distinct from `started_at` only for a member that waited, but always
+        # reported: anything comparing turns across runs has to use this one.
+        row["codex_started_at"] = meta["codex_started_at"]
     if meta.get("group"):
         # A run's group is the one fact a later session cannot re-derive.
         # `create_run` records it here precisely so `status` can answer it, and

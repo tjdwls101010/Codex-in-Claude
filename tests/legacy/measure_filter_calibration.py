@@ -20,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                        / ".claude" / "skills" / "codex" / "scripts"))
 
 from _events import LEVELS, format_events, read_events  # noqa: E402

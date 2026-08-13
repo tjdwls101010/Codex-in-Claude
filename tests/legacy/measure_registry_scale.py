@@ -15,9 +15,10 @@ import tempfile
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent
 BRIDGE = REPO / ".claude/skills/codex/scripts/codex_bridge.py"
-FAKE = REPO / "tests/fake_codex"
+FAKE = HERE / "fake_codex"
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 500
 
 sys.path.insert(0, str(BRIDGE.parent))
@@ -67,7 +68,7 @@ assert template and template.get("state"), "seed run never reached a terminal st
 # The seed's own stream is four lines. `doctor` sums every file under the runs
 # dir, so measuring against that would understate it by two orders of
 # magnitude; the biggest recorded fixture is a realistic write-heavy run.
-seed_events = (REPO / "tests/fixtures/mixed-bigout-and-failure.jsonl").read_bytes()
+seed_events = (HERE / "fixtures/mixed-bigout-and-failure.jsonl").read_bytes()
 seed_msg = (runs_dir / seed["run_id"] / "last-message.txt")
 seed_msg = seed_msg.read_bytes() if seed_msg.exists() else b""
 

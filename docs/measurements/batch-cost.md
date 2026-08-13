@@ -4,7 +4,7 @@
 
 What a batch and a long-lived registry actually cost. The registry section below needs no Codex at all — it is synthesis plus timing — so it is the cheapest of these numbers and the one most likely to be re-run.
 
-Reproduce the registry section with `python3 tests/measure_registry_scale.py <N>`; the Codex sections cost real API usage and say so.
+Reproduce the registry section with `python3 tests/legacy/measure_registry_scale.py <N>`; the Codex sections cost real API usage and say so.
 
 ## Registry scale
 
@@ -12,7 +12,7 @@ Reproduce the registry section with `python3 tests/measure_registry_scale.py <N>
 
 ### Method
 
-A throwaway git project, one real run made through the bridge with the fake `codex` first on `PATH`, then N synthesised run directories cloned from that run's own `meta.json` — never a hand-written one, because guessing the shape of a fixture is exactly how `overlaps` ended up with a test that could not fail (R11). Each synthesised run carries a copy of `tests/fixtures/mixed-bigout-and-failure.jsonl` (24 KB) as its event stream, so `doctor`'s byte sum has something realistic to add up: at N=2000 the registry holds about 48 MB. Timed with `time.perf_counter()` around the subprocess, one cold invocation each.
+A throwaway git project, one real run made through the bridge with the fake `codex` first on `PATH`, then N synthesised run directories cloned from that run's own `meta.json` — never a hand-written one, because guessing the shape of a fixture is exactly how `overlaps` ended up with a test that could not fail (R11). Each synthesised run carries a copy of `tests/legacy/fixtures/mixed-bigout-and-failure.jsonl` (24 KB) as its event stream, so `doctor`'s byte sum has something realistic to add up: at N=2000 the registry holds about 48 MB. Timed with `time.perf_counter()` around the subprocess, one cold invocation each.
 
 ### Results
 
@@ -48,7 +48,7 @@ Two things were being conflated in that question, and they are different failure
 
 ### Method
 
-V-11's method, unchanged so the numbers compose with it: one trivial prompt (`Reply with exactly the word ACKNOWLEDGED and nothing else.`) held identical across sizes, one `CODEX_HOME`, real `codex exec` through the bridge, `--sandbox read-only --effort low`, a throwaway git project per run. Every member's `events.jsonl` and `stderr.log` was then scanned for `database is locked`, `SQLITE_BUSY`, `rate limit`, `429` and `too many requests`. Reproduce with `python3 tests/measure_concurrency.py 12 16 24`.
+V-11's method, unchanged so the numbers compose with it: one trivial prompt (`Reply with exactly the word ACKNOWLEDGED and nothing else.`) held identical across sizes, one `CODEX_HOME`, real `codex exec` through the bridge, `--sandbox read-only --effort low`, a throwaway git project per run. Every member's `events.jsonl` and `stderr.log` was then scanned for `database is locked`, `SQLITE_BUSY`, `rate limit`, `429` and `too many requests`. Reproduce with `python3 tests/legacy/measure_concurrency.py 12 16 24`.
 
 ### Results
 
@@ -72,7 +72,7 @@ V-11's method, unchanged so the numbers compose with it: one trivial prompt (`Re
 
 ### Method
 
-T3's `write-heavy` shape, held identical across N: each member adds one function to `lib/util.py`, wires it into `__all__`, adds a test, and runs the suite. Writers are isolated per member, so they do genuinely independent work instead of fighting over one tree. Bytes are measured on the actual stdout a caller receives — `result --group` once, against the sum of `result --run` for every member. Token figures are `bytes ÷ 4` and are approximations; the ratios are exact. Reproduce with `python3 tests/measure_group_cost.py 3 5 8`.
+T3's `write-heavy` shape, held identical across N: each member adds one function to `lib/util.py`, wires it into `__all__`, adds a test, and runs the suite. Writers are isolated per member, so they do genuinely independent work instead of fighting over one tree. Bytes are measured on the actual stdout a caller receives — `result --group` once, against the sum of `result --run` for every member. Token figures are `bytes ÷ 4` and are approximations; the ratios are exact. Reproduce with `python3 tests/legacy/measure_group_cost.py 3 5 8`.
 
 ### Results
 

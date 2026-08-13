@@ -69,9 +69,10 @@ def concurrent_writers(runs_dir, cwd, exclude_run_id=None, waits_for=None):
     told it.
     """
     out = []
-    everything = {m.get("run_id"): m for _rd, m in iter_runs(runs_dir)}
-    chain = wait_chain(waits_for, everything)
-    for rd, m in iter_runs(runs_dir):
+    runs = list(iter_runs(runs_dir))
+    chain = (wait_chain(waits_for, {m.get("run_id"): m for _rd, m in runs})
+             if waits_for else set())
+    for rd, m in runs:
         if m.get("run_id") == exclude_run_id:
             continue
         # A run this one is queued behind shares its directory by design and
@@ -201,8 +202,13 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     # headline case — picking up a thread started in the Codex TUI — completely
     # unguarded. Reproduced 5 times in 5: two resumes of one fresh ref, both
     # rc 0, both spawning `codex exec resume <same ref>`.
-    everything = {m.get("run_id"): m for _rd, m in iter_runs(runs_dir)}
-    live = [reap(rd, m) for rd, m in iter_runs(runs_dir)
+    # One scan, and the run-id map only when there is a chain to walk: this
+    # guard runs on the critical path of every resume, and a registry scan is
+    # 0.63 s at 2,000 runs (`docs/measurements/batch-cost.md`).
+    runs = list(iter_runs(runs_dir))
+    chain = (wait_chain(waits_for, {m.get("run_id"): m for _rd, m in runs})
+             if waits_for else set())
+    live = [reap(rd, m) for rd, m in runs
             if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
     # `--as-ready` publishes a member while its predecessor is still mid-turn,
     # which is exactly what this guard refuses — so the exemption is scoped to
@@ -220,7 +226,6 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     # exists to remove. Exempting every *waiting* run instead would be too much:
     # a waiter starts the moment its predecessor ends, so a turn begun now could
     # still overlap one that is not behind anything of ours.
-    chain = wait_chain(waits_for, everything)
     live = [{"run_id": m.get("run_id"), "state": m.get("state")}
             for m in live
             if m.get("state") not in TERMINAL_STATES

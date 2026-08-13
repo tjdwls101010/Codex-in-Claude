@@ -29,7 +29,7 @@ from _codex import (
     check_model_effort, model_catalog, reserved_config_key, spawn_supervised,
     supervise,
 )
-from _events import scan_progress
+from _events import first_thread_id, scan_progress
 from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
     resolve_project, resolve_runs_dir, thread_turn_lock, unreadable_runs,
@@ -40,7 +40,20 @@ from _util import clip, fail, git_toplevel, is_within, now_iso
 WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
 
 
-def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
+def ordered_by_waiting(a: dict, b: dict, by_id: dict) -> bool:
+    """True if one of these two runs is queued behind the other.
+
+    Two runs chained by `--as-ready` share a working directory and are both
+    non-terminal, which is the shape every collision check looks for — but they
+    are the one arrangement that cannot collide, because the later one does not
+    spawn Codex until the earlier one has stopped. Reporting them as
+    uncoordinated writers is a confident falsehood about the safest case.
+    """
+    return (a.get("run_id") in wait_chain(b.get("waits_for"), by_id)
+            or b.get("run_id") in wait_chain(a.get("waits_for"), by_id))
+
+
+def concurrent_writers(runs_dir, cwd, exclude_run_id=None, waits_for=None):
     """Other live runs that can write to this same directory.
 
     Compared on each run's recorded `cwd`, never on its git top level: every
@@ -56,8 +69,14 @@ def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
     told it.
     """
     out = []
+    everything = {m.get("run_id"): m for _rd, m in iter_runs(runs_dir)}
+    chain = wait_chain(waits_for, everything)
     for rd, m in iter_runs(runs_dir):
         if m.get("run_id") == exclude_run_id:
+            continue
+        # A run this one is queued behind shares its directory by design and
+        # cannot be writing at the same time.
+        if m.get("run_id") in chain:
             continue
         if m.get("sandbox") not in WRITING_SANDBOXES:
             continue
@@ -133,6 +152,32 @@ def resolve_implicit_run(candidates):
     return rd, m, "the newest run (no non-terminal runs)"
 
 
+def wait_chain(start, by_id, limit=64):
+    """Every run this one is transitively queued behind, `start` included.
+
+    Bounded because `waits_for` is a field on disk like any other: a hand-edited
+    or half-written cycle would otherwise hang the guard rather than refuse.
+    """
+    chain, cur = set(), start
+    while cur and cur not in chain and len(chain) < limit:
+        chain.add(cur)
+        cur = (by_id.get(cur) or {}).get("waits_for")
+    return chain
+
+
+def thread_of_unreadable(run_dir):
+    """The thread a run whose meta.json will not parse was on, or None.
+
+    `events.jsonl` is written by Codex and `meta.json` by this wrapper, so one
+    being corrupt says nothing about the other, and the thread is announced in
+    the first line of the stream.
+    """
+    try:
+        return first_thread_id(run_dir / "events.jsonl")
+    except Exception:
+        return None
+
+
 def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     """F4 reproduced two turns run concurrently on one thread: rc 0, no
     warning. A resumed run shares its parent's process group with nothing —
@@ -156,33 +201,59 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     # headline case — picking up a thread started in the Codex TUI — completely
     # unguarded. Reproduced 5 times in 5: two resumes of one fresh ref, both
     # rc 0, both spawning `codex exec resume <same ref>`.
+    everything = {m.get("run_id"): m for _rd, m in iter_runs(runs_dir)}
     live = [reap(rd, m) for rd, m in iter_runs(runs_dir)
             if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
     # `--as-ready` publishes a member while its predecessor is still mid-turn,
     # which is exactly what this guard refuses — so the exemption is scoped to
-    # that one run id rather than granted by `--force`. `--force` waives the
-    # check for every collision on the thread, including ones nobody planned;
-    # this waives it for the one run whose finishing is the precondition the
-    # supervisor is about to block on. The invariant is re-established before
-    # Codex spawns, not abandoned.
+    # the caller's own wait chain rather than granted by `--force`. `--force`
+    # waives the check for every collision on the thread, including ones nobody
+    # planned; this waives it for the runs whose finishing this one's supervisor
+    # is about to block on. The invariant is re-established before Codex spawns,
+    # not abandoned.
+    #
+    # The chain, not just the direct predecessor: with p1 → p2 → p3 every stage
+    # is ordered by construction, so registering p3 while p1 is still running is
+    # safe — but exempting one id refused it and named the grandparent as the
+    # live turn, which forced the caller to poll each stage until it visibly
+    # started before the next could be registered. That is the waiting the flag
+    # exists to remove. Exempting every *waiting* run instead would be too much:
+    # a waiter starts the moment its predecessor ends, so a turn begun now could
+    # still overlap one that is not behind anything of ours.
+    chain = wait_chain(waits_for, everything)
     live = [{"run_id": m.get("run_id"), "state": m.get("state")}
             for m in live
             if m.get("state") not in TERMINAL_STATES
-            and m.get("run_id") != waits_for]
-    # `iter_runs` drops a run whose meta.json will not parse, which is what
-    # keeps one broken run from breaking every view — but it made this guard
-    # blind in the one direction that matters. The thread id lives in the file
-    # that will not parse, so such a run cannot be shown to be on another
-    # thread, and its state lives there too, so it cannot be shown to be
-    # finished. Unknown is not terminal (R23), and this guard is the only thing
-    # standing between two turns and one rollout file.
-    live += [{"run_id": name, "state": "unreadable",
-              "reason": "its meta.json will not parse, so neither the thread it "
-                        "is on nor whether it is still running can be determined"}
-             for name in unreadable_runs(runs_dir)]
+            and m.get("run_id") not in chain]
     if live:
         fail("thread already has a live turn; pass --force to run a second turn "
              "concurrently", thread_id=thread_id, live_runs=live)
+    # `iter_runs` drops a run whose meta.json will not parse, which is what
+    # keeps one broken run from breaking every view — but it made this guard
+    # blind in the one direction that matters: the state lives in the file that
+    # will not parse, so such a run cannot be shown to have finished. Unknown is
+    # not terminal (R23).
+    #
+    # Its thread, though, is often recoverable — `events.jsonl` is a separate
+    # file and the thread is announced in it — and a corrupt run on some other
+    # thread threatens nothing here. Refusing on all of them made one corrupt
+    # run anywhere in the project block every resume in it, with no way out:
+    # there is no command that removes a single run, and `--as-ready` may not be
+    # combined with `--force`. A guard whose only escape is `rm -rf` is one
+    # callers learn to route around.
+    blind = [name for name in unreadable_runs(runs_dir)
+             if name not in chain
+             and thread_of_unreadable(runs_dir / name) in (None, thread_id)]
+    if blind:
+        fail("cannot tell whether this thread is free: "
+             f"{len(blind)} run(s) in this project have a meta.json that will "
+             "not parse, and their thread cannot be recovered from their event "
+             "stream either. Remove the run director"
+             f"{'ies' if len(blind) > 1 else 'y'} named below, or pass --force "
+             "to start a turn without knowing.",
+             thread_id=thread_id,
+             unreadable_runs=[{"run_id": name, "run_dir": str(runs_dir / name)}
+                              for name in blind])
 
 
 def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
@@ -438,7 +509,8 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
     if sandbox in WRITING_SANDBOXES and not wt_info:
-        others = concurrent_writers(runs_dir, cwd, exclude_run_id=run_id)
+        others = concurrent_writers(runs_dir, cwd, exclude_run_id=run_id,
+                                    waits_for=waits_for)
         if others:
             out["concurrent_writers"] = others
             out["concurrent_writers_note"] = (

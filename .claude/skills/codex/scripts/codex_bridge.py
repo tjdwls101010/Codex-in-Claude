@@ -58,7 +58,8 @@ from _registry import (  # noqa: E402
     resolve_project, resolve_runs_dir, unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
-    WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
+    WRITING_SANDBOXES, create_run, ordered_by_waiting, resolve_implicit_run,
+    run_row,
 )
 from _util import (  # noqa: E402
     clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
@@ -285,7 +286,7 @@ def cmd_status(args):
     by_thread = {}
     for r in rows:
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
-    running = [r["run_id"] for r in rows if r["state"] in ("running", "stalled")]
+    running = [r["run_id"] for r in rows if r["state"] in ACTIVE_STATES]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
               if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
@@ -759,10 +760,18 @@ def cmd_doctor(args):
         # already seen. Two implementations of one question is how they drift;
         # this is the second time that has cost something (R20).
         seen = set()
+        by_id = {m.get("run_id"): m for m in live}
         for i, m in enumerate(live):
             group = [m] + [o for j, o in enumerate(live) if j != i
                            and (is_within(o.get("cwd"), m.get("cwd"))
-                                or is_within(m.get("cwd"), o.get("cwd")))]
+                                or is_within(m.get("cwd"), o.get("cwd")))
+                           # A `--as-ready` member inherits its predecessor's
+                           # directory and sits non-terminal beside it, which is
+                           # exactly the shape this looks for — and is the one
+                           # pair that cannot be writing at once. Same exclusion
+                           # `concurrent_writers` makes at creation time; the two
+                           # have already drifted once (R20).
+                           and not ordered_by_waiting(m, o, by_id)]
             if len(group) < 2:
                 continue
             key = tuple(sorted(x.get("run_id") or "" for x in group))

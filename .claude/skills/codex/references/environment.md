@@ -133,7 +133,7 @@ Cost was ~540 input tokens for a two-line file.
 
 ## Auth
 
-`codex login status` is what `doctor` runs. It works under isolation because credentials come from `auth.json`, not `config.toml`.
+`codex login status` is what `doctor` runs, and it works under isolation for the reason given above.
 
 A failing login is reported as a **blocker** and `doctor` exits 2 — every other symptom is worth investigating only after this one is clean, because an unauthenticated run fails in ways that look like something else.
 

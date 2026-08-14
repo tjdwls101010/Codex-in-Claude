@@ -37,12 +37,7 @@ You rarely need it, with one exception: the `turn_context` line is the authorita
 
 ## Filter levels
 
-| Level | Includes | Excludes |
-|---|---|---|
-| `compact` (default) | thread/turn lifecycle, agent messages **in full**, each command line + exit code + output **size**, changed paths + kind, errors, token usage | all `aggregated_output` |
-| `normal` | compact, plus head/tail of output for **non-zero-exit** commands only | successful commands' output |
-| `full` | every item with output capped per item | nothing structural |
-| `raw` | the events verbatim | — |
+`log --help` states what each of `compact` (the default), `normal`, `full` and `raw` includes. All four carry the same structure — lifecycle, the agent's messages in full, every command line, changed paths, errors, usage — and differ only in how much `command_execution` output rides along, which is the axis the numbers below measure.
 
 The split is on **exit code**, not size, because a failed command's output is exactly the case where the output is what you need, and a successful one's is exactly the case where it is not.
 
@@ -120,5 +115,3 @@ $CODEX show --run <id> --item item_2 [--max-bytes 20000]
 Returns one item's full `aggregated_output` (or a `file_change`'s full change list). This is the only path by which complete command output reaches context, and it is always an explicit per-item request.
 
 Output above `--max-bytes` (default 20,000) is truncated **loudly**: the response carries `truncated: true`, `total_bytes`, `shown_bytes` and a notice saying how much was withheld and how to raise the cap. A silently truncated blob is worse than a loud one — you would reason about a fragment believing it was the whole thing.
-
-Pass `--run` always: item ids are per-invocation, so `item_2` exists in most runs and means something different in each.

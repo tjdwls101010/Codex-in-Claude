@@ -28,9 +28,9 @@ A member that failed to spawn keeps its slot in the manifest with an `error` and
 
 ## Tasks
 
-`--task "<prompt>"` is repeatable and always starts a new thread. `--tasks-file <jsonl>` takes one JSON object per line for anything a bare prompt cannot express; both may be given, and `--task` entries come first because that is the order they were typed.
+`--tasks-file <jsonl>` takes one JSON object per line for anything a bare prompt cannot express; both it and `--task` may be given, and `--task` entries come first because that is the order they were typed. `batch start --help` lists the per-item fields, generated from the same tuple the validator checks against — so unlike a list written out here, it cannot name a field the parser does not take.
 
-Per-item fields: `prompt`, `kind` (`start`, `resume`, `review`), `label`, `model`, `effort`, `sandbox`, `schema`, `image`, `cwd`, `resume`, `review`. Group-level options are **defaults, not constraints** — a batch is usually the same thing N ways, and the per-item fields are how the exceptions get said:
+Group-level options are **defaults, not constraints** — a batch is usually the same thing N ways, and the per-item fields are how the exceptions get said:
 
 ```jsonl
 {"prompt": "audit the parser", "label": "parser"}
@@ -46,12 +46,12 @@ An unknown field name, or a field with the wrong type, fails the whole command *
 $CODEX batch start --group p2 --resume-from p1 --task "now write the fix" --task "now write the fix"
 ```
 
-Task *i* continues member *i* of `p1`, in the manifest's start order, keeping that thread and the directory it already lives in. The rules, all of which are refusals rather than guesses:
+Task *i* continues member *i* of `p1`, in the manifest's start order, keeping that thread and the directory it already lives in. Four rules govern that pairing. Each is a refusal that names your specific case, before anything starts; what a refusal cannot tell you is why the rule is worth having:
 
-- **One task per started member.** A count mismatch fails before anything starts, because pairing a short list lands a phase-2 task on the wrong phase-1 thread and every member after the mismatch continues work it was not written for.
-- **Every member must be resumable.** A phase-1 member whose Codex died before opening a thread has a run id and a terminal state but no conversation; it is refused by name rather than producing a `codex exec resume` with nothing to resume.
-- **No live members.** Two turns on one thread race on the same rollout file. Checked for the whole group up front, so you never get a phase 2 half-started against a phase 1 half-finished. `--as-ready` below is the way to lift this one without lifting the invariant under it.
-- **A task may name its own target** with `kind: resume` and a `resume` field, and keeps it. A `resume` field on a `kind: start` task is a contradiction and is refused; so is a `kind: review` task, which cannot be a continuation.
+- **One task per started member.** A short list lands a phase-2 task on the wrong phase-1 thread, and every member after the mismatch continues work it was not written for.
+- **Every member must be resumable.** A phase-1 member whose Codex died before opening a thread has a run id and a terminal state but no conversation to continue.
+- **No live members.** Two turns on one thread race on the same rollout file. The check covers the whole group up front, so you never get a phase 2 half-started against a phase 1 half-finished; `--as-ready` below lifts it without lifting the invariant under it.
+- **A task may name its own target** with `kind: resume` and a `resume` field, and keeps it. A `resume` field on a `kind: start` task is a contradiction, and a `kind: review` task cannot be a continuation.
 
 Phase 2 inherits phase 1's worktrees — it does not get new ones — and the new group records `derived_from`, which is what makes `batch clean --group p1` refuse while phase 2 is still living there.
 
@@ -63,12 +63,9 @@ $CODEX batch start --group p2 --resume-from p1 --as-ready --tasks-file p2.jsonl
 
 The barrier above waits for the *slowest* member of `p1`, which is a group-shaped answer to a thread-shaped question. One turn per thread is the actual invariant, and member 3's phase 2 is safe to begin the moment member 3's phase 1 is done, whatever member 1 is still doing. `--as-ready` starts each member exactly then. Without it, `--resume-from` behaves as it always has.
 
-- **Any terminal state releases a member**, including a failure — the barrier does not look at phase 1's success either, and "work out what went wrong here" is a legitimate phase-2 task. How the predecessor ended is recorded as `predecessor_state`, so the task can tell.
+- **A failed predecessor still releases its successor.** The barrier did not look at phase 1's success either, and "work out what went wrong here" is a legitimate phase-2 task. `predecessor_state` records how it ended, so the task can tell.
 - **A waiting member is `state: "waiting"`**, with `waits_for` naming the run it is behind. `waiting` is not terminal, which is what keeps a third turn off that thread while the member sits there.
-- **`--timeout` bounds the Codex turn, never the wait.** `stop --group` is what ends a wait, and it reaches a waiting member like any other.
-- **A wait is unbounded on purpose.** If a predecessor never finishes, its successor never starts; nothing times it out. Stopping the predecessor group releases the waiters rather than cancelling them, since `interrupted` is terminal — stop both groups if that is not what you want.
-
-Not compatible with `--force`, which is the opposite instruction (start now, accept two live turns on one thread), or with a `--resume-from`-less batch, where there is no predecessor for anything to wait on. Both combinations are refused before the group name is claimed.
+- **A wait is unbounded on purpose.** If a predecessor never finishes, its successor never starts; nothing times it out. Stopping the predecessor group *releases* the waiters rather than cancelling them, since `interrupted` is terminal — stop both groups if that is not what you want.
 
 There is no queue and no group supervisor here: each member spawns its own supervisor immediately, exactly as it would have, and that supervisor waits before it starts Codex. A queued run with nothing supervising it is reaped as `orphaned` within thirty seconds, which is why the earlier `--max-concurrent` idea was abandoned.
 
@@ -78,7 +75,7 @@ You do not have to notice this yourself. A writing run started into a directory 
 
 ## Worktrees
 
-**Two or more members that can write get a git worktree each**, at `.codex-runs/<run_id>/wt`, detached at HEAD (or `--base <ref>`). `--worktree` forces it for a lone writer, `--no-worktree` turns it off.
+**Two or more members that can write get a git worktree each**, at `.codex-runs/<run_id>/wt`, detached at HEAD (or `--base <ref>`).
 
 Process groups isolate *signals*, not files. Two runs in one directory edit the same files and neither can tell another agent's change from its own; a worktree is what turns that from corruption into a merge you do later. The traps:
 
@@ -88,7 +85,7 @@ Process groups isolate *signals*, not files. Two runs in one directory edit the 
 - **An explicit `cwd` wins.** A per-item `cwd` is a decision you already made, and an inferred default does not overrule it. `kind: resume` members inherit their thread's directory.
 - **Your own tree is untouched.** `.codex-runs/.gitignore` is `*`, so `git status` in the main tree stays clean even while eight worktrees hold modified files.
 
-`batch clean --group <name>` removes them, and refuses without `--force` if the group has live members, if another run is still working inside one of the worktrees, if a group derived from this one exists, or if a worktree holds uncommitted changes — that last one is git's own refusal, reported back to you. **`--force` lifts all of them at once**, not only the one you were after; the result says what it overrode, and none of it is recoverable.
+`batch clean --group <name>` removes them, and refuses by name whenever the group is still in use — a live member, another run working inside a worktree, a group derived from this one, or uncommitted changes git itself will not discard. **`--force` lifts all four at once**, not only the one you were after; the result says what it overrode, and none of it is recoverable.
 
 ## Watching a group
 

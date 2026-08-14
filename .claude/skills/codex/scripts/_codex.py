@@ -389,6 +389,12 @@ def uncommitted_clause(n) -> str:
     if n is None:
         return ("it does not contain the uncommitted file(s) that exist in "
                 "theirs — git could not count them, so how many is unknown.")
+    if n == 0:
+        # Spelled out rather than left to the sentence below, which for zero
+        # reads as a double negative around a number — "it does not contain the
+        # 0 uncommitted file(s) that exist in theirs" — and a clean tree is the
+        # ordinary case, not the edge one.
+        return "there is no uncommitted work in theirs for it to be missing."
     return f"it does not contain the {n} uncommitted file(s) that exist in theirs."
 
 

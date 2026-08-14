@@ -529,7 +529,8 @@ def cmd_result(args):
     rd, meta = find_run(runs_dir, args.run)
     refuse_unresolved_run(args.run, rd, meta, runs_dir)
     meta = reap(rd, meta)
-    info = scan_progress(rd / "events.jsonl")
+    info = scan_progress(rd / "events.jsonl",
+                         terminal=meta.get("state") in TERMINAL_STATES)
 
     msg_path = rd / "last-message.txt"
     message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()

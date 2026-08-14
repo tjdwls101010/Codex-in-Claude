@@ -530,15 +530,36 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
 def run_row(run_dir: Path, meta: dict, project: Path):
     meta = reap(run_dir, meta)
     events_path = run_dir / "events.jsonl"
-    info = scan_progress(events_path)
+    info = scan_progress(events_path,
+                          terminal=meta.get("state") in TERMINAL_STATES)
     now = time.time()
 
+    def stamp(field):
+        try:
+            return datetime.fromisoformat(
+                meta[field].replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return None
+
     elapsed = None
-    try:
-        t0 = datetime.fromisoformat(meta["started_at"].replace("Z", "+00:00")).timestamp()
+    t0 = stamp("started_at")
+    if t0 is not None:
         elapsed = int(now - t0)
-    except Exception:
-        pass
+    # How long the TURN has taken, as distinct from how long the run has
+    # existed. They differ only for a member that waited — but that is the one
+    # the question is usually asked about, and `elapsed_seconds` alone reports
+    # an hour queued plus a minute working as sixty-one minutes of work. This
+    # round added `codex_started_at` because `started_at` stopped being a
+    # reliable clock; leaving the field callers actually read on the old one
+    # would have kept the ambiguity while looking like it had been fixed.
+    # Measured to `ended_at` where there is one, so a finished turn's duration
+    # stops growing — `elapsed_seconds` keeps its own meaning, and its own
+    # long-standing habit of counting from the start until now regardless.
+    codex_elapsed = None
+    t1 = stamp("codex_started_at")
+    if t1 is not None:
+        end = stamp("ended_at")
+        codex_elapsed = int((end if end is not None else now) - t1)
     idle = None
     if events_path.exists() and events_path.stat().st_size > 0:
         idle = int(now - events_path.stat().st_mtime)
@@ -570,7 +591,8 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         "label": meta.get("label"), "state": state,
         "codex_pid": meta.get("codex_pid"), "pgid": meta.get("pgid"),
         "started_at": meta.get("started_at"), "ended_at": meta.get("ended_at"),
-        "elapsed_seconds": elapsed, "idle_seconds": idle,
+        "elapsed_seconds": elapsed, "codex_elapsed_seconds": codex_elapsed,
+        "idle_seconds": idle,
         "exit_code": meta.get("exit_code"), "sandbox": meta.get("sandbox"),
         "model": meta.get("model"), "effort": meta.get("effort"),
         "isolated": meta.get("isolated"),

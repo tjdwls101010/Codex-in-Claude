@@ -138,7 +138,8 @@ def resolve_implicit_run(candidates):
     with the candidate list instead of guessing.
     """
     reaped = [(rd, reap(rd, m)) for rd, m in candidates]
-    non_terminal = [(rd, m) for rd, m in reaped if m.get("state") not in TERMINAL_STATES]
+    non_terminal = [(rd, m) for rd, m in reaped
+                    if m.get("state") not in TERMINAL_STATES or still_writing(m)]
     if len(non_terminal) == 1:
         rd, m = non_terminal[0]
         return rd, m, "the only non-terminal run"
@@ -538,7 +539,8 @@ def run_row(run_dir: Path, meta: dict, project: Path):
     meta = reap(run_dir, meta)
     events_path = run_dir / "events.jsonl"
     info = scan_progress(events_path,
-                          terminal=meta.get("state") in TERMINAL_STATES)
+                          terminal=(meta.get("state") in TERMINAL_STATES
+                                    and not still_writing(meta)))
     now = time.time()
 
     def stamp(field):

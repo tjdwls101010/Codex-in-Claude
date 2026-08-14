@@ -1208,7 +1208,8 @@ def cmd_result_group(args, project, runs_dir):
     for rd, meta in members:
         meta = reap(rd, meta)
         info = scan_progress(rd / "events.jsonl",
-                             terminal=meta.get("state") in TERMINAL_STATES)
+                             terminal=(meta.get("state") in TERMINAL_STATES
+                                       and not still_writing(meta)))
         msg_path = rd / "last-message.txt"
         message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()
                    else info["last_agent_message"]) or ""

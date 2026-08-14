@@ -301,7 +301,9 @@ def cmd_status(args):
         # Truncate the display list only — a non-terminal row must survive
         # truncation no matter how old, or `running` above and `runs` below
         # would disagree about which runs are still alive.
-        kept_live = [r for r in rows[:-20] if r["state"] not in TERMINAL_STATES]
+        kept_live = [r for r in rows[:-20]
+                     if r["state"] not in TERMINAL_STATES
+                     or r.get("codex_still_running")]
         display_rows = kept_live + tail
         runs_truncated = total_runs - len(display_rows)
 
@@ -536,7 +538,8 @@ def cmd_result(args):
     refuse_unresolved_run(args.run, rd, meta, runs_dir)
     meta = reap(rd, meta)
     info = scan_progress(rd / "events.jsonl",
-                         terminal=meta.get("state") in TERMINAL_STATES)
+                         terminal=(meta.get("state") in TERMINAL_STATES
+                                   and not still_writing(meta)))
 
     msg_path = rd / "last-message.txt"
     message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()

@@ -34,8 +34,9 @@ from pathlib import Path
 
 from _events import read_events, scan_progress
 from _registry import (
-    TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs, meta_unreadable,
-    read_meta, reap, resolve_project, resolve_runs_dir, unreadable_runs,
+    ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,
+    meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
+    still_writing, unreadable_runs,
 )
 from _codex import check_model_effort, model_catalog, review_argv
 from _run import (
@@ -73,6 +74,24 @@ def read_group(runs_dir: Path, name: str):
         return json.loads(group_path(runs_dir, name).read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def group_unreadable(runs_dir: Path, name: str) -> bool:
+    """A manifest that is present but will not parse, as distinct from absent.
+
+    The same distinction `meta_unreadable` draws for one run, and for the same
+    reason: `read_group` returns None for both, so every `--group` operation
+    answered "no such group" to a caller whose members and worktrees were
+    sitting on disk. For `batch clean` that was not just the wrong diagnosis but
+    a trap — the check ran before `--force` was consulted, so the flag that
+    exists to get past every other protection could not reach this one.
+
+    Membership survives the manifest: each run records its own group when its
+    directory is claimed, which is why `owned_run_ids` asks the registry too.
+    What is genuinely lost is start ORDER, and only `--resume-from` needs it.
+    """
+    return (group_path(runs_dir, name).is_file()
+            and read_group(runs_dir, name) is None)
 
 
 def list_groups(runs_dir: Path):
@@ -173,7 +192,10 @@ def member_run_ids(runs_dir: Path, name: str):
     """Run ids in start order, skipping members that never spawned."""
     g = read_group(runs_dir, name)
     if not g:
-        return None
+        # A manifest that will not parse names no members; that is not the same
+        # as there being none. `owned_run_ids` still reaches them through the
+        # registry. `None` stays reserved for a group that is genuinely absent.
+        return [] if group_unreadable(runs_dir, name) else None
     return [m["run_id"] for m in g.get("members", []) if m.get("run_id")]
 
 
@@ -443,7 +465,8 @@ def plan_worktrees(tasks, args, project):
     return eligible, base, None
 
 
-def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
+def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
+                       as_ready=False):
     """Turn each task into a resume of the corresponding member of `previous`.
 
     The pairing is positional against the manifest's member list, and that is
@@ -457,6 +480,16 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     """
     manifest = read_group(runs_dir, previous)
     if manifest is None:
+        if group_unreadable(runs_dir, previous):
+            # Positional pairing is the one thing the registry cannot supply:
+            # a run records which group it is in, never which slot. Refusing is
+            # the only honest answer — inferring an order here would silently
+            # land each phase-2 task on some other task's thread.
+            fail(f"group {previous!r} has a manifest that will not parse, and "
+                 f"--resume-from pairs task to member by position, which only "
+                 f"the manifest records",
+                 manifest=str(group_path(runs_dir, previous)),
+                 members_recorded_by_runs=owned_run_ids(runs_dir, previous))
         fail(f"no such group to resume from: {previous}",
              known_groups=list_groups(runs_dir)[:20])
     started = [m for m in manifest.get("members") or [] if m.get("run_id")]
@@ -492,11 +525,32 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     live = []
     for m in prior:
         rd, meta = find_run(runs_dir, m["run_id"])
-        if meta and reap(rd, meta).get("state") not in TERMINAL_STATES:
-            live.append({"run_id": m["run_id"], "state": meta.get("state")})
-    if live and not force:
+        if meta is None:
+            # Dropping an unresolvable member left it out of the very check that
+            # protects the whole batch, and the per-member guard downstream
+            # cannot stand in for it: by the time that one fires, the earlier
+            # tasks have already resumed, which is the half-started phase 2 this
+            # check exists to prevent. Unknown is not terminal (R23).
+            if rd is not None and meta_unreadable(rd):
+                live.append({"run_id": m["run_id"], "state": "unreadable",
+                             "reason": "its meta.json will not parse, so whether "
+                                       "its turn has finished cannot be determined"})
+            continue
+        reaped = reap(rd, meta)
+        if (reaped.get("state") not in TERMINAL_STATES
+                or still_writing(reaped)):
+            live.append({"run_id": m["run_id"], "state": reaped.get("state")})
+    unreadable = [m for m in live if m.get("state") == "unreadable"]
+    if live and not force and not as_ready:
         fail(f"group {previous!r} still has members running; resuming a thread "
              f"mid-turn would run two turns on it at once", running=live)
+    if as_ready and unreadable:
+        # `--as-ready` waits for a predecessor to reach a terminal state, and a
+        # member whose meta will not parse can never be observed reaching one.
+        # Its waiter would block forever on a question that has no answer, so
+        # this is the one liveness case the flag cannot absorb.
+        fail(f"group {previous!r} has member(s) whose meta.json will not parse, "
+             f"so nothing can wait for them to finish", unreadable=unreadable)
 
     paired = []
     for slot, (task, prev) in enumerate(zip(tasks, prior)):
@@ -518,9 +572,49 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
                  f"that target or drop the 'resume' field to be paired with "
                  f"{prev['run_id']}")
         if named:
-            paired.append(task)
+            # A task that names its own target keeps it — and under
+            # `--as-ready` it waits for THAT target, not for the member it was
+            # positionally paired with. Leaving `waits_for` unset reported the
+            # task as paired while it started immediately, so the one shape the
+            # flag promises to order was the one it did not.
+            #
+            # Resolved to a run id here, not passed through: `resume` accepts a
+            # run id, a thread id or a run-id prefix, while `waits_for` is
+            # joined to the runs directory as a name and keyed on `run_id`. A
+            # thread id stored raw made the supervisor report the target
+            # "can no longer be read" while `status` showed it completed and
+            # perfectly readable. A ref outside the registry can never be
+            # observed reaching a terminal state at all, which is the same
+            # reason an unreadable member is refused above.
+            if as_ready:
+                _rd, resolved = find_run(runs_dir, named)
+                if not resolved:
+                    # Unreadable and absent are different answers with
+                    # different remedies, and `find_run` returns the same
+                    # `None` for both. This is the sixth site to make that
+                    # mistake — `refuse_unresolved_run` exists because of the
+                    # first five, and `pair_with_previous` already gets it
+                    # right fifty lines above.
+                    if _rd is not None and meta_unreadable(_rd):
+                        fail(f"task {slot} names {named!r} to resume, and "
+                             f"--as-ready has to watch it reach a terminal "
+                             f"state — but that run's meta.json will not parse, "
+                             f"so its state cannot be read",
+                             task=slot, resume=named, run_dir=str(_rd),
+                             events=str(_rd / "events.jsonl"))
+                    fail(f"task {slot} names {named!r} to resume, and "
+                         f"--as-ready has to watch it reach a terminal state — "
+                         f"but this project's registry has no such run, so "
+                         f"nothing can be observed about it",
+                         task=slot, resume=named)
+                paired.append({**task, "waits_for": resolved["run_id"]})
+            else:
+                paired.append(task)
             continue
-        paired.append({**task, "kind": "resume", "resume": prev["run_id"]})
+        entry = {**task, "kind": "resume", "resume": prev["run_id"]}
+        if as_ready:
+            entry["waits_for"] = prev["run_id"]
+        paired.append(entry)
     return paired, [m["run_id"] for m in prior]
 
 
@@ -535,6 +629,29 @@ def cmd_batch_start(args):
         # after the name was claimed would burn that name on a typo, against
         # the whole point of claiming before anything is spawned.
         fail("--worktree and --no-worktree contradict each other; pass one")
+    if getattr(args, "foreground", False):
+        # Checked here for the same reason, and because nothing downstream ever
+        # looks at the flag: `task_args` copies the caller's whole namespace
+        # onto each member, and `create_run` calls `supervise()` synchronously
+        # whenever it sees `foreground`. The spawn loop then waits out each
+        # member's entire turn before starting the next, so a batch of three
+        # two-second members takes six seconds and reports the same shape it
+        # would have concurrently — the caller's only clue is that it was slow.
+        fail("--foreground turns batch start into a serial loop: it blocks on "
+             "each member in turn, which is the opposite of what batch is for. "
+             "Start the batch and wait for it with "
+             "`status --group <name> --follow`.")
+    # Both refusals sit here, above `claim_group`, for the reason the two above
+    # them do: a combination that silently means nothing is worse than an error,
+    # and refusing after the claim would burn a single-use group name on a typo.
+    if getattr(args, "as_ready", False) and not getattr(args, "resume_from", None):
+        fail("--as-ready says when each member may start: as soon as the member "
+             "it continues has finished. Without --resume-from there is nothing "
+             "for any member to continue, so the flag would decide nothing.")
+    if getattr(args, "as_ready", False) and getattr(args, "force", False):
+        fail("--as-ready and --force are opposite answers to the same question. "
+             "--force starts a member while its predecessor's turn is still "
+             "running; --as-ready waits for that turn to end. Pass one.")
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args)
@@ -542,7 +659,8 @@ def cmd_batch_start(args):
     previous = getattr(args, "resume_from", None)
     if previous:
         tasks, paired_with = pair_with_previous(
-            tasks, runs_dir, previous, force=getattr(args, "force", False))
+            tasks, runs_dir, previous, force=getattr(args, "force", False),
+            as_ready=getattr(args, "as_ready", False))
 
     # Claim the name before spawning anything. D36: a reused group name would
     # make "the members of p1" ambiguous, and --resume-from pairs positionally
@@ -661,14 +779,19 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
                           worktree_base=worktree_base)
     if kind == "resume":
         rd, base = find_run(runs_dir, item["resume"])
+        # Only `pair_with_previous` knows which member this task was paired
+        # with, and it is the only thing that can: a run records the group it
+        # belongs to, never its slot in one. Carried on the task itself so the
+        # supervisor has it in meta.json before it starts waiting.
+        waits_for = item.get("waits_for")
         if not base:
             # Not in the registry: it may still be a real Codex thread started
             # outside this skill, so pass the ref through rather than refusing.
             return create_run(ns, kind="resume", thread_ref=item["resume"],
-                              group=group, batch=batch)
+                              group=group, batch=batch, waits_for=waits_for)
         return create_run(ns, kind="resume", base=base,
                           thread_ref=base.get("thread_id"), group=group,
-                          batch=batch)
+                          batch=batch, waits_for=waits_for)
     review = item.get("review") or {}
     review_args = review_argv(uncommitted=review.get("uncommitted"),
                               base=review.get("base"), commit=review.get("commit"),
@@ -692,9 +815,21 @@ def cmd_batch_clean(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     manifest = read_group(runs_dir, args.group)
-    if manifest is None:
+    lost_manifest = manifest is None and group_unreadable(runs_dir, args.group)
+    if manifest is None and not lost_manifest:
         fail(f"no such group in this project: {args.group}",
              known_groups=list_groups(runs_dir)[:20])
+    if lost_manifest and not args.force:
+        # The fourth thing that stops a clean, and the only one that used to be
+        # unliftable. `--force` already overrides a member's corrupt meta.json;
+        # a corrupt manifest left the group unaddressable by anything, with its
+        # worktrees — the only copy of what its runs produced — stranded.
+        fail(f"group {args.group!r} has a manifest that will not parse, so what "
+             f"it was and what order it ran in cannot be read. Its members are "
+             f"still recoverable from the registry; pass --force to remove their "
+             f"worktrees and release the name",
+             manifest=str(group_path(runs_dir, args.group)),
+             members_recorded_by_runs=owned_run_ids(runs_dir, args.group))
 
     live, removed, kept = [], [], []
     for rid in owned_run_ids(runs_dir, args.group) or []:
@@ -712,8 +847,13 @@ def cmd_batch_clean(args):
                                        "it is still running cannot be determined"})
             continue
         meta = reap(rd, meta)
-        if meta.get("state") not in TERMINAL_STATES:
-            live.append({"run_id": rid, "state": meta.get("state")})
+        # `still_writing` as well as the state: this loop's whole purpose is
+        # note 1 below — "a live member is still writing into the very
+        # directory being removed" — and a run whose supervisor died is
+        # terminal while its codex keeps writing into exactly that directory.
+        if meta.get("state") not in TERMINAL_STATES or still_writing(meta):
+            live.append({"run_id": rid, "state": meta.get("state"),
+                         **({"codex_still_running": True} if still_writing(meta) else {})})
 
     # 1. A live member is still writing into the very directory being removed.
     if live and not args.force:
@@ -726,6 +866,8 @@ def cmd_batch_clean(args):
     overrode = {}
     if args.force and live:
         overrode["running_members"] = live
+    if lost_manifest:
+        overrode["unreadable_manifest"] = str(group_path(runs_dir, args.group))
 
     # 2. A group that another group resumed into. `--resume-from` puts phase 2
     #    in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
@@ -764,7 +906,8 @@ def cmd_batch_clean(args):
         # and p1 looks unreferenced while p3 is still running in p1's worktree.
         # A run's own recorded cwd cannot go stale that way.
         occupants = [m for _rd, m in iter_runs(runs_dir)
-                     if m.get("state") not in TERMINAL_STATES
+                     if (m.get("state") not in TERMINAL_STATES
+                         or still_writing(m))
                      and m.get("run_id") != rid
                      and is_within(m.get("cwd"), path)]
         if occupants and not args.force:
@@ -788,14 +931,36 @@ def cmd_batch_clean(args):
     # sees `cleaned: true` can reuse the name and one who does not still has a
     # group to address the leftovers by. This is also the only way to reclaim a
     # name from a `batch start` that died before it recorded any member.
-    released = not kept
+    # `kept` can only be populated from a worktree that is still on disk, and a
+    # `kind=resume` member never gets one — which is every `--as-ready` waiter.
+    # So a forced clean of a group whose live members have no checkouts released
+    # the name in the same reply that listed those members as still running, and
+    # the freed name was then reclaimed by an unrelated batch. After that,
+    # `owned_run_ids`' registry fallback matches on the bare name with no epoch,
+    # so the new owner's `batch clean` is refused citing a run it has never seen.
+    # A name whose members are still running is not free.
+    released = not kept and not live
     if released:
         group_path(runs_dir, args.group).unlink(missing_ok=True)
+    # Branched on what actually blocked the release. One note for both cases
+    # told a caller whose only obstacle was a live member that "these worktrees
+    # hold uncommitted changes" and to "pass --force" — with no worktrees
+    # involved, nothing dirty, and `--force` already passed. Retrying as
+    # instructed cannot work, because a name whose members are still running is
+    # never released. The remedy that does work is the one the message omitted.
+    if released:
+        note = None
+    elif kept:
+        note = ("these worktrees hold uncommitted changes — collect them, or "
+                "pass --force to discard. The group name stays claimed until "
+                "they are gone.")
+    else:
+        note = ("this group still has running member(s), so its name stays "
+                "claimed — --force does not release a name whose members are "
+                "live. Stop them first: "
+                + ", ".join(f"stop --run {m['run_id']}" for m in live))
     out = {"group": args.group, "removed": removed, "kept": kept,
-           "name_released": released,
-           "note": None if released else
-           "these worktrees hold uncommitted changes — collect them, or pass "
-           "--force to discard. The group name stays claimed until they are gone."}
+           "name_released": released, "note": note}
     if overrode:
         out["forced_past"] = overrode
         out["forced_note"] = (
@@ -810,6 +975,13 @@ def resolve_group(runs_dir: Path, name: str):
     unknown. Members that never spawned have no run id to resolve, so they are
     not here — `unstarted_members` is how the rest of the group views learn
     they exist."""
+    if group_unreadable(runs_dir, name):
+        fail(f"group {name!r} has a manifest that will not parse, so its "
+             f"membership and start order cannot be read from it",
+             manifest=str(group_path(runs_dir, name)),
+             members_recorded_by_runs=owned_run_ids(runs_dir, name),
+             remedy=f"`batch clean --group {name} --force` removes their "
+                    f"worktrees and releases the name")
     ids = member_run_ids(runs_dir, name)
     if ids is None:
         fail(f"no such group: {name}", runs_dir=str(runs_dir),
@@ -897,7 +1069,8 @@ def group_snapshot(rows, unstarted=0):
     one would report `completed`, which is the group-level form of the failure
     a terminal `--follow` line exists to prevent.
     """
-    running = [r["run_id"] for r in rows if r["state"] in ("running", "starting", "stalled")]
+    running = [r["run_id"] for r in rows
+               if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
               if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
@@ -1034,7 +1207,9 @@ def cmd_result_group(args, project, runs_dir):
 
     for rd, meta in members:
         meta = reap(rd, meta)
-        info = scan_progress(rd / "events.jsonl")
+        info = scan_progress(rd / "events.jsonl",
+                             terminal=(meta.get("state") in TERMINAL_STATES
+                                       and not still_writing(meta)))
         msg_path = rd / "last-message.txt"
         message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()
                    else info["last_agent_message"]) or ""
@@ -1072,6 +1247,8 @@ def cmd_result_group(args, project, runs_dir):
         if review_zero:
             row["usage_note"] = ("review runs report zero usage; unavailable, "
                                  "not free — excluded from totals")
+        if info["unparsed_events"]:
+            row["unparsed_events"] = info["unparsed_events"]
         if meta.get("worktree"):
             row["worktree"] = meta["worktree"]
         results.append(row)

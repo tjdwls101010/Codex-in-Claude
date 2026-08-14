@@ -89,7 +89,20 @@ Everything that could go wrong here is a refusal rather than a guess:
 
 - **One task per started member.** A count mismatch fails before anything starts.
 - **Every member must be resumable.** A phase-1 member whose Codex died before opening a thread has a run id and a terminal state but no conversation; it's named and refused rather than producing a `resume` with nothing to resume.
-- **No live members.** Two turns on one thread race on the same rollout file. Checked for the whole group up front, so you never get a phase 2 half-started against a phase 1 half-finished.
+- **No live members.** Two turns on one thread race on the same rollout file. Checked for the whole group up front, so you never get a phase 2 half-started against a phase 1 half-finished. `--as-ready` below lifts this one without lifting the invariant under it.
+
+### `--as-ready` — don't wait for the slowest member
+
+```bash
+$CODEX batch start --group fix --resume-from audit --as-ready \
+       --task "now fix what you found" --task "now fix what you found"
+```
+
+The refusal above waits for every member of `audit`, which is a group-shaped answer to a thread-shaped question: one turn per thread is per *thread*, so member 3's fix is safe to start the moment member 3's audit is done, whatever member 1 is still doing. `--as-ready` starts each member exactly then. Without it, `--resume-from` behaves as it always has.
+
+A member that is waiting shows `state: "waiting"` with `waits_for` naming the run it is behind, and `codex_started_at` records when its turn actually began — distinct from `started_at`, which is when the run was created and is therefore *before* its predecessor finished. Any terminal state releases a member, including a failure: `predecessor_state` says how it ended, and "work out what went wrong" is a legitimate next phase. A wait is unbounded — `--timeout` bounds the Codex turn, never the wait — and `stop --group` is what ends one.
+
+Chains work: `p1 → p2 → p3` can all be registered up front, each waiting on its own predecessor. Not combinable with `--force`, which is the opposite instruction.
 - **A task may name its own target** with `kind: resume` and a `resume` field, and keeps it. A `resume` field on a `kind: start` task is a contradiction and is refused; so is a `kind: review` task, which can't be a continuation.
 
 ## 7. Watching and collecting

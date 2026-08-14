@@ -42,7 +42,7 @@ Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a
 ## Things that are not broken
 
 - **`error` items in the stream.** Informational config warnings. Shown at every filter level on purpose, because the one time an `error` is not routine you need to see it.
-- **A silent run.** A single `command_execution` can be legitimately silent for minutes. `idle_seconds` plus `in_progress_item` is how you tell that apart from a stuck one.
+- **A silent run.** A single `command_execution` can be legitimately silent for minutes. Telling that apart from a stuck one is [Reading liveness](event-stream.md#reading-liveness).
 - **`thread_id: null` from `start`.** The thread id had not appeared within the wait window. `status` backfills it from the first line of `events.jsonl`.
 - **`compact` output that omits command stdout.** That is the entire point; the size marker and `show --item` are how you get it when you want it.
 

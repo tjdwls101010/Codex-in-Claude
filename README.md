@@ -37,7 +37,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 - **Resume any thread** — including ones started outside this plugin, directly in the Codex TUI.
 - **Schema-validated results** — pass `--schema` and get back parsed, validated JSON instead of a message you have to eyeball.
 - **A deadline you choose** — `--timeout` works in the background and records a state of its own, so "it ran out of the time I gave it" never reads as "Codex failed". The thread stays resumable across it.
-- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Two or more members that can write get a git worktree each, so they can't edit each other's files mid-edit. See [Orchestration](docs/wiki/Orchestration.md).
+- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Two or more members that can write get a git worktree each, so they can't edit each other's files mid-edit. Chain a next phase onto a group with `--resume-from`, and add `--as-ready` to start each member as soon as the one it continues is done rather than waiting for the slowest. See [Orchestration](docs/wiki/Orchestration.md).
 - **Built-in diagnostics** — `doctor` checks your PATH, Codex auth, config, and the run registry in a single call.
 
 ## 3. Quick Start

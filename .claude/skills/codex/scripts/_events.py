@@ -292,16 +292,39 @@ def _format_item(evtype: str, item: dict, level: str, project):
 
 # -- summarising ------------------------------------------------------------
 
-def scan_progress(events_path: Path):
-    """One pass over the durable event log for everything `status` reports."""
+def scan_progress(events_path: Path, terminal: bool = False):
+    """One pass over the durable event log for everything `status` reports.
+
+    `terminal` says the run has stopped, which changes what a half-written last
+    line means. `read_events` leaves a trailing line with no newline for the
+    next poll to pick up once it completes — correct while something is still
+    writing, and false for a run that never will: Codex killed at the SIGKILL
+    rung of `stop`'s ladder, or an ordinary crash mid-line. Those bytes are then
+    dropped by a rule whose premise has expired, and the summary reads exactly
+    like a stream with nothing left to say.
+    """
     info = {"thread_id": None, "last_agent_message": None, "usage": None,
             "in_progress_item": None, "turns_completed": 0, "errors": 0,
-            "files_changed": 0, "commands": 0, "turn_failed": None}
+            "files_changed": 0, "commands": 0, "turn_failed": None,
+            # Kept apart from `errors`, which counts Codex reporting a problem
+            # with the work. This counts the bridge failing to read what Codex
+            # said, and summing the two would hide whichever is smaller. Every
+            # other summary here is derived from lines that parsed, so without
+            # this a damaged stream is summarised as a clean one.
+            "unparsed_events": 0}
     started, completed = {}, set()
-    events, _ = read_events(events_path, 0)
+    events, cursor = read_events(events_path, 0)
+    if terminal:
+        try:
+            if events_path.stat().st_size > cursor:
+                info["unparsed_events"] += 1
+        except OSError:
+            pass
     for ev in events:
         t = ev.get("type")
-        if t == "thread.started":
+        if t == "_unparsed":
+            info["unparsed_events"] += 1
+        elif t == "thread.started":
             info["thread_id"] = ev.get("thread_id")
         elif t == "turn.completed":
             info["turns_completed"] += 1

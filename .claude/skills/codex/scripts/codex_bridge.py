@@ -53,11 +53,13 @@ from _batch import (  # noqa: E402
 )
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
-    TERMINAL_STATES, find_run, iter_runs, read_meta, reap, resolve_project,
-    resolve_runs_dir, unreadable_runs, update_meta_if,
+    ACTIVE_STATES, TERMINAL_STATES, find_run, iter_runs, meta_unreadable,
+    read_meta, reap, resolve_project, resolve_runs_dir, still_writing,
+    unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
-    WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
+    WRITING_SANDBOXES, create_run, ordered_by_waiting, resolve_implicit_run,
+    run_row,
 )
 from _util import (  # noqa: E402
     clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
@@ -167,20 +169,52 @@ def cmd_review(args):
 # status
 # --------------------------------------------------------------------------
 
-def refuse_run_and_group(args, command):
-    """`--run` and `--group` name different things; passing both silently drops
-    one of them, and which one depends on which branch happens to come first.
+def refuse_competing_selectors(args, command, *selectors):
+    """Two selectors name different things; passing both silently drops one of
+    them, and which one depends on which branch happens to come first.
 
     `status` learned this and was fixed; `stop` and `result` were not, and they
     had drifted in opposite directions — `stop` honoured `--run` and left the
     group's other members running, `result` honoured `--group` and answered a
     different question in a different shape. A caller with a stray `--run` in a
     copy-pasted `stop --group` line got a success reply while the group carried
-    on. Three commands, one rule, one place (R28)."""
-    if getattr(args, "run", None) and getattr(args, "group", None):
-        fail(f"--run and --group are different questions; pass one. "
-             f"`{command} --run` acts on one run, `{command} --group` acts on "
-             f"the whole group.", run=args.run, group=args.group)
+    on. Three commands, one rule, one place (R28).
+
+    R28 fixed the pair it was written for and left `--all` sitting next to it,
+    so `stop --run X --all` still stopped one run and reported success. Which
+    flags compete is per command and cannot be inferred here: `stop --all` is a
+    third selector, while `status --all` only lifts a row-count cap and is
+    meaningful alongside `--run`. Each caller states its own set."""
+    given = {name: getattr(args, name.lstrip("-").replace("-", "_"), None)
+             for name in selectors}
+    given = {k: v for k, v in given.items() if v}
+    if len(given) > 1:
+        names = " and ".join(sorted(given))
+        fail(f"{names} are different questions; pass one. "
+             f"`{command}` acts on whichever it sees first, which is not "
+             f"necessarily the one you meant.", **{
+                 k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
+
+
+def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
+    """"I cannot read that run" and "there is no such run" are different answers
+    and were sent through the same door.
+
+    `find_run` hands back `(run_dir, None)` when the directory is there and its
+    meta.json will not parse. Five commands tested only the meta and told the
+    caller the run never existed, while its directory — and its events.jsonl,
+    which is a separate file and usually intact — sat on disk. That is R23's
+    failure at a different guard: a caller sent away from work that is still
+    there, with nothing to say where to look."""
+    if meta:
+        return
+    if run_dir is not None and meta_unreadable(run_dir):
+        fail(f"run {ref} exists but its meta.json will not parse, so nothing "
+             f"can be said about its state. Its event stream is a separate "
+             f"file and may still be readable.",
+             run_id=run_dir.name, run_dir=str(run_dir),
+             events=str(run_dir / "events.jsonl"))
+    fail(f"no such run: {ref}", runs_dir=str(runs_dir))
 
 
 def note_unreadable(out: dict, runs_dir):
@@ -206,7 +240,7 @@ def cmd_status(args):
     # have made `--follow` mean something. Found by a `review` member reading
     # the commit that added the check below, which is the kind of hole a fix
     # leaves when it guards a symptom instead of the precedence underneath it.
-    refuse_run_and_group(args, "status")
+    refuse_competing_selectors(args, "status", "--run", "--group")
     # `--follow` only ever meant "--group --follow": the other branches emit a
     # snapshot and exit. Accepting it silently is the shape of mistake R13 was
     # about — the tool hands back an answer the caller reads as "I waited for
@@ -220,8 +254,7 @@ def cmd_status(args):
     rows = []
     if args.run:
         rd, m = find_run(runs_dir, args.run)
-        if not m:
-            fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+        refuse_unresolved_run(args.run, rd, m, runs_dir)
         rows.append(run_row(rd, m, project))
     elif args.group:
         if args.follow:
@@ -253,10 +286,12 @@ def cmd_status(args):
     by_thread = {}
     for r in rows:
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
-    running = [r["run_id"] for r in rows if r["state"] in ("running", "stalled")]
+    running = [r["run_id"] for r in rows
+               if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
-              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
+              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")
+              and not r.get("codex_still_running")]
     known = {r["thread_id"] for r in rows}
 
     display_rows = rows
@@ -266,7 +301,9 @@ def cmd_status(args):
         # Truncate the display list only — a non-terminal row must survive
         # truncation no matter how old, or `running` above and `runs` below
         # would disagree about which runs are still alive.
-        kept_live = [r for r in rows[:-20] if r["state"] not in TERMINAL_STATES]
+        kept_live = [r for r in rows[:-20]
+                     if r["state"] not in TERMINAL_STATES
+                     or r.get("codex_still_running")]
         display_rows = kept_live + tail
         runs_truncated = total_runs - len(display_rows)
 
@@ -306,8 +343,7 @@ def cmd_log(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.run:
         rd, meta = find_run(runs_dir, args.run)
-        if not meta:
-            fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+        refuse_unresolved_run(args.run, rd, meta, runs_dir)
     else:
         # F4: this used to be `runs[-1]` with no filter at all. Apply the same
         # D27 resolution as `resume --last` — exactly one non-terminal run is
@@ -347,7 +383,11 @@ def cmd_log(args):
         sys.stdout.flush()
         m = reap(rd, read_meta(rd) or {})
         st = m.get("state")
-        if st in TERMINAL_STATES:
+        # A terminal line means the run stopped moving — that is the contract
+        # `--follow` is paired with Monitor on. A run whose supervisor died is
+        # terminal while its codex keeps emitting events, so printing it here
+        # ends the stream in the middle of the stream.
+        if st in TERMINAL_STATES and not still_writing(m):
             cursor = dump(cursor)
             sys.stdout.write(f"run.{st} run={m.get('run_id')} exit={m.get('exit_code')}\n")
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
@@ -365,8 +405,7 @@ def cmd_show(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     rd, meta = find_run(runs_dir, args.run)
-    if not meta:
-        fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+    refuse_unresolved_run(args.run, rd, meta, runs_dir)
 
     found, events = find_item(rd / "events.jsonl", args.item)
     if not found:
@@ -442,7 +481,7 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
     # Compare-and-set, not a plain write: the supervisor may have recorded its
     # own outcome (`completed`, or `timed_out` if its deadline fired) between
     # the last signal and this line, and that outcome is the true one.
-    m = update_meta_if(run_dir, ("running", "starting", "stalled"),
+    m = update_meta_if(run_dir, ACTIVE_STATES,
                        state="interrupted", ended_at=now_iso())
     result["state"] = m.get("state")
     result["thread_id"] = m.get("thread_id")
@@ -450,7 +489,7 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
 
 
 def cmd_stop(args):
-    refuse_run_and_group(args, "stop")
+    refuse_competing_selectors(args, "stop", "--run", "--group", "--all")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     session = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -458,8 +497,7 @@ def cmd_stop(args):
         targets = []
         for ref in args.run:
             rd, m = find_run(runs_dir, ref)
-            if not m:
-                fail(f"no such run: {ref}", runs_dir=str(runs_dir))
+            refuse_unresolved_run(ref, rd, m, runs_dir)
             targets.append((rd, m))
     elif args.group:
         # Not a name match on process or label — B8 forbids that, and for good
@@ -470,13 +508,13 @@ def cmd_stop(args):
         targets = []
         for rd, m in resolve_group(runs_dir, args.group):
             m = reap(rd, m)
-            if m.get("state") in ("running", "starting", "stalled"):
+            if m.get("state") in ACTIVE_STATES or still_writing(m):
                 targets.append((rd, m))
     elif args.all:
         targets = []
         for rd, m in iter_runs(runs_dir):
             m = reap(rd, m)
-            if m.get("state") in ("running", "starting", "stalled"):
+            if m.get("state") in ACTIVE_STATES or still_writing(m):
                 targets.append((rd, m))
     else:
         fail("stop needs --run <id> (repeatable), --group <name>, or --all")
@@ -489,7 +527,7 @@ def cmd_stop(args):
 # --------------------------------------------------------------------------
 
 def cmd_result(args):
-    refuse_run_and_group(args, "result")
+    refuse_competing_selectors(args, "result", "--run", "--group")
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
@@ -497,10 +535,11 @@ def cmd_result(args):
     if not args.run:
         fail("result needs --run <id> or --group <name>")
     rd, meta = find_run(runs_dir, args.run)
-    if not meta:
-        fail(f"no such run: {args.run}", runs_dir=str(runs_dir))
+    refuse_unresolved_run(args.run, rd, meta, runs_dir)
     meta = reap(rd, meta)
-    info = scan_progress(rd / "events.jsonl")
+    info = scan_progress(rd / "events.jsonl",
+                         terminal=(meta.get("state") in TERMINAL_STATES
+                                   and not still_writing(meta)))
 
     msg_path = rd / "last-message.txt"
     message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()
@@ -518,8 +557,17 @@ def cmd_result(args):
            "files_changed": info["files_changed"], "commands": info["commands"]}
     if review_zero:
         out["usage_note"] = "review runs report zero usage; unavailable, not free"
+    if info["unparsed_events"]:
+        out["unparsed_events"] = info["unparsed_events"]
     if meta.get("state") not in TERMINAL_STATES:
         out["note"] = f"run is still {meta.get('state')}; this is a partial result"
+    elif still_writing(meta):
+        # Terminal and still writing: the same call ten seconds later returns a
+        # different final message. Handing both back uncaveated is two answers,
+        # each presented as the answer.
+        out["note"] = ("this run has no supervisor left to record its outcome, "
+                       "but its codex process is still running and still "
+                       "writing — so this is a partial result that will change")
 
     if meta.get("schema_path"):
         out["schema_path"] = meta["schema_path"]
@@ -717,7 +765,7 @@ def cmd_doctor(args):
             # a caller consults precisely when they suspect something is stuck,
             # which is exactly when stale state is most likely.
             m = reap(rd, m)
-            if m.get("state") in TERMINAL_STATES:
+            if m.get("state") in TERMINAL_STATES and not still_writing(m):
                 continue
             live.append(m)
         # Overlap, not string equality. `concurrent_writers` — the same check,
@@ -729,10 +777,18 @@ def cmd_doctor(args):
         # already seen. Two implementations of one question is how they drift;
         # this is the second time that has cost something (R20).
         seen = set()
+        by_id = {m.get("run_id"): m for m in live}
         for i, m in enumerate(live):
             group = [m] + [o for j, o in enumerate(live) if j != i
                            and (is_within(o.get("cwd"), m.get("cwd"))
-                                or is_within(m.get("cwd"), o.get("cwd")))]
+                                or is_within(m.get("cwd"), o.get("cwd")))
+                           # A `--as-ready` member inherits its predecessor's
+                           # directory and sits non-terminal beside it, which is
+                           # exactly the shape this looks for — and is the one
+                           # pair that cannot be writing at once. Same exclusion
+                           # `concurrent_writers` makes at creation time; the two
+                           # have already drifted once (R20).
+                           and not ordered_by_waiting(m, o, by_id)]
             if len(group) < 2:
                 continue
             key = tuple(sorted(x.get("run_id") or "" for x in group))
@@ -921,6 +977,13 @@ def build_parser():
                    help="continue an earlier group: task i resumes member i of "
                         "that group, in its start order, keeping its thread and "
                         "its working directory. One task per started member.")
+    b.add_argument("--as-ready", action="store_true",
+                   help="with --resume-from: start each member as soon as the "
+                        "member it continues reaches a terminal state, instead "
+                        "of refusing until every one of them has. Any terminal "
+                        "state releases, including a failure. --timeout still "
+                        "bounds only the Codex turn, never the wait; "
+                        "`stop --group` ends a wait.")
     b.set_defaults(func=cmd_batch_start)
 
     b = bsub.add_parser("clean", help="remove a finished group's worktrees")

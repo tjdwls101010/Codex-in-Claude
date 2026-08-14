@@ -38,9 +38,9 @@ Every subcommand prints **one line of JSON**, except `log`, which prints text pl
 | `start [opts] "<prompt>"` | New thread. Background by default; returns `{run_id, thread_id, state, …}` |
 | `resume <ref\|--last> [opts] "<prompt>"` | Another turn on an existing thread. `<ref>` is a run id, thread id, or thread name |
 | `review [opts] --uncommitted \| --base <ref> \| --commit <sha> \| "<prompt>"` | `codex exec review`'s separate flag surface |
-| `batch start --group <name> --task "…" [--task "…"]…` | N runs as one addressable group. Also `--tasks-file <jsonl>`, `--resume-from <group>` |
+| `batch start --group <name> --task "…" [--task "…"]…` | N runs as one addressable group. Also `--tasks-file <jsonl>`, `--resume-from <group>`, `--as-ready` |
 | `batch clean --group <name> [--force]` | Remove that group's worktrees once you have collected them |
-| `status [--run <id>] [--group <name> [--follow]] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
+| `status [--run <id>] [--group <name> [--follow] [--follow-timeout <sec>]] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
 | `log --run <id> [--since <n>] [--level …] [--follow]` | Filtered events, incrementally |
 | `show --run <id> --item <item_id> [--max-bytes N]` | One item's full output |
 | `stop --run <id>… \| --group <name> \| --all` | Interrupt by process group |
@@ -48,7 +48,7 @@ Every subcommand prints **one line of JSON**, except `log`, which prints text pl
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, resolved paths, runs dir, worktrees |
 | `models` | Model slugs, each model's reasoning efforts, and its default effort |
 
-Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--timeout <sec>`, `--foreground`, `--no-preamble`, `--config k=v`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
+Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--timeout <sec>`, `--foreground`, `--no-preamble`, `--config k=v` (passed to Codex as its own `-c k=v`), `--no-priority`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
 
 `--timeout` works in the background too: at the deadline the run's process group gets SIGINT and the run is recorded `timed_out` — a state of its own, distinct from `interrupted` (you stopped it) and `failed` (Codex did), because only the third is answered by raising the timeout. The thread stays resumable across it, with the pre-timeout turn's context intact.
 
@@ -103,6 +103,8 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **Only `batch start` can isolate writers — plain `resume` cannot.** `start` and `resume` tell you when you are walking into this: a writing run started in a directory another live writing run already occupies comes back with `concurrent_writers` naming them, and `doctor` reports the same thing across the whole registry. Runs in their own worktrees never appear there, because they are the arrangement that makes it safe. There is no `--worktree` on `resume`, and a resumed run inherits its thread's directory. So continuing three writing threads with three `resume` calls puts all three in one directory, editing at once, which is exactly what worktrees exist to prevent. Measured in an e2e session: it did precisely this, and got away with it only because the three bugs happened to be in three different files. To continue several writers at once, use `batch start --resume-from <group>` — that is the path that assigns worktrees.
 
+**`--resume-from` waits for the whole previous group unless you say otherwise.** It refuses while any member of phase 1 is live, so the slowest member holds up every phase-2 task including ones whose own predecessor finished minutes ago. The invariant behind that refusal is one turn per thread, which is per thread — `--as-ready` starts each member the moment the member it continues reaches a terminal state, and leaves the invariant intact. `references/orchestration.md` has the rules; the ones worth knowing up front are that any terminal state releases a member (a failed predecessor still starts its successor, and `predecessor_state` says so) and that a wait is unbounded, ended only by the predecessor finishing or by `stop`.
+
 **A batch outlives the session that started it, and is findable.** `status` lists this project's `groups`, and each run row carries its `group` and `worktree`. Reach for that before assuming a set of earlier runs were unrelated — the group name is what `status --group`, `result --group` and `--resume-from` all need, and it is the one thing about a batch you cannot re-derive.
 
 **A batch is not delivered until you have collected it.** `batch start` returns as soon as the members are spawned; the answer is in `result --group`, which is a separate call you have to make. Two e2e sessions started a batch correctly, launched a background wait, and then ended the turn telling the user they would report back — which never happened, because nothing resumed them. If more turns are coming, pair `status --group --follow` with **Monitor** and collect when it fires. If this is your only turn, run `status --group --follow --follow-timeout <sec>` in the foreground so the call blocks until the group ends, then collect. Never end on a promise: say what you have, or wait for it.
@@ -113,7 +115,7 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **`CODEX_HOME` may be overridden**, so `~/.codex` is not reliably where sessions, config and auth live. `doctor` prints the resolved value.
 
-**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** Measured: `gpt-5.6-sol` accepts effort up through `ultra`; `gpt-5.6-luna` has no `ultra` and tops out at `max`; `gpt-5.5` stops at `xhigh`. Leave `--effort` off and the CLI sends nothing at all — the server applies that model's own default reasoning level, and `models` reports it per model rather than this doc naming one. That the default is picked server-side, not by this wrapper, is visible in Codex's own thread DB: a thread started with no `--effort` records `reasoning_effort = NULL`, while one that inherited config records `xhigh` (V-31). A `--model` or `--effort` this Codex install does not offer is now refused before the run spawns, and the refusal names the valid efforts for that model — so a typo costs nothing instead of a wasted run discovered late.
+**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** Measured: `gpt-5.6-sol` accepts effort up through `ultra`; `gpt-5.6-luna` has no `ultra` and tops out at `max`; `gpt-5.5` stops at `xhigh`. Leave `--effort` off and the CLI sends nothing at all — the server applies that model's own default reasoning level, and `models` reports it per model rather than this doc naming one. That the default is picked server-side, not by this wrapper, is visible in Codex's own thread DB: a thread started with no `--effort` records `reasoning_effort = NULL`, while one that inherited config records `xhigh`. A `--model` or `--effort` this Codex install does not offer is now refused before the run spawns, and the refusal names the valid efforts for that model — so a typo costs nothing instead of a wasted run discovered late.
 
 ## Background work and parallelism
 

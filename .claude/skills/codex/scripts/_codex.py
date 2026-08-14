@@ -26,7 +26,9 @@ import unicodedata
 from pathlib import Path
 
 from _events import final_usage, first_thread_id
-from _registry import read_meta, update_meta
+from _registry import (
+    TERMINAL_STATES, read_meta, reap, still_writing, update_meta,
+)
 from _util import codex_home, nfc, now_iso
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
@@ -373,9 +375,29 @@ BATCH_PREAMBLE = (
 WORKTREE_PREAMBLE = (
     "[Working tree: yours is an isolated git worktree at {path}, created from "
     "commit {base}. It is not the tree the person who started you is looking at, "
-    "and it does not contain the {uncommitted} uncommitted file(s) that exist in "
-    "theirs.]"
+    "and {uncommitted}]"
 )
+
+
+def uncommitted_clause(n) -> str:
+    """The caller's uncommitted work is absent from this checkout either way;
+    only the count can be unknown.
+
+    This paragraph exists to correct a confident falsehood — Codex otherwise
+    assumes it is looking at the caller's tree — so it is the last place that
+    should manufacture one. `uncommitted_count` answering 0 for "git would not
+    say" put a clean-tree claim in front of the model on evidence it never had.
+    """
+    if n is None:
+        return ("it does not contain the uncommitted file(s) that exist in "
+                "theirs — git could not count them, so how many is unknown.")
+    if n == 0:
+        # Spelled out rather than left to the sentence below, which for zero
+        # reads as a double negative around a number — "it does not contain the
+        # 0 uncommitted file(s) that exist in theirs" — and a clean tree is the
+        # ordinary case, not the edge one.
+        return "there is no uncommitted work in theirs for it to be missing."
+    return f"it does not contain the {n} uncommitted file(s) that exist in theirs."
 
 
 def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
@@ -390,7 +412,7 @@ def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
         if batch.get("worktree"):
             parts.append(WORKTREE_PREAMBLE.format(
                 path=batch["worktree"], base=(batch.get("base") or "?")[:12],
-                uncommitted=batch.get("uncommitted", 0)))
+                uncommitted=uncommitted_clause(batch.get("uncommitted"))))
     return "\n\n".join(parts + [prompt])
 
 
@@ -419,6 +441,123 @@ def spawn_supervised(run_dir: Path) -> int:
     return p.pid
 
 
+# How often a waiting supervisor asks whether its predecessor is done. A whole
+# turn is minutes; the cost of a slower tick is latency nobody notices, and the
+# cost of a faster one is a poll loop reading meta.json many times a second for
+# the entire length of somebody else's turn.
+WAIT_POLL = 0.5
+
+# How far a chain is followed before the walk gives up. `waits_for` is a field
+# on disk like any other, so a hand-edited or half-written cycle must exhaust a
+# bound rather than hang the supervisor. Matches `_run.wait_chain`'s limit,
+# which is the same walk made by the guard that let this run be created.
+WAIT_CHAIN_LIMIT = 64
+
+
+def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
+    """Block until the run this one is chained behind reaches a terminal state.
+
+    Returns the refreshed meta, or None if the wait was interrupted.
+
+    The waiting happens here, inside a supervisor that already exists, rather
+    than in a queue that some other process drains. That is what keeps
+    `--as-ready` clear of D34, where a queued run with no supervisor of its own
+    was branded `orphaned` within thirty seconds of being queued.
+
+    `supervisor_pid` and `pgid` are recorded BEFORE the wait, not after Codex
+    spawns as they are on the ordinary path. Everything that judges whether a
+    run is still alive asks those two fields, and a wait is unbounded — leaving
+    them null until Codex starts would make every waiter look like a run whose
+    supervisor had died, and make `stop` unable to signal it. `pgid` is valid
+    this early because `spawn_supervised` starts this process with
+    `start_new_session=True`, so it is already its own process-group leader and
+    Codex will join that same group.
+    """
+    runs_dir = run_dir.parent
+    update_meta(run_dir, state="waiting", supervisor_pid=os.getpid(),
+                pgid=os.getpgid(os.getpid()))
+    while True:
+        if interrupted["flag"]:
+            update_meta(run_dir, state="interrupted", ended_at=now_iso(),
+                        error="interrupted while waiting for "
+                              f"{meta['waits_for']} to finish")
+            return None
+        # The WHOLE chain, not just the direct predecessor. `create_run` was let
+        # past the concurrent-turn guard on the promise that everything ahead of
+        # this run finishes first, and watching one link does not keep it: a
+        # middle waiter whose supervisor is killed is `orphaned` — terminal — the
+        # moment this loop reaps it, so this run would start its turn while its
+        # *grandparent* was still running one on the same thread. Two turns on
+        # one rollout file is the F4 corruption the guard exists to prevent, and
+        # the chain exemption is what opened the door to it: without that
+        # exemption this run could not have been created at all.
+        pending, unreadable, cyclic = [], None, False
+        seen, cur = set(), meta["waits_for"]
+        while cur and len(seen) < WAIT_CHAIN_LIMIT:
+            if cur in seen:
+                # `waits_for` is a field on disk, so a hand-edited or
+                # half-written cycle is possible — and a cycle can never
+                # resolve, because every run in it is waiting for another run in
+                # it. Bounding the walk keeps this tick finite; saying so is
+                # what keeps the run from waiting forever on an answer that
+                # cannot arrive, which is the failure `reap` refuses.
+                cyclic = True
+                break
+            seen.add(cur)
+            pmeta = read_meta(runs_dir / cur)
+            if pmeta is None:
+                unreadable = cur
+                break
+            # `reap`, not `read_meta` alone: a predecessor whose supervisor died
+            # mid-turn says `running` until something calls `reap` on that
+            # specific run, and nothing else here ever would. `status --group`
+            # resolves only its own group's members, so a caller following phase
+            # 2 never touches phase 1 — and every waiter behind it would block
+            # forever.
+            pmeta = reap(runs_dir / cur, pmeta)
+            # A live Codex counts as pending whatever the state says. A link
+            # whose supervisor died keeps its `codex exec` — Unix does not
+            # cascade-kill children — and `reap` correctly calls that
+            # `orphaned`, meaning "nobody is recording this", not "nothing is
+            # running". Releasing on that would put this run's turn onto a
+            # rollout file the other process is still appending to.
+            if (pmeta.get("state") not in TERMINAL_STATES
+                    or still_writing(pmeta)):
+                pending.append(cur)
+            cur = pmeta.get("waits_for")
+        if cyclic:
+            update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
+                        error="the chain of runs this one waits for loops back "
+                              "on itself, so it can never finish")
+            return None
+        if unreadable is not None:
+            # Its directory is gone, or its meta will not parse. Either way this
+            # supervisor can no longer learn when the turn it is chained behind
+            # ends, and blocking forever on a question that can never be answered
+            # is the failure `reap` exists to refuse.
+            update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
+                        predecessor_state="unreadable",
+                        error=f"a run this one waits for ({unreadable}) can no "
+                              f"longer be read, so there is nothing left to "
+                              f"wait for")
+            return None
+        if not pending:
+            # Re-checked here, not only at the top of the loop. A stop landing
+            # between the two would otherwise be swallowed: the wait ends, the
+            # caller's signal is never consulted again, and `supervise` spawns
+            # Codex for a full un-signalled turn. That is worse than the
+            # already-accepted race where a turn is nearly done, because here
+            # nothing has started yet and the stop was entirely in time.
+            if interrupted["flag"]:
+                update_meta(run_dir, state="interrupted", ended_at=now_iso(),
+                            error="interrupted just as the wait ended")
+                return None
+            direct = read_meta(runs_dir / meta["waits_for"]) or {}
+            update_meta(run_dir, predecessor_state=direct.get("state"))
+            return read_meta(run_dir) or meta
+        time.sleep(WAIT_POLL)
+
+
 def supervise(run_dir: Path, timeout=None) -> int:
     """Spawn Codex, record what happened, exit. Runs as its own process."""
     meta = read_meta(run_dir)
@@ -443,6 +582,11 @@ def supervise(run_dir: Path, timeout=None) -> int:
         except ValueError:
             pass
 
+    if meta.get("waits_for"):
+        meta = await_predecessor(run_dir, meta, interrupted)
+        if meta is None:
+            return 130
+
     events_path = run_dir / "events.jsonl"
     out = events_path.open("ab")
     err = (run_dir / "stderr.log").open("ab")
@@ -465,6 +609,19 @@ def supervise(run_dir: Path, timeout=None) -> int:
         # --timeout, that would surface as intermittent lifecycle-test failures
         # that read as flakiness.
         kwargs["start_new_session"] = True
+    if not Path(meta["cwd"]).is_dir():
+        # `Popen` raises the same FileNotFoundError for a missing cwd as for a
+        # missing executable, and the handler below reported both as "codex not
+        # found on PATH". The window between recording a cwd and using it was
+        # milliseconds until `--as-ready` made it as long as somebody else's
+        # turn — long enough for `batch clean --force` to remove the worktree a
+        # waiter is chained into — so the two have to be told apart.
+        update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
+                    error=f"the working directory recorded for this run is gone: "
+                          f"{meta['cwd']}")
+        out.close()
+        err.close()
+        return 1
     try:
         proc = subprocess.Popen(
             meta["argv"], cwd=meta["cwd"], stdout=out, stderr=err,
@@ -482,7 +639,8 @@ def supervise(run_dir: Path, timeout=None) -> int:
     except Exception:
         pgid = None
     update_meta(run_dir, state="running", codex_pid=proc.pid,
-                supervisor_pid=os.getpid(), pgid=pgid)
+                supervisor_pid=os.getpid(), pgid=pgid,
+                codex_started_at=now_iso())
 
     deadline = time.time() + THREAD_ID_WAIT
     tid = None

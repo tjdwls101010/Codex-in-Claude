@@ -170,6 +170,55 @@ class CitationsResolve(unittest.TestCase):
                         f"the repository — the citation points at nothing")
 
 
+class TheTriggerBoundary(unittest.TestCase):
+    """What makes this skill fire, and what keeps it from firing.
+
+    T4 measures the boundary properly, by running headless sessions against
+    near-miss prompts — "review these three files at once" must not delegate,
+    and "does this project document which GPT models it works with" must not
+    either, because there the word GPT is the subject of a question rather than
+    an instruction. Those runs cost real tokens and are composed fresh each
+    time, so nothing about them lives in this repository.
+
+    The *mechanism* does live here: a skill is selected on its `description`,
+    and the negative half of that description is the only thing standing between
+    a documentation question about GPT and a spawned Codex run. Deleting a
+    clause is silent — the skill simply starts firing more often, and nobody
+    finds out until a session delegates something it should have answered.
+    This does not replace T4; it pins the surface T4 measures.
+    """
+
+    def description(self) -> str:
+        front = SKILL_MD.read_text().split("---")[1]
+        body = front.split("description:", 1)[1]
+        return body.split("allowed-tools:", 1)[0]
+
+    def test_the_positive_triggers_survive(self):
+        """Both languages, and the delegation verbs. Korean matters as much as
+        English here: this skill is used from Korean prompts."""
+        for trigger in ("codex", "코덱스", "GPT", "delegate to codex",
+                        "resume codex"):
+            with self.subTest(trigger=trigger):
+                self.assertIn(trigger, self.description())
+
+    def test_the_boundary_clauses_survive(self):
+        """Each of these keeps a real near-miss out. Claude's own subagents and
+        background Bash are Claude doing the work; Codex Cloud and the server
+        modes are different products this bridge does not drive."""
+        for clause in ("Not for Claude's own subagents", "background Bash",
+                       "Not for Codex Cloud"):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, self.description())
+
+    def test_the_description_still_says_what_the_skill_does(self):
+        """A description that is all triggers and boundaries routes badly. The
+        capabilities have to be in there too, since that is what a model
+        matches an unfamiliar phrasing against."""
+        for capability in ("background", "resume", "log", "sandbox"):
+            with self.subTest(capability=capability):
+                self.assertIn(capability, self.description())
+
+
 class PollingIsPreApproved(unittest.TestCase):
     """B18. `allowed-tools` is what makes repeated polling free of prompts."""
 

@@ -429,7 +429,9 @@ The T1 fake `codex` had not caught this because it did not parse argv the way cl
 
 ### T2 — real Codex integration
 
-Run at M9 against `codex-cli 0.144.1`, throwaway git repo, **8/8 passing** in 88 s.
+Run at M9 against `codex-cli 0.144.1`, throwaway git repo, **8/8 passing** in 88 s. Grown to fifteen cases at v0.2.0.
+
+**Re-run 2026-08-14 against `codex-cli 0.147.0`, after this round changed `create_run`, `supervise` and the batch paths: 14/15 in 221 s, and the fifteenth passes on its own.** I15 asks two members to each create a file and then checks that `batch clean` refuses both dirty worktrees; on the failing run one member did not create its file, so that worktree was clean, removable without `--force`, and the assertion that nothing was removed failed. **The case depends on the model performing a task, which makes it flaky by construction** — worth knowing before someone debugs it as a regression. Everything the round actually touched passed, including I4 (the sandbox invariant across a resume), I9 (three distinct threads and process groups), I11 (`--resume-from` continuing each member on its own thread), I12 (a refused member not taking the batch with it) and I14 (`--timeout` recording `timed_out` and the thread resuming afterwards).
 
 | ID | Verdict | Evidence |
 |---|---|---|

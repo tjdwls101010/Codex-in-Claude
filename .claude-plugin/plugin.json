@@ -2,7 +2,7 @@
   "name": "codex",
   "displayName": "Codex in Claude",
   "description": "Run OpenAI Codex as a managed subagent from Claude Code — start work in the background, watch its live event log at a controlled level of detail, interrupt and redirect a run, resume earlier Codex threads, and collect results as text or schema-validated JSON. Runs several at once as one addressable group, each writer in its own git worktree. Holds a run's sandbox stable across turns, which the Codex CLI itself does not.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "seongjin",
     "url": "https://github.com/tjdwls101010"

@@ -2,6 +2,64 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-08-14
+
+Two new capabilities, and twenty-one defects found by running the thing rather than reading it. The theme is the same one the previous version had, arriving one layer up: almost every defect here is a **confident wrong answer** — the command succeeded, the JSON parsed, and what it said was not true.
+
+**Read Changed before upgrading.** Two things that used to work are now refused, and one JSON field can now be `null` where it was always a number.
+
+### Added
+
+- **`batch start --resume-from <group> --as-ready`** — start each member of a next phase as soon as the member *it* continues finishes, instead of waiting for the slowest member of the previous group. A five-member phase whose first task finishes in a minute and whose last takes twenty no longer holds four members idle for nineteen of them.
+
+  The barrier it replaces was never a concurrency requirement — it existed to stop a phase 2 from half-starting against a phase 1 that was half-finished. The invariant underneath is one turn per thread, and that is per *thread*, so member 3's next phase is safe to begin the moment member 3's current one ends. There is no queue and no group supervisor: each member spawns its own supervisor immediately, exactly as before, and that supervisor waits before it starts Codex. A queued run with nothing supervising it is reaped as `orphaned` within thirty seconds, which is why the earlier `--max-concurrent` idea was abandoned and why this one is shaped differently.
+
+  A waiting member reports `state: "waiting"` with `waits_for` naming the run it is behind. Any terminal state releases it, including a failure — `predecessor_state` says how its predecessor ended, and "work out what went wrong" is a legitimate next phase. Chains work: `p1 → p2 → p3` can all be registered up front. `--timeout` bounds the Codex turn, never the wait; `stop --group` is what ends a wait.
+
+- **`codex_bridge.py models`**, and pre-flight validation of `--model` and `--effort` against it. Valid reasoning efforts differ per model — `gpt-5.6-sol` accepts `ultra`, `gpt-5.6-luna` stops at `max`, `gpt-5.5` at `xhigh` — so a typo used to cost a spawned run that failed at the API. It is now refused before anything is claimed on disk, with the valid efforts for that model named. The catalog is read from Codex rather than hardcoded, because any static list is already wrong for some model the day it is written.
+
+- **`codex_elapsed_seconds`** on every run row: how long the *turn* has taken, as distinct from how long the run has existed. They differ only for a member that waited, which is exactly the member the question gets asked about.
+
+- **`unparsed_events`**, reported when non-zero, counting lines of the event stream that could not be read. `status` and `result` previously summarised a damaged stream identically to a clean one.
+
+### Changed
+
+- **`batch start --foreground` is now refused.** It ran the batch one member at a time: `task_args` copied the flag onto every member and nothing downstream ever looked at it, so the spawn loop waited out each member's entire Codex turn before starting the next. Measured: three members hanging two seconds each took 7.15 seconds, with their run ids two seconds apart, and the reply had the same shape it would have had concurrently. To block until a batch is done, start it and then `status --group <name> --follow`.
+
+- **`stop --run X --all` is now refused.** `--all` was silently dropped and only the named run was stopped, with a success reply. `status --run X --all` is unaffected and still means what it meant — there `--all` lifts a row-count cap rather than selecting anything.
+
+- **`uncommitted_files_in_caller_tree` can now be `null`.** It was `0` when `git status --porcelain` failed, so "there are none" and "I could not tell" left by the same door — and that number is stated to Codex as fact in the worktree preamble, which exists precisely to correct a confident falsehood. A corrupt `.git/index` makes `status` exit 128 while `rev-parse` and `worktree add` both still succeed, so the batch got far enough to write the sentence. The preamble now says the count is unknown when it is.
+
+- **A run whose `meta.json` will not parse is no longer reported as a run that never existed.** `status`, `log`, `show`, `stop` and `result` answered `no such run` for a directory sitting on disk with its event stream intact. They now say what is actually wrong and where to look.
+
+- **A corrupt group manifest is no longer a permanent dead end.** `batch clean --group X --force` could not clear it, because the check ran before `--force` was ever consulted — so the members' worktrees, which hold the only copy of what those runs produced, were stranded with no way out. Membership does not depend on the manifest (each run records its own group), so only `--resume-from`, which needs the recorded order, still refuses.
+
+### Fixed
+
+- **Two turns could run on one thread**, racing the same rollout file — the corruption the whole guard system exists to prevent — through three separate routes. A run whose `meta.json` was unreadable was invisible to the concurrent-turn guard, because the thread id and the state both live in the file that will not parse. A supervisor killed on its own leaves its `codex exec` running, and `reap` correctly records `orphaned`, which anything reading terminal as "safe to start" then treated as free. And a member chained behind another could start when its direct predecessor went terminal while its *grandparent* was still mid-turn.
+
+  `orphaned` keeps its meaning — nothing is left to *record* this run's outcome, which is not the same as nothing running. What changed is that every place asking whether a **thread** is free now asks whether anything is still writing, rather than reading a state that answers a different question.
+
+- **`stop --group` and `stop --all` reported success having signalled nothing**, for a run whose supervisor had died while its Codex kept writing. An empty `stopped` list with exit status 0 — and `stop` is the escape hatch every other refusal points at.
+
+- **`batch clean` could delete a live member's worktree with no `--force`**, in the loop whose own comment names that case as the first thing that must stop a clean. git independently refuses to remove a *dirty* worktree, so work already written was safe; a run that had just committed, or was still reading before writing, was not. Relatedly, `--force` released a group name while a live member still claimed it, after which reclaiming the name broke the new owner's own `batch clean`.
+
+- **`status --group --follow` and `log --follow` could print their terminal line and exit while events were still arriving**, which is precisely the contract they are paired with the Monitor tool on. `result` could return two different "final" messages ten seconds apart with neither marked partial.
+
+- **`doctor` and `concurrent_writers` invented a collision** between a waiting member and the predecessor it is queued behind — they share a directory by design and are the one pair that cannot write at once — and went silent about a real one, a still-writing run in the same directory, which they are the only surfaces able to report.
+
+- **A `waiting` member was invisible to seven places** that asked "is this active" against a hand-written list of states instead of the shared one: `stop` skipped it, a group of waiters reported `completed` on its first poll, and plain `status` counted it in no summary bucket while `status --group` counted it as running.
+
+- **The test suite had been dead and said it was fine.** Moving `tests/` to `tests/legacy/` shifted every path constant by one directory and killed all 301 tests, and the documented command answered `NO TESTS RAN` with exit status 0. Fixed, and the suite now asserts that every command written in the contributing guide and the wiki actually collects tests — a suite cannot notice its own absence unless something makes it.
+
+### Known limitations
+
+Everything listed under 0.3.0 still applies, with two updates.
+
+- Measurements are now against `codex-cli 0.147.0`. The integration tier passes 14 of 15 in one run and 15 of 15 across two: case I15 asks two Codex runs each to create a file and then checks that `batch clean` refuses both dirty worktrees, so it depends on the model performing a task and is **flaky by construction**. Worth knowing before anyone debugs it as a regression.
+- The concurrency question the previous version listed as unmeasured — several processes driving one project — is now measured two ways: a ten-oracle soak in the suite, and independent agents driving one repository at once. Neither runs for hours, neither exceeds a handful of concurrent writers, and both use the fake Codex shim, so what is proven is the bridge's own concurrency rather than Codex's behaviour under it.
+- **The defect-discovery rate has not converged.** Four review rounds ran for this version and none came back clean; three of them found defects in the *previous* round's fixes. The project's own bar — two consecutive rounds finding nothing reachable in ordinary single-session use — is not met and is not claimed.
+
 ## [0.3.0] — 2026-08-04
 
 A verification round, and what it found. No new capability: this version exists because the previous one was measured properly for the first time — every user-facing flag driven against the real Codex CLI, deliberate faults injected, and four adversarial review rounds. Nineteen defects came out of that, and their common shape is the reason to upgrade: almost all of them were **silent**. The command succeeded, the JSON parsed, and the answer was wrong.
@@ -116,6 +174,7 @@ First release. A Claude Code plugin containing one skill (`codex`) that drives t
 - **`codex cloud` and `codex mcp-server`/`app-server` are out of scope**, both documented upstream as subject to change without notice.
 - Measurements were taken against `codex-cli 0.144.1` on a single machine. The thread database filename is version-stamped, so a Codex upgrade may degrade `--include-external` and a registry-less `resume --last`; `doctor` reports that case rather than failing.
 
+[0.4.0]: https://github.com/tjdwls101010/Codex-in-Claude/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tjdwls101010/Codex-in-Claude/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tjdwls101010/Codex-in-Claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tjdwls101010/Codex-in-Claude/releases/tag/v0.1.0

@@ -25,7 +25,7 @@ Run this tier before opening any pull request — it's fast, free, and covers mo
 CODEX_SKILL_TEST_INTEGRATION=1 python3 tests/legacy/integration/run_integration.py
 ```
 
-Gated behind an explicit environment variable so it never runs by accident, since it consumes real API usage. Spins up a throwaway git repository and drives the real bridge against the real, authenticated `codex` binary. **15 of 15 cases passing**, in about four minutes, verified against `codex-cli 0.146.0`:
+Gated behind an explicit environment variable so it never runs by accident, since it consumes real API usage. Spins up a throwaway git repository and drives the real bridge against the real, authenticated `codex` binary. **15 of 15 cases passing**, in about four minutes, verified against `codex-cli 0.147.0` — with one caveat: I15 asks two members each to create a file and then checks that `batch clean` refuses both dirty worktrees, so it depends on the model performing a task and is flaky by construction. On the 2026-08-14 run it failed once that way and passed on its own immediately after:
 
 | Case | What it verifies |
 |---|---|

@@ -44,7 +44,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 **Prerequisites**
 
-- [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.146.0`, already authenticated (`codex login`)
+- [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.147.0`, already authenticated (`codex login`)
 - Python 3.10+ — standard library only, no extra packages to install
 - Claude Code 2.1.220 or later
 
@@ -183,7 +183,7 @@ This README gets you running. Everything else lives in [`docs/wiki/`](docs/wiki/
 
 ## 6. Project Status
 
-Codex in Claude is at **v0.3.0** — an early, actively developed release, verified against `codex-cli 0.146.0` and Claude Code `2.1.220+`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
+Codex in Claude is at **v0.4.0** — an early, actively developed release, verified against `codex-cli 0.147.0` and Claude Code `2.1.220+`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
 
 **Upgrading from v0.1.0?** Two removals are breaking: the `SessionEnd` cleanup hook (and `--detach` with it) and `stop --all-mine`. Background runs are no longer stopped when a session ends — `status --all` finds them and `stop --run <id>`/`stop --all` ends them, and `doctor` now reports what the registry is holding. See the [changelog](CHANGELOG.md#020--2026-08-02).
 

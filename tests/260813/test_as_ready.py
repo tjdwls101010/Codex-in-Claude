@@ -145,6 +145,42 @@ class WhatTheCallerGetsBack(AsReadyBase):
                                  "so it is known before Codex starts")
 
 
+class TimeoutBoundsTheTurnNotTheWait(AsReadyBase):
+    """`--timeout` is consumed by `proc.wait()`, which happens after the wait
+    loop has already released — so a deadline a caller sets to keep an
+    unattended pipeline honest does not apply while a member is queued.
+
+    That is documented, and documenting it is why it needs a test: a later
+    change that made the deadline cover the wait too would leave the sentence
+    quietly wrong, which is the failure the doc-versus-CLI checks exist for.
+    """
+
+    def test_a_waiting_member_is_not_timed_out_while_it_waits(self):
+        self.phase_one(hang=10, n=1)
+        self.addCleanup(self.bridge_raw, "stop", "--all")
+        out = self.phase_two(n=1, extra=("--timeout", "1"))
+        rid = out["runs"][0]["run_id"]
+        self.wait_for_state(rid, "waiting")
+        time.sleep(3)
+        self.assertEqual(
+            self.meta(rid)["state"], "waiting",
+            "a 1-second --timeout ended a wait it does not bound")
+
+    def test_the_deadline_still_applies_once_the_turn_starts(self):
+        """The other half: the flag must not become a no-op for chained
+        members either."""
+        _, members = self.phase_one(hang=10, n=1)
+        self.addCleanup(self.bridge_raw, "stop", "--all")
+        out = self.phase_two(n=1, extra=("--timeout", "1"),
+                             env_extra={"FAKE_CODEX_HANG": 20})
+        rid = out["runs"][0]["run_id"]
+        self.wait_for_state(rid, "waiting")
+        self.bridge("stop", "--run", members[0])
+        self.wait_terminal(members[0])
+        m = self.wait_terminal(rid, timeout=30)
+        self.assertEqual(m["state"], "timed_out")
+
+
 class WaitingIsVisibleEverywhere(AsReadyBase):
     """`waiting` is not in TERMINAL_STATES, but several sites test membership of
     a hardcoded ACTIVE tuple instead, and a state missing from both is invisible

@@ -17,11 +17,14 @@ that closes it has to start from the parser, not from the prose.
 from __future__ import annotations
 
 import argparse
+import re
 import unittest
 
-from helpers import SKILL_MD  # noqa: F401  (imported for sys.path side effect)
+from helpers import SKILL_MD
 
 import codex_bridge  # noqa: E402
+
+TABLE_ROW_RE = re.compile(r"^\|\s*`([a-z][a-z ]*)`\s*\|")
 
 
 def option_surface(parser, path=""):
@@ -49,6 +52,49 @@ def option_surface(parser, path=""):
         name = action.option_strings[0] if action.option_strings else action.dest
         out.append((path or "(top level)", name, action.help))
     return out
+
+
+def runnable_subcommands(parser, path=""):
+    """Every command path a caller can actually invoke.
+
+    Leaves only: `batch` alone is not one of them, because its own subparsers
+    are `required=True`, so `batch` with nothing after it is a usage error
+    rather than a command.
+    """
+    nested = [a for a in parser._actions
+              if isinstance(getattr(a, "choices", None), dict) and a.choices]
+    if not nested:
+        return {path}
+    out = set()
+    for action in nested:
+        hidden = {c.dest for c in getattr(action, "_choices_actions", [])
+                  if c.help is argparse.SUPPRESS}
+        for name, sub in action.choices.items():
+            if name not in hidden:
+                out |= runnable_subcommands(sub, f"{path} {name}".strip())
+    return out
+
+
+class TheCommandTableIsTheWholeSurface(unittest.TestCase):
+    """SKILL.md keeps a map of what exists; `--help` owns everything below it.
+
+    The map earns its ~370 tokens by saving a call: a model that does not know
+    `batch` exists never thinks to ask `--help` about it. But it is still a
+    hand-kept copy of what the parser knows, and that is the arrangement that
+    let seven flags drift. So the copy stays and the drift does not.
+    """
+
+    def table_commands(self):
+        return {m.group(1).strip()
+                for m in map(TABLE_ROW_RE.match, SKILL_MD.read_text().splitlines())
+                if m}
+
+    def test_the_table_lists_every_runnable_command_and_no_others(self):
+        self.assertEqual(
+            self.table_commands(),
+            runnable_subcommands(codex_bridge.build_parser()),
+            "SKILL.md's command table and the CLI's actual commands have "
+            "diverged; the table is what tells a caller a command exists at all")
 
 
 class EveryFlagExplainsItself(unittest.TestCase):

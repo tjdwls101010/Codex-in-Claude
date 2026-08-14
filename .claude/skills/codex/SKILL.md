@@ -35,20 +35,20 @@ Every subcommand prints **one line of JSON**, except the two that stream: `log`,
 
 | Command | What it does |
 |---|---|
-| `start [opts] "<prompt>"` | New thread. Background by default; returns `{run_id, thread_id, state, …}` |
-| `resume <ref\|--last> [opts] "<prompt>"` | Another turn on an existing thread. `<ref>` is a run id, thread id, or thread name |
-| `review [opts] --uncommitted \| --base <ref> \| --commit <sha> \| "<prompt>"` | `codex exec review`'s separate flag surface |
-| `batch start --group <name> --task "…" [--task "…"]…` | N runs as one addressable group. Also `--tasks-file <jsonl>`, `--resume-from <group>`, `--as-ready` |
-| `batch clean --group <name> [--force]` | Remove that group's worktrees once you have collected them |
-| `status [--run <id>] [--group <name> [--follow] [--follow-timeout <sec>]] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
-| `log --run <id> [--since <n>] [--level …] [--follow]` | Filtered events, incrementally |
-| `show --run <id> --item <item_id> [--max-bytes N]` | One item's full output |
-| `stop --run <id>… \| --group <name> \| --all` | Interrupt by process group |
-| `result --run <id> \| --group <name>` | Final message, usage, parsed JSON when `--schema` was used |
+| `start` | New thread. Background by default; returns `{run_id, thread_id, state, …}` |
+| `resume` | Another turn on an existing thread, including one started in the Codex TUI |
+| `review` | Read-only findings on a diff — `codex exec review`'s separate flag surface |
+| `batch start` | N runs as one addressable group, each writing member in its own worktree |
+| `batch clean` | Remove a group's worktrees once you have collected them, releasing its name |
+| `status` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
+| `log` | Filtered events, incrementally, from a cursor |
+| `show` | One item's full output |
+| `stop` | Interrupt a run, a group, or everything, by process group |
+| `result` | Final message, usage, parsed JSON when `--schema` was used |
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, resolved paths, runs dir, worktrees |
 | `models` | Model slugs, each model's reasoning efforts, and its default effort |
 
-Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--timeout <sec>`, `--foreground`, `--no-preamble`, `--config k=v` (passed to Codex as its own `-c k=v`), `--no-priority`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
+Which flags each takes, what they default to, and what each accepts: **`$CODEX <command> --help`**. This file does not list them. A second copy of the option surface is a second thing that can be wrong, and this one was — seven flags reached the CLI without ever reaching the prose.
 
 ## Which mode
 
@@ -97,7 +97,7 @@ That byte count is there so fetching output is a decision, not a guess: `show --
 
 This works because **the agent's own messages are never filtered at any level**. Codex states what it found and what it did, so raw output is usually a second copy of a summary you already have. Reach for `show` when you need to check the summary rather than read it — a claim looks wrong, or the run stopped before it explained itself.
 
-Levels: `compact` (default) · `normal` adds output for **failed** commands only · `full` adds capped output for every item · `raw` passes events through. Measured costs and the reason `compact` is the default are in `references/event-stream.md`. Raise to `normal` when a command failed and the agent's account of it is not enough to act on — that is the one case where the withheld bytes are the diagnosis rather than a copy of it.
+`log --help` says what each of the four `--level` values includes. What it cannot say is when to leave the default: raise to `normal` when a command failed and the agent's account of it is not enough to act on — that is the one case where the withheld bytes are the diagnosis rather than a copy of it. Measured costs, and why `compact` is the default rather than the smallest, are in `references/event-stream.md`.
 
 ## Gotchas
 
@@ -112,8 +112,6 @@ These are the traps that cost a real failure to learn. Everything else about dri
 **A project's `AGENTS.md` is loaded even under isolation.** `--ignore-user-config` drops the user's config, plugins and MCP servers, but the repository's own `AGENTS.md` is still injected verbatim as a developer instruction (measured). That makes it a briefing channel that survives isolation — and equally, means whatever is in it is in every run you start there, whether you intended it or not. `doctor` reports whether the project has one.
 
 **stderr is normal output.** Codex writes `Reading additional input from stdin...` to stderr on every non-TTY run. Never treat stderr content as failure; `status` already filters that line out and shows you the rest.
-
-**`review` reports zero token usage.** Measured on every review run: `turn.completed` comes back all zeros after real work. `status` and `result` report usage as `null` for review runs — that means unavailable, not free.
 
 **Never kill Codex by process name.** `stop` signals one run's recorded process group. Matching `codex exec` by name kills every Codex on the machine, including runs started by another session or another person.
 
@@ -131,7 +129,7 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **`CODEX_HOME` may be overridden**, so `~/.codex` is not reliably where sessions, config and auth live. `doctor` prints the resolved value.
 
-**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** Measured: `gpt-5.6-sol` accepts effort up through `ultra`; `gpt-5.6-luna` has no `ultra` and tops out at `max`; `gpt-5.5` stops at `xhigh`. Leave `--effort` off and the CLI sends nothing at all — the server applies that model's own default reasoning level, and `models` reports it per model rather than this doc naming one. That the default is picked server-side, not by this wrapper, is visible in Codex's own thread DB: a thread started with no `--effort` records `reasoning_effort = NULL`, while one that inherited config records `xhigh`. A `--model` or `--effort` this Codex install does not offer is now refused before the run spawns, and the refusal names the valid efforts for that model — so a typo costs nothing instead of a wasted run discovered late.
+**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** With no `--effort` the CLI sends nothing at all and the server applies that model's own default, which is also per-model. `models` reports both, live — a list named here would be wrong for some model the day it was written, which is why a value this install does not offer is checked against that catalog before the run spawns rather than against anything in this file.
 
 ## Background work and parallelism
 

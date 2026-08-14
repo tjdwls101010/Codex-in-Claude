@@ -31,24 +31,24 @@ python3 "<base directory>/scripts/codex_bridge.py" status
 
 If a call fails with "No such file or directory", the path is wrong and `doctor` cannot help you find it — it is the same script. Locate the file first: the `Base directory for this skill:` line above is the answer, and `ls "<base directory>/scripts/"` confirms it. Once a call runs at all, `doctor` diagnoses everything else about the environment.
 
-Every subcommand prints **one line of JSON**, except `log`, which prints text plus a trailing `# cursor=<n>`. Below, `$CODEX` is shorthand for that literal `python3 "<base directory>/scripts/codex_bridge.py"` — write it out in full when you run it.
+Every subcommand prints **one line of JSON**, except the two that stream: `log`, which prints text plus a trailing `# cursor=<n>`, and `status --group --follow`, which prints a line per member state change and then a terminal `group.<state>` line. Below, `$CODEX` is shorthand for that literal `python3 "<base directory>/scripts/codex_bridge.py"` — write it out in full when you run it.
 
 | Command | What it does |
 |---|---|
-| `start [opts] "<prompt>"` | New thread. Background by default; returns `{run_id, thread_id, state, …}` |
-| `resume <ref\|--last> [opts] "<prompt>"` | Another turn on an existing thread. `<ref>` is a run id, thread id, or thread name |
-| `review [opts] --uncommitted \| --base <ref> \| --commit <sha> \| "<prompt>"` | `codex exec review`'s separate flag surface |
-| `batch start --group <name> --task "…" [--task "…"]…` | N runs as one addressable group. Also `--tasks-file <jsonl>`, `--resume-from <group>`, `--as-ready` |
-| `batch clean --group <name> [--force]` | Remove that group's worktrees once you have collected them |
-| `status [--run <id>] [--group <name> [--follow] [--follow-timeout <sec>]] [--all] [--include-external]` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
-| `log --run <id> [--since <n>] [--level …] [--follow]` | Filtered events, incrementally |
-| `show --run <id> --item <item_id> [--max-bytes N]` | One item's full output |
-| `stop --run <id>… \| --group <name> \| --all` | Interrupt by process group |
-| `result --run <id> \| --group <name>` | Final message, usage, parsed JSON when `--schema` was used |
+| `start` | New thread. Background by default; returns `{run_id, thread_id, state, …}` |
+| `resume` | Another turn on an existing thread, including one started in the Codex TUI |
+| `review` | Read-only findings on a diff — `codex exec review`'s separate flag surface |
+| `batch start` | N runs as one addressable group, each writing member in its own worktree |
+| `batch clean` | Remove a group's worktrees once you have collected them, releasing its name |
+| `status` | State, elapsed, `idle_seconds`, usage, last message, in-progress item |
+| `log` | Filtered events, incrementally, from a cursor |
+| `show` | One item's full output |
+| `stop` | Interrupt a run, a group, or everything, by process group |
+| `result` | Final message, usage, parsed JSON when `--schema` was used |
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, resolved paths, runs dir, worktrees |
 | `models` | Model slugs, each model's reasoning efforts, and its default effort |
 
-Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--timeout <sec>`, `--foreground`, `--no-preamble`, `--config k=v` (passed to Codex as its own `-c k=v`), `--no-priority`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
+Which flags each takes, what they default to, and what each accepts: **`$CODEX <command> --help`**. This file does not list them. A second copy of the option surface is a second thing that can be wrong, and this one was — seven flags reached the CLI without ever reaching the prose.
 
 ## Which mode
 
@@ -68,7 +68,7 @@ Deciding *what* to hand to Codex is yours — it depends on the task, and nothin
 
 `--timeout` works in the background too: at the deadline the run's process group gets SIGINT and the run is recorded `timed_out` — a state of its own, distinct from `interrupted` (you stopped it) and `failed` (Codex did), because only the third is answered by raising the timeout. The thread stays resumable across it, with the pre-timeout turn's context intact.
 
-`status` truncates its default view — the one that answers "what is going on here", where a project with 200 old runs would otherwise cost more context than the answer is worth. Without `--run`, `--group` or `--all` it keeps every non-terminal run plus a tail of recent ones, capped at 20 rows, and reports `total_runs` with `runs_truncated` saying how many it withheld; `threads` groups runs that share one. **`--group` never truncates** — you named the members yourself, and a group you started is bounded by definition. Its summary reports `running`, `done`, `failed` and a `group_state` of `running`, `completed` or `partial`.
+`status` truncates its default view — the one that answers "what is going on here", where a project with 200 old runs would otherwise cost more context than the answer is worth. `status --help` states the cap and how the withholding is reported; `threads` groups runs that share one. **`--group` never truncates** — you named the members yourself, and a group you started is bounded by definition. Its summary reports `running`, `done`, `failed` and a `group_state` of `running`, `completed` or `partial`.
 
 ## The loop
 
@@ -97,7 +97,7 @@ That byte count is there so fetching output is a decision, not a guess: `show --
 
 This works because **the agent's own messages are never filtered at any level**. Codex states what it found and what it did, so raw output is usually a second copy of a summary you already have. Reach for `show` when you need to check the summary rather than read it — a claim looks wrong, or the run stopped before it explained itself.
 
-Levels: `compact` (default) · `normal` adds output for **failed** commands only · `full` adds capped output for every item · `raw` passes events through. Measured costs and the reason `compact` is the default are in `references/event-stream.md`. Raise to `normal` when a command failed and the agent's account of it is not enough to act on — that is the one case where the withheld bytes are the diagnosis rather than a copy of it.
+`log --help` says what each of the four `--level` values includes. What it cannot say is when to leave the default: raise to `normal` when a command failed and the agent's account of it is not enough to act on — that is the one case where the withheld bytes are the diagnosis rather than a copy of it. Measured costs, and why `compact` is the default rather than the smallest, are in `references/event-stream.md`.
 
 ## Gotchas
 
@@ -105,15 +105,13 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **A resumed run inherits none of its thread's settings.** `codex exec resume` has no `-s/--sandbox` flag, so the sandbox comes from whatever config layer is in effect, not from the thread. Measured: a `read-only` thread resumed under the user's config ran as `danger-full-access` and wrote a file its original policy forbade; the same thread resumed under isolation silently dropped to `read-only` and lost its reasoning effort. This wrapper re-asserts sandbox, model, effort, isolation and cwd **from the registry** — so the protection reaches exactly as far as the registry does. Resuming a run this skill started is covered. Resuming a thread it has never seen, by thread id or by name from the Codex TUI, has nothing to re-assert from and falls back to the defaults: **pass `--sandbox` explicitly the first time you pick up an outside thread**, and it is recorded from then on. A bare `codex` command you type yourself has no protection at all.
 
-**`item.id` restarts at `item_0` on every invocation.** It is per-invocation, not per-thread, so two runs on one thread both have an `item_0`. Always pass `--run` with `--item`; an item id alone identifies nothing.
+**`item.id` restarts at `item_0` on every invocation.** It is per-invocation, not per-thread, so two runs on one thread both have an `item_0` meaning different things. Key anything you keep by `(run_id, item_id)`.
 
 **`resume` replays the entire thread.** Measured on one thread: 15.9k input tokens fresh → 31.8k after one turn → 47.8k after two → 86.1k after an interrupted multi-command turn. Resuming is not free and gets worse as a thread grows, so a fresh thread is sometimes the cheaper choice. Judge it; there is no threshold worth memorising.
 
 **A project's `AGENTS.md` is loaded even under isolation.** `--ignore-user-config` drops the user's config, plugins and MCP servers, but the repository's own `AGENTS.md` is still injected verbatim as a developer instruction (measured). That makes it a briefing channel that survives isolation — and equally, means whatever is in it is in every run you start there, whether you intended it or not. `doctor` reports whether the project has one.
 
 **stderr is normal output.** Codex writes `Reading additional input from stdin...` to stderr on every non-TTY run. Never treat stderr content as failure; `status` already filters that line out and shows you the rest.
-
-**`review` reports zero token usage.** Measured on every review run: `turn.completed` comes back all zeros after real work. `status` and `result` report usage as `null` for review runs — that means unavailable, not free.
 
 **Never kill Codex by process name.** `stop` signals one run's recorded process group. Matching `codex exec` by name kills every Codex on the machine, including runs started by another session or another person.
 
@@ -127,11 +125,11 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **Process groups isolate signals, not files.** Each run gets its own group, so stopping one never touches another — that is the whole of what the separation buys. Two runs in the same directory still edit the same files, and neither can tell another agent's change from its own. That is what worktrees are for, and why `batch start` assigns them when two or more members can write.
 
-**The preamble is a paragraph this wrapper prepends to your prompt**, telling Codex facts it cannot observe from inside a non-interactive turn: that nobody is watching, so a clarifying question ends the turn with the work not done; that its final message is what the caller receives, so the answer belongs there and not only in files it touched. Batch runs additionally get the group size and, when isolated, their worktree's path and base. `--no-preamble` removes all of it at once — reach for it only when you are briefing Codex yourself, and note that `result` depends on the "put the answer in your final message" instruction.
+**The preamble tells Codex facts it cannot observe from inside a non-interactive turn** — that nobody is watching, so a clarifying question ends the turn with the work not done, and that its final message is what the caller receives. Batch members additionally get the group size and, when isolated, their worktree's path and base, because a run in a worktree that is not told so asserts it shares your tree. `--no-preamble` drops all of it at once: reach for it only when you are briefing Codex yourself, and note that `result` depends on the answer being in the final message.
 
 **`CODEX_HOME` may be overridden**, so `~/.codex` is not reliably where sessions, config and auth live. `doctor` prints the resolved value.
 
-**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** Measured: `gpt-5.6-sol` accepts effort up through `ultra`; `gpt-5.6-luna` has no `ultra` and tops out at `max`; `gpt-5.5` stops at `xhigh`. Leave `--effort` off and the CLI sends nothing at all — the server applies that model's own default reasoning level, and `models` reports it per model rather than this doc naming one. That the default is picked server-side, not by this wrapper, is visible in Codex's own thread DB: a thread started with no `--effort` records `reasoning_effort = NULL`, while one that inherited config records `xhigh`. A `--model` or `--effort` this Codex install does not offer is now refused before the run spawns, and the refusal names the valid efforts for that model — so a typo costs nothing instead of a wasted run discovered late.
+**Valid reasoning efforts differ per model, and omitting `--effort` is not the same as passing `medium`.** With no `--effort` the CLI sends nothing at all and the server applies that model's own default, which is also per-model. `models` reports both, live — a list named here would be wrong for some model the day it was written, which is why a value this install does not offer is checked against that catalog before the run spawns rather than against anything in this file.
 
 ## Background work and parallelism
 

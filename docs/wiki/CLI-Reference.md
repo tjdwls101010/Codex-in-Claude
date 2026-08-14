@@ -2,7 +2,7 @@
 
 Every subcommand and flag of `codex_bridge.py`, in full. For anyone who needs a specific flag's exact behavior rather than the common-case walkthrough in [Getting Started](Getting-Started.md).
 
-Every subcommand prints exactly **one line of JSON** on stdout, except `log`, which prints formatted text plus a trailing `# cursor=<n>` line. `$CODEX` below is shorthand for `python3 "<base directory>/scripts/codex_bridge.py"` — see [Getting Started § finding the bridge script's path](Getting-Started.md#3-finding-the-bridge-scripts-path).
+Every subcommand prints exactly **one line of JSON** on stdout, except the two that stream: `log`, which prints formatted text plus a trailing `# cursor=<n>` line, and `status --group --follow`, which prints a line per member state change and then a terminal `group.<state>` line. `$CODEX` below is shorthand for `python3 "<base directory>/scripts/codex_bridge.py"` — see [Getting Started § finding the bridge script's path](Getting-Started.md#3-finding-the-bridge-scripts-path).
 
 ## 1. Common Flags & Defaults
 
@@ -143,7 +143,8 @@ Returns a run's final message and usage. With `--group`, returns every member's 
 
 ```bash
 $CODEX batch start --group <name> (--task "<prompt>"... | --tasks-file <jsonl>)
-                   [--resume-from <group>] [--worktree | --no-worktree] [--base <ref>]
+                   [--resume-from <group> [--as-ready]] [--worktree | --no-worktree]
+                   [--base <ref>] [--force]
                    [any start/resume/review flag as a group-wide default]
 ```
 
@@ -154,9 +155,11 @@ Starts N runs as one addressable group and returns every handle at once.
 | `--group <name>` | The group's name. **Single-use per project** — a second `batch start` with the same name fails rather than adding to it |
 | `--task "<prompt>"` | One member, always `kind: start`. Repeatable |
 | `--tasks-file <path>` | JSONL, one task object per line. Fields: `prompt`, `kind`, `label`, `model`, `effort`, `sandbox`, `schema`, `image`, `cwd`, `resume`, `review` |
-| `--resume-from <group>` | Task *i* continues member *i* of that group, in its recorded start order |
+| `--resume-from <group>` | Task *i* continues member *i* of that group, in its recorded start order. Refuses while any member of that group is still live |
+| `--as-ready` | With `--resume-from`: start each member the moment the member it continues reaches a terminal state, instead of waiting for the slowest of them. Any terminal state releases, a failure included; `--timeout` bounds only the Codex turn and never the wait, and `stop --group` is what ends a wait |
 | `--worktree` / `--no-worktree` | Force worktree isolation on for a lone writer, or off entirely |
 | `--base <ref>` | Commit the worktrees are cut from (default `HEAD`) |
+| `--force` | Let a resume task start a second turn on a thread that already has one live. Not combinable with `--as-ready`, which is the opposite instruction |
 
 Group-level flags are **defaults**, not constraints; a per-item field overrides them. An unknown field name or a wrongly-typed value fails the command before anything starts. One member failing to spawn does not take the batch with it — the failure is recorded in that member's slot.
 

@@ -1,6 +1,8 @@
 # Troubleshooting
 
-Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a blocker, and it separates blockers (the run cannot work) from warnings (it will work, but something is worth knowing). Most of the table below is faster to reach through it.
+Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a blocker, and it separates blockers (the run cannot work) from warnings (it will work, but something is worth knowing).
+
+**What belongs in the table below, and what does not.** A row earns its place when the tool cannot explain the symptom at the moment it happens: the failure is outside the bridge, or it is a state you read rather than an error you are handed. Everything the CLI already refuses with a reason is left to the refusal — the message arrives when you need it, names your specific case, and cannot fall out of date the way a row can. This file used to restate a dozen of them, including three rows whose entire content was a description of the error text.
 
 ## Symptom → cause → fix
 
@@ -9,42 +11,27 @@ Run `$CODEX doctor` first. It exits **0** when healthy and **2** when there is a
 | `python3: can't open file '/scripts/codex_bridge.py'` | A path was built from `${CLAUDE_SKILL_DIR}` or `${CLAUDE_PLUGIN_ROOT}`, which are empty in the Bash environment and expanded to nothing | Never build the path from a variable. Use the literal directory from the `Base directory for this skill:` line in your context, double-quoted |
 | `no such file or directory` on the bridge | The base directory is wrong. `doctor` cannot diagnose this — it is the same script | `ls "<base directory>/scripts/"` to confirm where the file is. Once any call runs, `doctor`'s `bridge_path` and `plugin_root_env` describe the install |
 | Every bridge call raises a permission prompt | The `allowed-tools` pattern is not matching — commonly a symlink install, where `CLAUDE_PLUGIN_ROOT` is empty | Add the `settings.json` equivalent from the README |
-| `codex` is not on PATH | Codex not installed, or installed for a different shell | Install it; `doctor` reports `codex_path` and `codex_version` |
 | `codex login status` exits non-zero | Not authenticated | `codex login`. Nothing else is worth debugging until this is clean — an unauthenticated run fails in ways that look like other problems |
 | Auth works in the terminal but not from the skill | `CODEX_HOME` differs between the two environments | Compare `doctor`'s `codex_home` against `echo $CODEX_HOME` in the shell where it works |
-| Run went to `failed` with `exit_code: 127` | `codex` was not found when the run spawned | Same as PATH above; the run's `stderr.log` has the detail |
-| A resumed turn did something the sandbox should have prevented | A bare `codex exec resume` typed by hand, not through the bridge | `resume` has no `-s` flag and falls back to `config.toml`. Use the bridge, which re-asserts `-c sandbox_mode=` every time. See `environment.md` |
-| A resumed turn refuses something the first turn could do | Same mechanism, opposite direction — the sandbox drifted *down* | The bridge prevents this too. If you changed it deliberately, `status` shows `sandbox_changed_from` |
+| A run went to `failed` with `exit_code: 127` | `codex` was not found when the run spawned — a PATH that differs from the one `doctor` sees | The run's `stderr.log` has the detail; `doctor` reports `codex_path` |
+| A resumed turn did something the sandbox should have prevented, or refuses something the first turn could do | The sandbox drifted, in one direction or the other: `codex exec resume` has no `-s` and falls back to whatever config layer is in effect | Not reachable through the bridge, which re-asserts `-c sandbox_mode=` every time — so this is a bare `codex exec resume` typed by hand. See `environment.md`. If you changed it deliberately, `status` shows `sandbox_changed_from` |
 | Codex behaves oddly in a way the prompt does not explain | The project's `AGENTS.md` is injected into every run, even under isolation | Read it. `doctor` reports `project_agents_md` |
 | Huge input token counts on a simple task | `--inherit-config`, loading the user's plugins, MCP servers and agent roles | Drop it. The size of the delta is whatever the user's config happens to load and is not a stable number — measure your own rather than quoting one (see `environment.md`) |
 | Many `error` events about duplicate agent roles | Inherited config with a malformed user config | Informational, not fatal. Isolation removes them |
-| `usage` is `null` on a review run | Review runs genuinely report zero usage | Not a bug and not free — the tokens were spent, Codex just does not report them |
 | `status` shows `orphaned` | The supervisor was killed without recording an outcome — often a machine sleep or a hard kill | The thread survives; `resume` it. `events.jsonl` up to that point is intact |
-| `status` shows `stalled` | No events for a while. Advisory only | Check `in_progress_item`: with one, it is inside a long command; without one, investigate |
+| `status` shows `stalled` | No events for a while. Advisory only, and nothing is ever auto-killed | Check `in_progress_item`: with one, it is inside a long command; without one, investigate. [Reading liveness](event-stream.md#reading-liveness) |
 | A background run is still going from an earlier session and nothing knows about it | Nothing stops a run on its own — the skill holds capability, not cleanup policy | `status --all` finds it; `stop --run <id>` when you are done with it |
 | `stop` reports `no process group recorded` | The run never got far enough to spawn, or its meta predates the pgid | Check `state` and `stderr.log`; nothing is running to stop |
-| `resume --last` says no thread found | Empty registry and no Codex thread recorded for this cwd | Pass a thread id explicitly. `status --include-external` lists threads Codex knows about for this directory |
-| `--include-external` returns nothing, `doctor` says `thread_db_readable: false` | A Codex upgrade changed the version-stamped sqlite schema | Degraded, not broken: only `--include-external` and a registry-less `--last` use it. Resume by explicit thread id |
+| `resume --last` says no thread found | Empty registry and no Codex thread recorded for this cwd | `status --include-external` lists threads Codex knows about for this directory; resume one by explicit id |
 | `review` says there is nothing to review | The tree genuinely is clean | Not an error; it exits 0 with a plain message. Check `git status` |
-| `result` fails with "not valid JSON" | `--schema` was used but the model's final message is not JSON | Deliberate — a malformed object handed back as if it had the schema's shape is worse. The error carries a preview; re-run with a clearer prompt |
-| stderr contains `Reading additional input from stdin...` | Codex writes this on every non-TTY run | Normal output, not failure. `status` filters this line and shows the rest |
+| `result` refuses a `--schema` run whose message is not JSON | Deliberate | A malformed object handed back as if it had the schema's shape is worse than a loud failure. The error carries a preview; re-run with a clearer prompt |
 | A run in a Korean or spaced path behaves strangely | APFS returns NFD while argv carries NFC | The bridge normalises at every boundary. If you see it elsewhere, that is a bug worth reporting |
-| Two runs seem to interfere | They should not — each has its own process group and its own event log | Never kill by process name; `pgrep -f "codex exec"` matches everyone's runs |
-| Two runs overwrote each other's file edits | Process groups isolate signals, not files. Same directory, same files | Start them with `batch start`, which gives two or more writing members a worktree each. `result --group`'s `overlaps` reports which paths more than one wrote |
-| A group finished `partial` | Some member did not reach a terminal state successfully — including because you stopped it | `status --group <name>` names which; `result --group` carries each one's `turn_failed`. `partial` after `stop --group` is expected, not a Codex failure |
-| `batch clean` refuses | A live member, another run still working inside a worktree, a group derived from this one, or uncommitted changes git will not discard | Collect first. `--force` lifts **all four** at once and the result says what it overrode; none of it is recoverable |
-| A worktree member is looking at code you do not recognise | It was cut from `--base`, not from your working tree, and a fresh worktree has none of your uncommitted changes | Intended. `batch start` reports the base sha, and warns when `AGENTS.md` exists in your tree but not at that base |
-| `review --uncommitted` inside a batch found nothing | A freshly cut worktree has zero uncommitted changes | This is why review members never get a worktree. If you forced one with `--worktree`, do not |
-| `--resume-from` fails on a count mismatch | It pairs one task to one started member, in order | Deliberate: a short list would land a phase-2 task on the wrong phase-1 thread. The error names both counts and lists the members |
-| `--resume-from` says a member never recorded a thread id | That member's Codex died before opening a thread — usually an early crash or an auth failure | There is nothing to continue. Check that run's `stderr.log`, and start a fresh task for that slot |
-| `batch start` says the group already exists | Group names are single-use per project | Pick another name, or `batch clean --group <name>` if you are done with it — that releases the name |
 
 ## Things that are not broken
 
-- **`error` items in the stream.** Informational config warnings. Shown at every filter level on purpose, because the one time an `error` is not routine you need to see it.
+- **`error` items in the stream.** Informational config warnings, shown at every filter level on purpose — see [Two different schemas](event-stream.md#two-different-schemas).
 - **A silent run.** A single `command_execution` can be legitimately silent for minutes. Telling that apart from a stuck one is [Reading liveness](event-stream.md#reading-liveness).
 - **`thread_id: null` from `start`.** The thread id had not appeared within the wait window. `status` backfills it from the first line of `events.jsonl`.
-- **`compact` output that omits command stdout.** That is the entire point; the size marker and `show --item` are how you get it when you want it.
 
 ## Out of scope for v1
 

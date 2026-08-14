@@ -45,7 +45,7 @@ So do not budget from a ratio someone else measured, including this one. If the 
 
 ### `service_tier`
 
-Isolation would otherwise silently drop a user's priority tier, so the wrapper re-injects `-c service_tier="priority"` whenever it is isolating. `--no-priority` turns that off.
+Isolation would otherwise silently drop a user's priority tier — a cost you would pay without ever being told — which is why the wrapper re-injects it. `start --help` states when that happens and how to turn it off.
 
 Confirmed that the key is genuinely parsed rather than ignored: passing a bogus value produces an explicit event —
 
@@ -133,7 +133,7 @@ Cost was ~540 input tokens for a two-line file.
 
 ## Auth
 
-`codex login status` is what `doctor` runs. It works under isolation because credentials come from `auth.json`, not `config.toml`.
+`codex login status` is what `doctor` runs, and it works under isolation for the reason given above.
 
 A failing login is reported as a **blocker** and `doctor` exits 2 — every other symptom is worth investigating only after this one is clean, because an unauthenticated run fails in ways that look like something else.
 

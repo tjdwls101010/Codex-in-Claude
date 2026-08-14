@@ -2,9 +2,11 @@
 """Drive the OpenAI Codex CLI as a managed subagent.
 
 Python 3.10+, standard library only. Every subcommand prints exactly one line of
-JSON on stdout, except `log`, which prints compact text plus a trailing
-`# cursor=<n>` line — JSON framing per event would itself be a meaningful
-fraction of the context the filter exists to save.
+JSON on stdout, except the two that stream: `log`, which prints compact text
+plus a trailing `# cursor=<n>` line — JSON framing per event would itself be a
+meaningful fraction of the context the filter exists to save — and
+`status --group --follow`, which prints one line per member state change and
+then a terminal `group.<state>` line.
 
 This file is the entrypoint and holds the CLI surface and the subcommand
 handlers. The machinery lives in siblings, which Python resolves via the
@@ -43,7 +45,8 @@ from _codex import (  # noqa: E402
     SANDBOX_MODES, query_threads, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
-    CursorOutOfRange, DEFAULT_LEVEL, LEVELS, find_item, format_events, read_events,
+    CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
+    FULL_ITEM_BYTES, LEVELS, find_item, format_events, read_events,
     scan_progress, strip_wrapper,
 )
 from _batch import (  # noqa: E402
@@ -841,33 +844,87 @@ def cmd_doctor(args):
 # --------------------------------------------------------------------------
 
 def add_common(p):
-    p.add_argument("--runs-dir")
-    p.add_argument("--project")
+    p.add_argument("--runs-dir",
+                   help="where run state lives (default: <project>/.codex-runs)")
+    p.add_argument("--project",
+                   help="project root whose registry to use (default: the git "
+                        "toplevel of the working directory, or that directory "
+                        "itself when it is not a repository)")
 
 
 def add_run_options(p, *, kind):
-    p.add_argument("--label")
-    p.add_argument("--sandbox", choices=SANDBOX_MODES)
-    p.add_argument("--model")
-    p.add_argument("--effort")
-    p.add_argument("--inherit-config", action="store_true")
-    p.add_argument("--isolate", action="store_true")
-    p.add_argument("--priority", dest="priority", action="store_true", default=None)
-    p.add_argument("--no-priority", dest="priority", action="store_false")
-    p.add_argument("--schema")
-    p.add_argument("--config", action="append", metavar="k=v")
-    p.add_argument("--foreground", action="store_true")
+    p.add_argument("--label",
+                   help="short name for the run; appears in its run id and in "
+                        "`status`. A resumed run keeps its thread's unless this "
+                        "replaces it.")
+    p.add_argument("--sandbox", choices=SANDBOX_MODES,
+                   help="what the run may do to the filesystem (default: "
+                        "workspace-write). Recorded, and re-asserted on every "
+                        "later turn of this thread.")
+    p.add_argument("--model",
+                   help="model slug, checked against this Codex install before "
+                        "the run spawns; `models` prints the catalog. Unset on "
+                        "a fresh thread nothing is pinned and Codex picks; on a "
+                        "resumed one the thread's recorded model is re-asserted.")
+    p.add_argument("--effort",
+                   help="reasoning effort. Valid values differ per model — "
+                        "`models` prints each model's, with its default. Unset "
+                        "on a fresh thread nothing at all is sent and the "
+                        "server applies that model's default; on a resumed one "
+                        "the thread's recorded effort is re-asserted.")
+    p.add_argument("--inherit-config", action="store_true",
+                   help="load the user's config.toml: their MCP servers, "
+                        "plugins, agent roles and hooks. Off by default. Auth "
+                        "is unaffected either way, coming from auth.json. "
+                        "Given together with --isolate, --isolate wins.")
+    p.add_argument("--isolate", action="store_true",
+                   help="ignore the user's config.toml. Already the default for "
+                        "a fresh run; pass it to override the setting a resumed "
+                        "thread recorded. Wins over --inherit-config when both "
+                        "are given.")
+    p.add_argument("--priority", dest="priority", action="store_true", default=None,
+                   help="re-inject service_tier=\"priority\", which ignoring the "
+                        "user's config would otherwise drop. Unset, it follows "
+                        "isolation on a fresh thread and whenever "
+                        "--inherit-config or --isolate just flipped it, and "
+                        "otherwise carries forward what the thread recorded.")
+    p.add_argument("--no-priority", dest="priority", action="store_false",
+                   help="do not re-inject service_tier")
+    p.add_argument("--schema",
+                   help="path to a JSON Schema file handed to Codex. `result` "
+                        "then returns the parsed object as `json`, and fails "
+                        "loudly if the final message is not valid JSON.")
+    p.add_argument("--config", action="append", metavar="k=v",
+                   help="extra `-c k=v` passed through to Codex. Repeatable. "
+                        "The four keys this wrapper records and re-asserts — "
+                        "model, model_reasoning_effort, sandbox_mode, "
+                        "service_tier — are refused here; use their own flags.")
+    p.add_argument("--foreground", action="store_true",
+                   help="block until the turn ends instead of backgrounding it. "
+                        "Refused on `batch start`.")
     p.add_argument("--timeout", type=float,
                    help="give the run this many seconds, then SIGINT its process "
                         "group and record state=timed_out. Works in background "
                         "and foreground. No default: no flag, no deadline.")
-    p.add_argument("--no-preamble", action="store_true")
+    p.add_argument("--no-preamble", action="store_true",
+                   help="drop the paragraph this wrapper prepends to the prompt "
+                        "— that nobody is watching the turn, and that the final "
+                        "message is what the caller receives. `result` depends "
+                        "on the second half of that.")
     if kind in ("start", "resume"):
-        p.add_argument("--image", action="append")
-        p.add_argument("--prompt-file")
+        p.add_argument("--image", action="append",
+                       help="attach an image file to the prompt. Repeatable.")
+        p.add_argument("--prompt-file",
+                       help="read the prompt from this file instead of the "
+                            "positional argument")
     if kind == "start":
-        p.add_argument("--cwd")
-        p.add_argument("--add-dir", action="append")
+        p.add_argument("--cwd",
+                       help="directory the run works in (default: the project "
+                            "root)")
+        p.add_argument("--add-dir", action="append",
+                       help="extra writable root beyond --cwd. Repeatable. "
+                            "Codex offers it on `exec` only, so it cannot be "
+                            "added to a resumed or review run later.")
 
 
 def build_parser():
@@ -878,12 +935,18 @@ def build_parser():
 
     p = sub.add_parser("start", help="hand work to a fresh thread — when you want the change made")
     add_common(p); add_run_options(p, kind="start")
-    p.add_argument("prompt", nargs="?")
+    p.add_argument("prompt", nargs="?",
+                   help="the prompt. May instead come from --prompt-file, or "
+                        "from stdin when this is `-` or omitted.")
     p.set_defaults(func=cmd_start)
 
     p = sub.add_parser("resume", help="another turn on a thread, keeping what it already worked out")
     add_common(p); add_run_options(p, kind="resume")
-    p.add_argument("--last", action="store_true")
+    p.add_argument("--last", action="store_true",
+                   help="pick the thread to continue instead of naming one: the "
+                        "single live run if there is exactly one, else the "
+                        "newest. Two or more live runs are ambiguous and are "
+                        "refused with the candidates listed.")
     p.add_argument("--force", action="store_true",
                    help="allow a second turn on a thread that already has one running")
     p.add_argument("rest", nargs="*", metavar="[REF] PROMPT",
@@ -894,57 +957,123 @@ def build_parser():
 
     p = sub.add_parser("review", help="read-only findings on a diff — a verdict you act on, not a change")
     add_common(p); add_run_options(p, kind="review")
-    p.add_argument("--uncommitted", action="store_true")
-    p.add_argument("--base")
-    p.add_argument("--commit")
-    p.add_argument("--title")
-    p.add_argument("--cwd")
-    p.add_argument("prompt", nargs="?")
+    p.add_argument("--uncommitted", action="store_true",
+                   help="review the working tree's uncommitted changes")
+    p.add_argument("--base", metavar="REF",
+                   help="review the diff against this ref")
+    p.add_argument("--commit", metavar="SHA",
+                   help="review one commit")
+    p.add_argument("--title",
+                   help="title for the review; only valid with --commit")
+    p.add_argument("--cwd",
+                   help="directory to review in (default: the project root)")
+    p.add_argument("prompt", nargs="?",
+                   help="free-form review instruction. Exactly one of "
+                        "--uncommitted, --base, --commit or this is required — "
+                        "the Codex CLI rejects combinations.")
     p.set_defaults(func=cmd_review, image=None, add_dir=None, prompt_file=None)
 
     p = sub.add_parser("status", help="is it alive and how far along — state, not output")
     add_common(p)
-    p.add_argument("--run")
-    p.add_argument("--thread")
+    p.add_argument("--run", metavar="REF",
+                   help="one run: a run id, a thread id, or a run-id prefix "
+                        "(newest wins)")
+    p.add_argument("--thread", metavar="THREAD_ID",
+                   help="every run on one thread")
     p.add_argument("--group", help="report on one batch group's members only")
-    p.add_argument("--all", action="store_true")
-    p.add_argument("--include-external", action="store_true")
+    p.add_argument("--all", action="store_true",
+                   help="every run in the registry. Without this, and without "
+                        "--run or --group, the listing keeps every non-terminal "
+                        "run plus a tail of recent ones, caps at 20 rows, and "
+                        "reports how many it withheld as runs_truncated.")
+    p.add_argument("--include-external", action="store_true",
+                   help="also list Codex threads for this directory that have no "
+                        "registry entry — ones started outside this skill. Their "
+                        "original sandbox was never recorded, so resuming one "
+                        "needs an explicit --sandbox.")
     p.add_argument("--follow", action="store_true",
                    help="with --group: print each member state change, then a "
                         "terminal group line, then exit. Pair with Monitor; the "
                         "Bash tool's 600s ceiling cannot be crossed by blocking.")
-    p.add_argument("--interval", type=float, default=1.0)
-    p.add_argument("--follow-timeout", type=float)
+    p.add_argument("--interval", type=float, default=1.0,
+                   help="seconds between polls while following (default: 1.0)")
+    p.add_argument("--follow-timeout", type=float,
+                   help="stop following after this many seconds and print "
+                        "group.still-running. No default: the follow ends only "
+                        "when the group does.")
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("log", help="what it is doing right now — events since a cursor")
     add_common(p)
-    p.add_argument("--run")
-    p.add_argument("--since", type=int, default=0)
-    p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL)
-    p.add_argument("--follow", action="store_true")
-    p.add_argument("--interval", type=float, default=1.0)
-    p.add_argument("--follow-timeout", type=float)
+    p.add_argument("--run", metavar="REF",
+                   help="a run id, a thread id, or a run-id prefix (newest "
+                        "wins). Omitted, this project's only live run is used.")
+    p.add_argument("--since", type=int, default=0,
+                   help="resume from the byte offset a previous call printed as "
+                        "`# cursor=<n>` (default: 0, the whole log). Only "
+                        "complete lines are consumed, so nothing is duplicated "
+                        "or skipped however often you poll.")
+    p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL,
+                   help="how much of each event to print (default: compact). "
+                        "All four carry the lifecycle, the agent's own messages "
+                        "in full, every command line with its exit code and "
+                        "output size, changed paths, errors, searches, MCP "
+                        "calls and usage; they differ only in what rides "
+                        "along. compact: nothing further. normal: a "
+                        f"{FAIL_HEAD_BYTES}B head and {FAIL_TAIL_BYTES}B tail "
+                        "of output for commands that exited non-zero, plus "
+                        "todo lists. full: the same head/tail excerpt for every "
+                        f"command whatever its exit code (to {FULL_ITEM_BYTES}B "
+                        "total), and reasoning items, which no lower level "
+                        "shows. raw: the events verbatim.")
+    p.add_argument("--follow", action="store_true",
+                   help="print events as they arrive, then one terminal line "
+                        "(run.completed / run.failed / run.interrupted / "
+                        "run.orphaned, with the exit code) before exiting")
+    p.add_argument("--interval", type=float, default=1.0,
+                   help="seconds between polls while following (default: 1.0)")
+    p.add_argument("--follow-timeout", type=float,
+                   help="stop following after this many seconds and print "
+                        "run.still-running instead of a terminal line")
     p.set_defaults(func=cmd_log)
 
     p = sub.add_parser("show", help="one item's full output, when the summary looks wrong")
     add_common(p)
-    p.add_argument("--run", required=True)
-    p.add_argument("--item", required=True)
-    p.add_argument("--max-bytes", type=int, default=SHOW_MAX_BYTES)
+    p.add_argument("--run", required=True, metavar="REF",
+                   help="required: item ids restart at item_0 on every "
+                        "invocation, so an item id alone identifies nothing")
+    p.add_argument("--item", required=True, metavar="ITEM_ID",
+                   help="the item to fetch, as printed by `log` (item_0, "
+                        "item_1, …). An unknown id is refused with the run's "
+                        "available items listed.")
+    p.add_argument("--max-bytes", type=int, default=SHOW_MAX_BYTES,
+                   help=f"cap on the output returned (default: {SHOW_MAX_BYTES}). "
+                        "Truncation is reported, never silent.")
     p.set_defaults(func=cmd_show)
 
     p = sub.add_parser("stop", help="interrupt a run, a group, or everything, by process group")
     add_common(p)
-    p.add_argument("--run", action="append")
-    p.add_argument("--group")
-    p.add_argument("--all", action="store_true")
-    p.add_argument("--grace", type=float, default=5.0)
+    p.add_argument("--run", action="append", metavar="REF",
+                   help="a run to interrupt. Repeatable. No default target: one "
+                        "of --run, --group or --all is required.")
+    p.add_argument("--group",
+                   help="interrupt every member of a batch group, including one "
+                        "still waiting on its predecessor under --as-ready")
+    p.add_argument("--all", action="store_true",
+                   help="interrupt every non-terminal run in this project's "
+                        "registry")
+    p.add_argument("--grace", type=float, default=5.0,
+                   help="seconds to wait after SIGINT before SIGTERM, then 3s "
+                        "before SIGKILL (default: 5.0). Signals go to the run's "
+                        "recorded process group, never to a matched process "
+                        "name, so one run's stop cannot reach another's.")
     p.set_defaults(func=cmd_stop)
 
     p = sub.add_parser("result", help="what it concluded — final message, usage, parsed schema JSON")
     add_common(p)
-    p.add_argument("--run")
+    p.add_argument("--run", metavar="REF",
+                   help="one run's full final message. No default target: one of "
+                        "--run or --group is required.")
     p.add_argument("--group", help="collect every member of a batch group, capped "
                                    "per run, plus the paths more than one wrote")
     p.set_defaults(func=cmd_result)
@@ -988,7 +1117,9 @@ def build_parser():
 
     b = bsub.add_parser("clean", help="remove a finished group's worktrees")
     add_common(b)
-    b.add_argument("--group", required=True)
+    b.add_argument("--group", required=True,
+                   help="the group to clean up. Removing its worktrees is also "
+                        "what releases the name for reuse.")
     b.add_argument("--force", action="store_true",
                    help="remove worktrees that still hold uncommitted changes, "
                         "and ignore live members and dependent groups. This "

@@ -41,6 +41,7 @@ There are three tiers, run in this order as you make a change:
 ```bash
 python3 -m unittest discover -s tests/legacy -p 'test_*.py'
 python3 -m unittest discover -s tests/260813 -p 'test_*.py'
+python3 -m unittest discover -s tests/260814 -p 'test_*.py'
 ```
 
 These drive the real `codex_bridge.py` as a subprocess, but with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. The fake replays recorded event streams from `tests/legacy/fixtures/`, so process spawning, process-group signaling, and argv composition are all tested for real — only the Codex model itself is faked. This tier includes the sandbox-drift regression test: it asserts that a resumed run's recorded argv actually re-injects `-c sandbox_mode="..."`, which is the specific defect this project exists to close. Always run this tier before opening a PR — it's fast and requires nothing beyond a Python 3.10+ interpreter.

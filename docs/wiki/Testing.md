@@ -7,9 +7,12 @@ The four-tier test strategy behind this project, and how to run the tiers that l
 ```bash
 python3 -m unittest discover -s tests/legacy -p 'test_*.py'
 python3 -m unittest discover -s tests/260813 -p 'test_*.py'
+python3 -m unittest discover -s tests/260814 -p 'test_*.py'
 ```
 
 **301 tests in `tests/legacy`, passing in about two and a half minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/legacy/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
+
+`tests/260814` is the third start directory. It holds the checks that keep the CLI's own signature the source of truth for its option surface: that every argument the parser accepts carries a `help=` string, and that the output contract the docs state is the one the tool actually keeps. Both close drift that the docs-versus-CLI checks in `tests/260813` cannot see, because a flag nobody documented is a flag those checks never look at.
 
 `tests/260813` is the second start directory, and it holds the checks that the suite is there at all. They exist because moving `tests/` to `tests/legacy/` shifted every `__file__`-rooted path constant by one directory and the documented command answered `NO TESTS RAN` with exit status 0 — a suite reporting success by finding nothing. `test_suite_integrity.py` asserts that every discovery command in CONTRIBUTING.md and this file collects tests and imports cleanly, that every directory holding `test_*.py` is reachable from one of those commands, and that every path either suite computes by walking up from its own `__file__` still resolves to something on disk.
 

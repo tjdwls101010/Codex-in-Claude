@@ -876,12 +876,12 @@ def build_parser():
     ap.subparser_map = {}
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("start", help="start a new Codex thread")
+    p = sub.add_parser("start", help="hand work to a fresh thread — when you want the change made")
     add_common(p); add_run_options(p, kind="start")
     p.add_argument("prompt", nargs="?")
     p.set_defaults(func=cmd_start)
 
-    p = sub.add_parser("resume", help="continue an existing Codex thread")
+    p = sub.add_parser("resume", help="another turn on a thread, keeping what it already worked out")
     add_common(p); add_run_options(p, kind="resume")
     p.add_argument("--last", action="store_true")
     p.add_argument("--force", action="store_true",
@@ -892,7 +892,7 @@ def build_parser():
     p.set_defaults(func=cmd_resume, cwd=None, add_dir=None, ref=None, prompt=None)
     ap.subparser_map["resume"] = p
 
-    p = sub.add_parser("review", help="run `codex exec review`")
+    p = sub.add_parser("review", help="read-only findings on a diff — a verdict you act on, not a change")
     add_common(p); add_run_options(p, kind="review")
     p.add_argument("--uncommitted", action="store_true")
     p.add_argument("--base")
@@ -902,7 +902,7 @@ def build_parser():
     p.add_argument("prompt", nargs="?")
     p.set_defaults(func=cmd_review, image=None, add_dir=None, prompt_file=None)
 
-    p = sub.add_parser("status", help="list runs with state, idle time and usage")
+    p = sub.add_parser("status", help="is it alive and how far along — state, not output")
     add_common(p)
     p.add_argument("--run")
     p.add_argument("--thread")
@@ -917,7 +917,7 @@ def build_parser():
     p.add_argument("--follow-timeout", type=float)
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("log", help="filtered, incremental event log")
+    p = sub.add_parser("log", help="what it is doing right now — events since a cursor")
     add_common(p)
     p.add_argument("--run")
     p.add_argument("--since", type=int, default=0)
@@ -927,14 +927,14 @@ def build_parser():
     p.add_argument("--follow-timeout", type=float)
     p.set_defaults(func=cmd_log)
 
-    p = sub.add_parser("show", help="full output of one event item")
+    p = sub.add_parser("show", help="one item's full output, when the summary looks wrong")
     add_common(p)
     p.add_argument("--run", required=True)
     p.add_argument("--item", required=True)
     p.add_argument("--max-bytes", type=int, default=SHOW_MAX_BYTES)
     p.set_defaults(func=cmd_show)
 
-    p = sub.add_parser("stop", help="interrupt a run by process group")
+    p = sub.add_parser("stop", help="interrupt a run, a group, or everything, by process group")
     add_common(p)
     p.add_argument("--run", action="append")
     p.add_argument("--group")
@@ -942,14 +942,14 @@ def build_parser():
     p.add_argument("--grace", type=float, default=5.0)
     p.set_defaults(func=cmd_stop)
 
-    p = sub.add_parser("result", help="final message, usage, and schema JSON")
+    p = sub.add_parser("result", help="what it concluded — final message, usage, parsed schema JSON")
     add_common(p)
     p.add_argument("--run")
     p.add_argument("--group", help="collect every member of a batch group, capped "
                                    "per run, plus the paths more than one wrote")
     p.set_defaults(func=cmd_result)
 
-    p = sub.add_parser("batch", help="start and manage a group of runs")
+    p = sub.add_parser("batch", help="several runs as one name you can watch, collect and stop together")
     bsub = p.add_subparsers(dest="batch_cmd", required=True)
     b = bsub.add_parser("start", help="start N runs as one addressable group")
     add_common(b); add_run_options(b, kind="start")
@@ -995,11 +995,11 @@ def build_parser():
                         "discards work nothing else has a copy of.")
     b.set_defaults(func=cmd_batch_clean)
 
-    p = sub.add_parser("models", help="models and reasoning efforts this install offers")
+    p = sub.add_parser("models", help="which models and efforts exist here, before you name one")
     add_common(p)
     p.set_defaults(func=cmd_models)
 
-    p = sub.add_parser("doctor", help="diagnose the Codex environment")
+    p = sub.add_parser("doctor", help="why is Codex not behaving — env, auth, sandbox, paths")
     add_common(p)
     p.set_defaults(func=cmd_doctor)
 

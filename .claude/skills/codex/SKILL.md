@@ -31,7 +31,7 @@ python3 "<base directory>/scripts/codex_bridge.py" status
 
 If a call fails with "No such file or directory", the path is wrong and `doctor` cannot help you find it — it is the same script. Locate the file first: the `Base directory for this skill:` line above is the answer, and `ls "<base directory>/scripts/"` confirms it. Once a call runs at all, `doctor` diagnoses everything else about the environment.
 
-Every subcommand prints **one line of JSON**, except `log`, which prints text plus a trailing `# cursor=<n>`. Below, `$CODEX` is shorthand for that literal `python3 "<base directory>/scripts/codex_bridge.py"` — write it out in full when you run it.
+Every subcommand prints **one line of JSON**, except the two that stream: `log`, which prints text plus a trailing `# cursor=<n>`, and `status --group --follow`, which prints a line per member state change and then a terminal `group.<state>` line. Below, `$CODEX` is shorthand for that literal `python3 "<base directory>/scripts/codex_bridge.py"` — write it out in full when you run it.
 
 | Command | What it does |
 |---|---|

@@ -2,9 +2,11 @@
 """Drive the OpenAI Codex CLI as a managed subagent.
 
 Python 3.10+, standard library only. Every subcommand prints exactly one line of
-JSON on stdout, except `log`, which prints compact text plus a trailing
-`# cursor=<n>` line — JSON framing per event would itself be a meaningful
-fraction of the context the filter exists to save.
+JSON on stdout, except the two that stream: `log`, which prints compact text
+plus a trailing `# cursor=<n>` line — JSON framing per event would itself be a
+meaningful fraction of the context the filter exists to save — and
+`status --group --follow`, which prints one line per member state change and
+then a terminal `group.<state>` line.
 
 This file is the entrypoint and holds the CLI surface and the subcommand
 handlers. The machinery lives in siblings, which Python resolves via the

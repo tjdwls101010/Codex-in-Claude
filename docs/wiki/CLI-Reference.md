@@ -2,7 +2,7 @@
 
 Every subcommand and flag of `codex_bridge.py`, in full. For anyone who needs a specific flag's exact behavior rather than the common-case walkthrough in [Getting Started](Getting-Started.md).
 
-Every subcommand prints exactly **one line of JSON** on stdout, except `log`, which prints formatted text plus a trailing `# cursor=<n>` line. `$CODEX` below is shorthand for `python3 "<base directory>/scripts/codex_bridge.py"` — see [Getting Started § finding the bridge script's path](Getting-Started.md#3-finding-the-bridge-scripts-path).
+Every subcommand prints exactly **one line of JSON** on stdout, except the two that stream: `log`, which prints formatted text plus a trailing `# cursor=<n>` line, and `status --group --follow`, which prints a line per member state change and then a terminal `group.<state>` line. `$CODEX` below is shorthand for `python3 "<base directory>/scripts/codex_bridge.py"` — see [Getting Started § finding the bridge script's path](Getting-Started.md#3-finding-the-bridge-scripts-path).
 
 ## 1. Common Flags & Defaults
 

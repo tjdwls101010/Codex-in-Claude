@@ -439,6 +439,12 @@ def spawn_supervised(run_dir: Path) -> int:
 # the entire length of somebody else's turn.
 WAIT_POLL = 0.5
 
+# How far a chain is followed before the walk gives up. `waits_for` is a field
+# on disk like any other, so a hand-edited or half-written cycle must exhaust a
+# bound rather than hang the supervisor. Matches `_run.wait_chain`'s limit,
+# which is the same walk made by the guard that let this run be created.
+WAIT_CHAIN_LIMIT = 64
+
 
 def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
     """Block until the run this one is chained behind reaches a terminal state.
@@ -459,7 +465,7 @@ def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
     `start_new_session=True`, so it is already its own process-group leader and
     Codex will join that same group.
     """
-    predecessor = run_dir.parent / meta["waits_for"]
+    runs_dir = run_dir.parent
     update_meta(run_dir, state="waiting", supervisor_pid=os.getpid(),
                 pgid=os.getpgid(os.getpid()))
     while True:
@@ -468,26 +474,47 @@ def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
                         error="interrupted while waiting for "
                               f"{meta['waits_for']} to finish")
             return None
-        pmeta = read_meta(predecessor)
-        if pmeta is None:
+        # The WHOLE chain, not just the direct predecessor. `create_run` was let
+        # past the concurrent-turn guard on the promise that everything ahead of
+        # this run finishes first, and watching one link does not keep it: a
+        # middle waiter whose supervisor is killed is `orphaned` — terminal — the
+        # moment this loop reaps it, so this run would start its turn while its
+        # *grandparent* was still running one on the same thread. Two turns on
+        # one rollout file is the F4 corruption the guard exists to prevent, and
+        # the chain exemption is what opened the door to it: without that
+        # exemption this run could not have been created at all.
+        pending, unreadable = [], None
+        seen, cur = set(), meta["waits_for"]
+        while cur and cur not in seen and len(seen) < WAIT_CHAIN_LIMIT:
+            seen.add(cur)
+            pmeta = read_meta(runs_dir / cur)
+            if pmeta is None:
+                unreadable = cur
+                break
+            # `reap`, not `read_meta` alone: a predecessor whose supervisor died
+            # mid-turn says `running` until something calls `reap` on that
+            # specific run, and nothing else here ever would. `status --group`
+            # resolves only its own group's members, so a caller following phase
+            # 2 never touches phase 1 — and every waiter behind it would block
+            # forever.
+            pmeta = reap(runs_dir / cur, pmeta)
+            if pmeta.get("state") not in TERMINAL_STATES:
+                pending.append(cur)
+            cur = pmeta.get("waits_for")
+        if unreadable is not None:
             # Its directory is gone, or its meta will not parse. Either way this
             # supervisor can no longer learn when the turn it is chained behind
-            # ends, and blocking forever on a question that can never be
-            # answered is the failure `reap` exists to refuse.
+            # ends, and blocking forever on a question that can never be answered
+            # is the failure `reap` exists to refuse.
             update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
                         predecessor_state="unreadable",
-                        error=f"the run this one waits for ({meta['waits_for']}) "
-                              f"can no longer be read, so there is nothing left "
-                              f"to wait for")
+                        error=f"a run this one waits for ({unreadable}) can no "
+                              f"longer be read, so there is nothing left to "
+                              f"wait for")
             return None
-        # `reap`, not `read_meta` alone: a predecessor whose supervisor died
-        # mid-turn says `running` until something calls `reap` on that specific
-        # run, and nothing else here ever would. `status --group` resolves only
-        # its own group's members, so a caller following phase 2 never touches
-        # phase 1 — and every waiter behind it would block forever.
-        pmeta = reap(predecessor, pmeta)
-        if pmeta.get("state") in TERMINAL_STATES:
-            update_meta(run_dir, predecessor_state=pmeta.get("state"))
+        if not pending:
+            direct = read_meta(runs_dir / meta["waits_for"]) or {}
+            update_meta(run_dir, predecessor_state=direct.get("state"))
             return read_meta(run_dir) or meta
         time.sleep(WAIT_POLL)
 

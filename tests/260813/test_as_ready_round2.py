@@ -13,6 +13,9 @@ that came at `status` from different directions.
 from __future__ import annotations
 
 import json
+import os
+import signal
+import time
 import unittest
 
 from test_as_ready import AsReadyBase
@@ -84,6 +87,68 @@ class AChainLongerThanOneHop(AsReadyBase):
         thread = self.meta(second)["thread_id"]
         refused = self.bridge("resume", thread, "squeeze in", expect_rc=1)
         self.assertIn("live turn", refused["error"])
+
+
+class AnAbandonedWaiterMustNotReleaseTheChain(AsReadyBase):
+    """The chain exemption promised something the wait loop did not keep.
+
+    `refuse_concurrent_turn` lets p3 be registered while p1 still runs, on the
+    grounds that p3 waits for p2 which waits for p1, so the order is guaranteed.
+    But the wait loop only ever watched the DIRECT predecessor — and it reaps it
+    each tick, which is what makes an abandoned p2 terminal. `orphaned` is
+    terminal, so p3 started, while p1 was still mid-turn on the same thread.
+
+    Two live turns on one rollout file is the F4 corruption this whole guard
+    exists to prevent, and the exemption is what opened the door: before it, p3
+    could not have been registered at all. A supervisor dying is not exotic —
+    `reap` and the `orphaned` state exist precisely because it happens.
+    """
+
+    def three_deep(self):
+        _, p1 = self.phase_one(hang=25, n=1)
+        self.addCleanup(self.bridge_raw, "stop", "--all")
+        p2 = self.bridge("batch", "start", "--group", "p2",
+                         "--resume-from", "p1", "--as-ready",
+                         "--tasks-file", self.tasks_file("second"))
+        p3 = self.bridge("batch", "start", "--group", "p3",
+                         "--resume-from", "p2", "--as-ready",
+                         "--tasks-file", self.tasks_file("third"))
+        second, third = p2["runs"][0]["run_id"], p3["runs"][0]["run_id"]
+        self.wait_for_state(second, "waiting")
+        self.wait_for_state(third, "waiting")
+        return p1[0], second, third
+
+    def test_all_three_share_one_thread(self):
+        """The premise — otherwise there is no invariant to violate."""
+        first, second, third = self.three_deep()
+        threads = {self.meta(r)["thread_id"] for r in (first, second, third)}
+        self.assertEqual(len(threads), 1)
+
+    def test_killing_a_middle_waiter_does_not_start_its_successor(self):
+        first, second, third = self.three_deep()
+        os.kill(int(self.meta(second)["supervisor_pid"]), signal.SIGKILL)
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            if self.meta(third).get("codex_started_at"):
+                self.assertIsNotNone(
+                    self.meta(first)["ended_at"],
+                    "the third member started a turn while the first was still "
+                    "running one on the same thread")
+                return
+            time.sleep(0.2)
+        self.assertIsNone(self.meta(third).get("codex_started_at"))
+        self.assertEqual(self.meta(first)["state"], "running",
+                         "this test proves nothing if the first one finished")
+
+    def test_the_chain_still_releases_normally(self):
+        """The fix must not turn every chain into a permanent wait."""
+        first, second, third = self.three_deep()
+        self.bridge("stop", "--run", first)
+        self.wait_terminal(first)
+        self.wait_terminal(second, timeout=40)
+        m = self.wait_terminal(third, timeout=40)
+        self.assertIsNotNone(m.get("codex_started_at"))
+        self.assertGreater(m["codex_started_at"], self.meta(second)["ended_at"])
 
 
 class TheSeventhStateTuple(AsReadyBase):

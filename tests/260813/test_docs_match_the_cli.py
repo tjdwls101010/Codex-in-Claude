@@ -36,28 +36,33 @@ sys.path.insert(0, str(BRIDGE.parent))
 import codex_bridge  # noqa: E402
 
 
+def _flags(actions):
+    return {f: a.help for a in actions for f in a.option_strings}
+
+
 def cli_surface():
-    """{subcommand: {flags}} as argparse actually has it, plus the global flags.
+    """{subcommand: {flag: help}} as argparse actually has it, plus the globals.
 
     Read off the parser rather than a hand-kept list, because a hand-kept list
     is a second place for the docs to disagree with.
+
+    Each flag carries its `help=` because the two checks below need different
+    halves of it: one asks whether a documented flag exists, the other whether
+    an instructed flag explains itself where the caller will look.
     """
     parser = codex_bridge.build_parser()
-    surface, globals_ = {}, set()
+    surface, globals_ = {}, {}
     for action in parser._actions:
-        globals_.update(action.option_strings)
+        globals_.update(dict.fromkeys(action.option_strings, action.help))
         if not hasattr(action, "choices") or not isinstance(action.choices, dict):
             continue
         for name, sub in action.choices.items():
-            flags = set()
             nested = {}
             for a in sub._actions:
-                flags.update(a.option_strings)
                 if hasattr(a, "choices") and isinstance(a.choices, dict):
                     for sname, ssub in a.choices.items():
-                        nested[f"{name} {sname}"] = {
-                            f for sa in ssub._actions for f in sa.option_strings}
-            surface[name] = flags
+                        nested[f"{name} {sname}"] = _flags(ssub._actions)
+            surface[name] = _flags(sub._actions)
             surface.update(nested)
     return surface, globals_
 
@@ -120,28 +125,34 @@ class DocumentedFlagsExist(unittest.TestCase):
 
 
 class DocumentedFlagsAreFindable(unittest.TestCase):
-    """A flag SKILL.md instructs you to use has to be listed in SKILL.md.
+    """A flag SKILL.md instructs you to use has to explain itself in `--help`.
 
-    The failure this closes is not "undocumented" — it is documented, in a
-    reference file — but a caller reading the instruction has no way to learn
-    the flag's syntax without already knowing which of four references to open.
+    The failure this closes is unchanged: a caller told to pass a flag needs
+    somewhere to learn what it does. Where that somewhere is did change. This
+    used to require the flag to be listed in SKILL.md's own tables, which held
+    while SKILL.md carried the option surface; the surface now lives in the
+    CLI's signature, the one copy that cannot fall behind the code. The prose
+    copy had already fallen seven flags behind when it was measured, which is
+    why the check moved rather than the requirement.
     """
 
-    def test_every_flag_skill_md_instructs_is_also_named_in_its_tables(self):
+    def test_every_flag_skill_md_instructs_explains_itself_in_help(self):
         surface, globals_ = cli_surface()
-        text = SKILL_MD.read_text()
-        # The command table and the options paragraph are where a reader looks
-        # a flag up; everywhere else is where they are told to use one.
-        tables = "\n".join(ln for ln in text.splitlines()
-                           if ln.startswith("|") or " options:" in ln)
-        instructed = {flag for doc, _sub, flag in documented_commands()
-                      if doc == SKILL_MD}
-        for flag in sorted(instructed):
-            with self.subTest(flag=flag):
-                self.assertIn(
-                    flag, tables,
-                    f"SKILL.md tells the caller to use `{flag}` but never lists "
-                    f"it, so there is nowhere in this file to learn its syntax")
+        for doc, sub, flag in documented_commands():
+            if doc != SKILL_MD:
+                continue
+            known = (surface.get(sub) or {}) | globals_
+            # A flag the CLI does not take at all is DocumentedFlagsExist's
+            # failure to report; reporting it here too would say "no help" about
+            # something that has no flag either.
+            if flag not in known:
+                continue
+            with self.subTest(sub=sub, flag=flag):
+                self.assertTrue(
+                    known[flag],
+                    f"SKILL.md tells the caller to pass `{flag}` to `{sub}`, "
+                    f"which accepts it but says nothing about it in `--help` — "
+                    f"so there is nowhere left to learn what it does")
 
 
 class CitationsResolve(unittest.TestCase):

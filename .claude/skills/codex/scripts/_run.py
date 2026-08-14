@@ -91,10 +91,11 @@ def concurrent_writers(runs_dir, cwd, exclude_run_id=None, waits_for=None):
         # it. Reaped only for the few candidates that already matched the
         # directory and the sandbox, so this is not a registry-wide write.
         m = reap(rd, m)
-        if m.get("state") in TERMINAL_STATES:
+        if m.get("state") in TERMINAL_STATES and not still_writing(m):
             continue
         out.append({"run_id": m.get("run_id"), "state": m.get("state"),
-                    "sandbox": m.get("sandbox"), "group": m.get("group")})
+                    "sandbox": m.get("sandbox"), "group": m.get("group"),
+                    **({"codex_still_running": True} if still_writing(m) else {})})
     return out
 from _worktree import (
     add as worktree_add, uncommitted_count as worktree_uncommitted,
@@ -564,7 +565,10 @@ def run_row(run_dir: Path, meta: dict, project: Path):
     codex_elapsed = None
     t1 = stamp("codex_started_at")
     if t1 is not None:
-        end = stamp("ended_at")
+        # `ended_at` on a still-writing run is whatever moment an unrelated
+        # caller's `reap` happened to stamp, not when the turn ended — freezing
+        # the duration there reports a turn as over while it runs.
+        end = None if still_writing(meta) else stamp("ended_at")
         codex_elapsed = int((end if end is not None else now) - t1)
     idle = None
     if events_path.exists() and events_path.stat().st_size > 0:
@@ -615,6 +619,12 @@ def run_row(run_dir: Path, meta: dict, project: Path):
                         if info["turn_failed"] else None),
         "events": str(events_path),
     }
+    if still_writing(meta):
+        # Terminal states answer "is anyone recording this". Every consumer of a
+        # row that asks "is this still going" — the status buckets,
+        # `group_snapshot`, and through it `--follow`'s exit — needs the other
+        # question answered too, and only the row can carry it to them.
+        row["codex_still_running"] = True
     if info["unparsed_events"]:
         # Only when there are some. Every row carrying a zero would put the
         # field in front of a caller a thousand times for each time it means

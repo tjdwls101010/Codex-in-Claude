@@ -54,8 +54,8 @@ from _batch import (  # noqa: E402
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
     ACTIVE_STATES, TERMINAL_STATES, find_run, iter_runs, meta_unreadable,
-    read_meta, reap,
-    resolve_project, resolve_runs_dir, unreadable_runs, update_meta_if,
+    read_meta, reap, resolve_project, resolve_runs_dir, still_writing,
+    unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
     WRITING_SANDBOXES, create_run, ordered_by_waiting, resolve_implicit_run,
@@ -286,10 +286,12 @@ def cmd_status(args):
     by_thread = {}
     for r in rows:
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
-    running = [r["run_id"] for r in rows if r["state"] in ACTIVE_STATES]
+    running = [r["run_id"] for r in rows
+               if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
-              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
+              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")
+              and not r.get("codex_still_running")]
     known = {r["thread_id"] for r in rows}
 
     display_rows = rows
@@ -379,7 +381,11 @@ def cmd_log(args):
         sys.stdout.flush()
         m = reap(rd, read_meta(rd) or {})
         st = m.get("state")
-        if st in TERMINAL_STATES:
+        # A terminal line means the run stopped moving — that is the contract
+        # `--follow` is paired with Monitor on. A run whose supervisor died is
+        # terminal while its codex keeps emitting events, so printing it here
+        # ends the stream in the middle of the stream.
+        if st in TERMINAL_STATES and not still_writing(m):
             cursor = dump(cursor)
             sys.stdout.write(f"run.{st} run={m.get('run_id')} exit={m.get('exit_code')}\n")
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
@@ -500,13 +506,13 @@ def cmd_stop(args):
         targets = []
         for rd, m in resolve_group(runs_dir, args.group):
             m = reap(rd, m)
-            if m.get("state") in ACTIVE_STATES:
+            if m.get("state") in ACTIVE_STATES or still_writing(m):
                 targets.append((rd, m))
     elif args.all:
         targets = []
         for rd, m in iter_runs(runs_dir):
             m = reap(rd, m)
-            if m.get("state") in ACTIVE_STATES:
+            if m.get("state") in ACTIVE_STATES or still_writing(m):
                 targets.append((rd, m))
     else:
         fail("stop needs --run <id> (repeatable), --group <name>, or --all")
@@ -552,6 +558,13 @@ def cmd_result(args):
         out["unparsed_events"] = info["unparsed_events"]
     if meta.get("state") not in TERMINAL_STATES:
         out["note"] = f"run is still {meta.get('state')}; this is a partial result"
+    elif still_writing(meta):
+        # Terminal and still writing: the same call ten seconds later returns a
+        # different final message. Handing both back uncaveated is two answers,
+        # each presented as the answer.
+        out["note"] = ("this run has no supervisor left to record its outcome, "
+                       "but its codex process is still running and still "
+                       "writing — so this is a partial result that will change")
 
     if meta.get("schema_path"):
         out["schema_path"] = meta["schema_path"]
@@ -749,7 +762,7 @@ def cmd_doctor(args):
             # a caller consults precisely when they suspect something is stuck,
             # which is exactly when stale state is most likely.
             m = reap(rd, m)
-            if m.get("state") in TERMINAL_STATES:
+            if m.get("state") in TERMINAL_STATES and not still_writing(m):
                 continue
             live.append(m)
         # Overlap, not string equality. `concurrent_writers` — the same check,

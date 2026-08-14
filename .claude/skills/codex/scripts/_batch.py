@@ -35,8 +35,8 @@ from pathlib import Path
 from _events import read_events, scan_progress
 from _registry import (
     ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,
-    meta_unreadable,
-    read_meta, reap, resolve_project, resolve_runs_dir, unreadable_runs,
+    meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
+    still_writing, unreadable_runs,
 )
 from _codex import check_model_effort, model_catalog, review_argv
 from _run import (
@@ -536,8 +536,10 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
                              "reason": "its meta.json will not parse, so whether "
                                        "its turn has finished cannot be determined"})
             continue
-        if reap(rd, meta).get("state") not in TERMINAL_STATES:
-            live.append({"run_id": m["run_id"], "state": meta.get("state")})
+        reaped = reap(rd, meta)
+        if (reaped.get("state") not in TERMINAL_STATES
+                or still_writing(reaped)):
+            live.append({"run_id": m["run_id"], "state": reaped.get("state")})
     unreadable = [m for m in live if m.get("state") == "unreadable"]
     if live and not force and not as_ready:
         fail(f"group {previous!r} still has members running; resuming a thread "
@@ -587,6 +589,19 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
             if as_ready:
                 _rd, resolved = find_run(runs_dir, named)
                 if not resolved:
+                    # Unreadable and absent are different answers with
+                    # different remedies, and `find_run` returns the same
+                    # `None` for both. This is the sixth site to make that
+                    # mistake — `refuse_unresolved_run` exists because of the
+                    # first five, and `pair_with_previous` already gets it
+                    # right fifty lines above.
+                    if _rd is not None and meta_unreadable(_rd):
+                        fail(f"task {slot} names {named!r} to resume, and "
+                             f"--as-ready has to watch it reach a terminal "
+                             f"state — but that run's meta.json will not parse, "
+                             f"so its state cannot be read",
+                             task=slot, resume=named, run_dir=str(_rd),
+                             events=str(_rd / "events.jsonl"))
                     fail(f"task {slot} names {named!r} to resume, and "
                          f"--as-ready has to watch it reach a terminal state — "
                          f"but this project's registry has no such run, so "
@@ -832,8 +847,13 @@ def cmd_batch_clean(args):
                                        "it is still running cannot be determined"})
             continue
         meta = reap(rd, meta)
-        if meta.get("state") not in TERMINAL_STATES:
-            live.append({"run_id": rid, "state": meta.get("state")})
+        # `still_writing` as well as the state: this loop's whole purpose is
+        # note 1 below — "a live member is still writing into the very
+        # directory being removed" — and a run whose supervisor died is
+        # terminal while its codex keeps writing into exactly that directory.
+        if meta.get("state") not in TERMINAL_STATES or still_writing(meta):
+            live.append({"run_id": rid, "state": meta.get("state"),
+                         **({"codex_still_running": True} if still_writing(meta) else {})})
 
     # 1. A live member is still writing into the very directory being removed.
     if live and not args.force:
@@ -886,7 +906,8 @@ def cmd_batch_clean(args):
         # and p1 looks unreferenced while p3 is still running in p1's worktree.
         # A run's own recorded cwd cannot go stale that way.
         occupants = [m for _rd, m in iter_runs(runs_dir)
-                     if m.get("state") not in TERMINAL_STATES
+                     if (m.get("state") not in TERMINAL_STATES
+                         or still_writing(m))
                      and m.get("run_id") != rid
                      and is_within(m.get("cwd"), path)]
         if occupants and not args.force:
@@ -921,11 +942,25 @@ def cmd_batch_clean(args):
     released = not kept and not live
     if released:
         group_path(runs_dir, args.group).unlink(missing_ok=True)
+    # Branched on what actually blocked the release. One note for both cases
+    # told a caller whose only obstacle was a live member that "these worktrees
+    # hold uncommitted changes" and to "pass --force" — with no worktrees
+    # involved, nothing dirty, and `--force` already passed. Retrying as
+    # instructed cannot work, because a name whose members are still running is
+    # never released. The remedy that does work is the one the message omitted.
+    if released:
+        note = None
+    elif kept:
+        note = ("these worktrees hold uncommitted changes — collect them, or "
+                "pass --force to discard. The group name stays claimed until "
+                "they are gone.")
+    else:
+        note = ("this group still has running member(s), so its name stays "
+                "claimed — --force does not release a name whose members are "
+                "live. Stop them first: "
+                + ", ".join(f"stop --run {m['run_id']}" for m in live))
     out = {"group": args.group, "removed": removed, "kept": kept,
-           "name_released": released,
-           "note": None if released else
-           "these worktrees hold uncommitted changes — collect them, or pass "
-           "--force to discard. The group name stays claimed until they are gone."}
+           "name_released": released, "note": note}
     if overrode:
         out["forced_past"] = overrode
         out["forced_note"] = (
@@ -1034,7 +1069,8 @@ def group_snapshot(rows, unstarted=0):
     one would report `completed`, which is the group-level form of the failure
     a terminal `--follow` line exists to prevent.
     """
-    running = [r["run_id"] for r in rows if r["state"] in ACTIVE_STATES]
+    running = [r["run_id"] for r in rows
+               if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
               if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]

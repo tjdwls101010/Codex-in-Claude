@@ -67,6 +67,14 @@ class BridgeCase(unittest.TestCase):
                 except Exception:
                     continue
                 for pid in (m.get("supervisor_pid"), m.get("codex_pid")):
+                    # Never this process. A test that calls a supervisor
+                    # function directly — `await_predecessor` is the one that
+                    # matters — records its own caller as the supervisor, so
+                    # cleaning up would SIGKILL the test runner itself and take
+                    # every later test with it. Seen: the whole suite exiting
+                    # 137 with no output.
+                    if not pid or int(pid) == os.getpid():
+                        continue
                     try:
                         os.kill(int(pid), 9)
                     except Exception:

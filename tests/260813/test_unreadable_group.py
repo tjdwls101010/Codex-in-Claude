@@ -20,6 +20,7 @@ needs that.
 from __future__ import annotations
 
 import json
+import time
 import unittest
 
 from helpers import BridgeCase
@@ -122,6 +123,51 @@ class UnreadableMemberBlocksPhaseTwo(BridgeCase):
         fresh = self.bridge("batch", "start", "--group", "p2",
                             "--tasks-file", self.tasks_file("c"))
         self.assertEqual(fresh["spawned"], 1)
+
+
+class ALiveMemberKeepsItsGroupName(BridgeCase):
+    """M3 — `batch clean --force` released the name while a live member still
+    claimed it, because `kept` is populated only from worktrees on disk and a
+    `kind=resume` member never has one. Every `--as-ready` waiter is such a
+    member, so the reply both listed a running member and declared the name
+    free. Reclaiming it then broke the new owner: `owned_run_ids` matches the
+    registry on the bare group name with no epoch, so the next `batch clean`
+    was refused citing a run that owner had never started."""
+
+    def waiting_group(self):
+        tasks = self.tasks_file("p1 work")
+        self.bridge("batch", "start", "--group", "p1", "--tasks-file", tasks,
+                    env_extra={"FAKE_CODEX_HANG": 20})
+        out = self.bridge("batch", "start", "--group", "p2",
+                          "--resume-from", "p1", "--as-ready",
+                          "--tasks-file", self.tasks_file("p2 work"))
+        rid = out["runs"][0]["run_id"]
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if self.meta(rid).get("state") == "waiting":
+                break
+            time.sleep(0.05)
+        self.addCleanup(self.bridge_raw, "stop", "--all")
+        return rid
+
+    def test_a_forced_clean_does_not_free_a_name_with_live_members(self):
+        self.waiting_group()
+        out = self.bridge("batch", "clean", "--group", "p2", "--force")
+        self.assertTrue(out["forced_past"].get("running_members"),
+                        "the fixture needs a live member for this to mean "
+                        "anything")
+        self.assertFalse(
+            out["name_released"],
+            "the same reply cannot both list a running member and declare its "
+            "group name free for someone else")
+
+    def test_the_name_cannot_be_reclaimed_while_that_member_lives(self):
+        self.waiting_group()
+        self.bridge("batch", "clean", "--group", "p2", "--force")
+        out = self.bridge("batch", "start", "--group", "p2",
+                          "--tasks-file", self.tasks_file("unrelated"),
+                          expect_rc=1)
+        self.assertIn("already exists", out["error"])
 
 
 if __name__ == "__main__":

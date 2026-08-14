@@ -32,8 +32,8 @@ from _codex import (
 from _events import first_thread_id, scan_progress
 from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir, thread_turn_lock, unreadable_runs,
-    write_meta,
+    resolve_project, resolve_runs_dir, still_writing, thread_turn_lock,
+    unreadable_runs, write_meta,
 )
 from _util import clip, fail, git_toplevel, is_within, now_iso
 
@@ -226,9 +226,15 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     # exists to remove. Exempting every *waiting* run instead would be too much:
     # a waiter starts the moment its predecessor ends, so a turn begun now could
     # still overlap one that is not behind anything of ours.
-    live = [{"run_id": m.get("run_id"), "state": m.get("state")}
+    # `still_writing` as well as the state: a run whose supervisor was killed is
+    # recorded `orphaned` — terminal — while its `codex exec` keeps appending to
+    # the thread's rollout. Terminal answers "is anyone recording this?"; the
+    # question here is "is anything still writing this thread?", and those come
+    # apart exactly when a supervisor dies alone.
+    live = [{"run_id": m.get("run_id"), "state": m.get("state"),
+             **({"codex_still_running": True} if still_writing(m) else {})}
             for m in live
-            if m.get("state") not in TERMINAL_STATES
+            if (m.get("state") not in TERMINAL_STATES or still_writing(m))
             and m.get("run_id") not in chain]
     if live:
         fail("thread already has a live turn; pass --force to run a second turn "

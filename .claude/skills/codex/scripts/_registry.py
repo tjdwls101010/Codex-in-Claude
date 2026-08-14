@@ -43,6 +43,24 @@ TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned", "timed_out"
 ACTIVE_STATES = ("starting", "waiting", "running", "stalled")
 
 
+def still_writing(meta: dict) -> bool:
+    """Whether this run's Codex process is still going, whatever its state says.
+
+    `orphaned` deliberately means "nothing is left to record this run's
+    outcome", not "nothing is running" — the supervisor is the recorder, and
+    `Popen` makes Codex its child, which Unix does not cascade-kill. So a
+    supervisor lost to SIGKILL or the OOM killer leaves a terminal-looking run
+    with a live `codex exec` still appending to its rollout file.
+
+    That distinction is right for `reap`, whose job is to stop reporting a dead
+    process as live, and wrong for anything deciding whether a THREAD is free:
+    there, a terminal state is not the question. Two turns on one rollout file
+    is the F4 corruption, and it does not care which of them the registry thinks
+    has finished.
+    """
+    return pid_alive(meta.get("codex_pid"))
+
+
 # -- locating things --------------------------------------------------------
 
 def resolve_project(explicit=None) -> Path:

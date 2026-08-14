@@ -570,7 +570,31 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
                  f"that target or drop the 'resume' field to be paired with "
                  f"{prev['run_id']}")
         if named:
-            paired.append(task)
+            # A task that names its own target keeps it — and under
+            # `--as-ready` it waits for THAT target, not for the member it was
+            # positionally paired with. Leaving `waits_for` unset reported the
+            # task as paired while it started immediately, so the one shape the
+            # flag promises to order was the one it did not.
+            #
+            # Resolved to a run id here, not passed through: `resume` accepts a
+            # run id, a thread id or a run-id prefix, while `waits_for` is
+            # joined to the runs directory as a name and keyed on `run_id`. A
+            # thread id stored raw made the supervisor report the target
+            # "can no longer be read" while `status` showed it completed and
+            # perfectly readable. A ref outside the registry can never be
+            # observed reaching a terminal state at all, which is the same
+            # reason an unreadable member is refused above.
+            if as_ready:
+                _rd, resolved = find_run(runs_dir, named)
+                if not resolved:
+                    fail(f"task {slot} names {named!r} to resume, and "
+                         f"--as-ready has to watch it reach a terminal state — "
+                         f"but this project's registry has no such run, so "
+                         f"nothing can be observed about it",
+                         task=slot, resume=named)
+                paired.append({**task, "waits_for": resolved["run_id"]})
+            else:
+                paired.append(task)
             continue
         entry = {**task, "kind": "resume", "resume": prev["run_id"]}
         if as_ready:
@@ -886,7 +910,15 @@ def cmd_batch_clean(args):
     # sees `cleaned: true` can reuse the name and one who does not still has a
     # group to address the leftovers by. This is also the only way to reclaim a
     # name from a `batch start` that died before it recorded any member.
-    released = not kept
+    # `kept` can only be populated from a worktree that is still on disk, and a
+    # `kind=resume` member never gets one — which is every `--as-ready` waiter.
+    # So a forced clean of a group whose live members have no checkouts released
+    # the name in the same reply that listed those members as still running, and
+    # the freed name was then reclaimed by an unrelated batch. After that,
+    # `owned_run_ids`' registry fallback matches on the bare name with no epoch,
+    # so the new owner's `batch clean` is refused citing a run it has never seen.
+    # A name whose members are still running is not free.
+    released = not kept and not live
     if released:
         group_path(runs_dir, args.group).unlink(missing_ok=True)
     out = {"group": args.group, "removed": removed, "kept": kept,

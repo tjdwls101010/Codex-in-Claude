@@ -26,7 +26,9 @@ import unicodedata
 from pathlib import Path
 
 from _events import final_usage, first_thread_id
-from _registry import TERMINAL_STATES, read_meta, reap, update_meta
+from _registry import (
+    TERMINAL_STATES, read_meta, reap, still_writing, update_meta,
+)
 from _util import codex_home, nfc, now_iso
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
@@ -489,9 +491,18 @@ def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
         # one rollout file is the F4 corruption the guard exists to prevent, and
         # the chain exemption is what opened the door to it: without that
         # exemption this run could not have been created at all.
-        pending, unreadable = [], None
+        pending, unreadable, cyclic = [], None, False
         seen, cur = set(), meta["waits_for"]
-        while cur and cur not in seen and len(seen) < WAIT_CHAIN_LIMIT:
+        while cur and len(seen) < WAIT_CHAIN_LIMIT:
+            if cur in seen:
+                # `waits_for` is a field on disk, so a hand-edited or
+                # half-written cycle is possible — and a cycle can never
+                # resolve, because every run in it is waiting for another run in
+                # it. Bounding the walk keeps this tick finite; saying so is
+                # what keeps the run from waiting forever on an answer that
+                # cannot arrive, which is the failure `reap` refuses.
+                cyclic = True
+                break
             seen.add(cur)
             pmeta = read_meta(runs_dir / cur)
             if pmeta is None:
@@ -504,9 +515,21 @@ def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
             # 2 never touches phase 1 — and every waiter behind it would block
             # forever.
             pmeta = reap(runs_dir / cur, pmeta)
-            if pmeta.get("state") not in TERMINAL_STATES:
+            # A live Codex counts as pending whatever the state says. A link
+            # whose supervisor died keeps its `codex exec` — Unix does not
+            # cascade-kill children — and `reap` correctly calls that
+            # `orphaned`, meaning "nobody is recording this", not "nothing is
+            # running". Releasing on that would put this run's turn onto a
+            # rollout file the other process is still appending to.
+            if (pmeta.get("state") not in TERMINAL_STATES
+                    or still_writing(pmeta)):
                 pending.append(cur)
             cur = pmeta.get("waits_for")
+        if cyclic:
+            update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
+                        error="the chain of runs this one waits for loops back "
+                              "on itself, so it can never finish")
+            return None
         if unreadable is not None:
             # Its directory is gone, or its meta will not parse. Either way this
             # supervisor can no longer learn when the turn it is chained behind
@@ -519,6 +542,16 @@ def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
                               f"wait for")
             return None
         if not pending:
+            # Re-checked here, not only at the top of the loop. A stop landing
+            # between the two would otherwise be swallowed: the wait ends, the
+            # caller's signal is never consulted again, and `supervise` spawns
+            # Codex for a full un-signalled turn. That is worse than the
+            # already-accepted race where a turn is nearly done, because here
+            # nothing has started yet and the stop was entirely in time.
+            if interrupted["flag"]:
+                update_meta(run_dir, state="interrupted", ended_at=now_iso(),
+                            error="interrupted just as the wait ended")
+                return None
             direct = read_meta(runs_dir / meta["waits_for"]) or {}
             update_meta(run_dir, predecessor_state=direct.get("state"))
             return read_meta(run_dir) or meta

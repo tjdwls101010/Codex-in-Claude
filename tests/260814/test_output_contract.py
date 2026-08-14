@@ -24,7 +24,12 @@ import unittest
 
 from helpers import BRIDGE, REPO, SKILL_MD, BridgeCase
 
-CLAIM_RE = re.compile(r"[^.]*one line of JSON[^.]*\.", re.IGNORECASE)
+# `.*?\.(?=\s|$)` and not `[^.]*\.`: every statement of this contract contains
+# `group.<state>`, whose period is not a sentence end. A pattern that stopped at
+# the first period captured only the prefix, so the half of the sentence naming
+# the second exception was never inspected — the check would have passed with
+# anything at all after that point.
+CLAIM_RE = re.compile(r"[^.]*one line of JSON.*?\.(?=\s|$)", re.IGNORECASE)
 
 
 def contract_claims(text):
@@ -78,8 +83,12 @@ class TheContractSentencesAreTrue(unittest.TestCase):
     # someone reads to decide whether to adopt this, and it carried the same
     # wrong sentence. `test_suite_integrity.py` already checks docs/wiki, so
     # holding this one claim true there costs nothing new.
-    SOURCES = {"SKILL.md": SKILL_MD, "codex_bridge.py": BRIDGE,
-               "docs/wiki/CLI-Reference.md": REPO / "docs" / "wiki" / "CLI-Reference.md"}
+    SOURCES = {
+        "SKILL.md": SKILL_MD,
+        "codex_bridge.py": BRIDGE,
+        "docs/wiki/CLI-Reference.md": REPO / "docs" / "wiki" / "CLI-Reference.md",
+        "docs/wiki/Architecture.md": REPO / "docs" / "wiki" / "Architecture.md",
+    }
 
     def test_each_source_states_the_contract_exactly_once(self):
         for label, path in self.SOURCES.items():

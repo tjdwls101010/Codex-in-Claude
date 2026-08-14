@@ -136,6 +136,18 @@ class DocumentedFlagsAreFindable(unittest.TestCase):
     why the check moved rather than the requirement.
     """
 
+    def skill_md_instructions(self):
+        return [(sub, flag) for doc, sub, flag in documented_commands()
+                if doc == SKILL_MD]
+
+    def test_the_extraction_found_instructions_in_skill_md(self):
+        """The guard above counts all five docs, so SKILL.md's own share can
+        fall to zero without it noticing — and this round deleted SKILL.md's
+        densest flag paragraph, which is exactly how that happens."""
+        self.assertGreater(len(self.skill_md_instructions()), 10,
+                           "no flags extracted from SKILL.md, so the check "
+                           "below is passing without looking at anything")
+
     def test_every_flag_skill_md_instructs_explains_itself_in_help(self):
         surface, globals_ = cli_surface()
         for doc, sub, flag in documented_commands():

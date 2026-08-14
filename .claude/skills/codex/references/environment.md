@@ -45,7 +45,7 @@ So do not budget from a ratio someone else measured, including this one. If the 
 
 ### `service_tier`
 
-Isolation would otherwise silently drop a user's priority tier, so the wrapper re-injects `-c service_tier="priority"` whenever it is isolating. `--no-priority` turns that off.
+Isolation would otherwise silently drop a user's priority tier — a cost you would pay without ever being told — which is why the wrapper re-injects it. `start --help` states when that happens and how to turn it off.
 
 Confirmed that the key is genuinely parsed rather than ignored: passing a bogus value produces an explicit event —
 

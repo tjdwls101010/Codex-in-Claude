@@ -68,7 +68,7 @@ Deciding *what* to hand to Codex is yours — it depends on the task, and nothin
 
 `--timeout` works in the background too: at the deadline the run's process group gets SIGINT and the run is recorded `timed_out` — a state of its own, distinct from `interrupted` (you stopped it) and `failed` (Codex did), because only the third is answered by raising the timeout. The thread stays resumable across it, with the pre-timeout turn's context intact.
 
-`status` truncates its default view — the one that answers "what is going on here", where a project with 200 old runs would otherwise cost more context than the answer is worth. Without `--run`, `--group` or `--all` it keeps every non-terminal run plus a tail of recent ones, capped at 20 rows, and reports `total_runs` with `runs_truncated` saying how many it withheld; `threads` groups runs that share one. **`--group` never truncates** — you named the members yourself, and a group you started is bounded by definition. Its summary reports `running`, `done`, `failed` and a `group_state` of `running`, `completed` or `partial`.
+`status` truncates its default view — the one that answers "what is going on here", where a project with 200 old runs would otherwise cost more context than the answer is worth. `status --help` states the cap and how the withholding is reported; `threads` groups runs that share one. **`--group` never truncates** — you named the members yourself, and a group you started is bounded by definition. Its summary reports `running`, `done`, `failed` and a `group_state` of `running`, `completed` or `partial`.
 
 ## The loop
 
@@ -105,7 +105,7 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **A resumed run inherits none of its thread's settings.** `codex exec resume` has no `-s/--sandbox` flag, so the sandbox comes from whatever config layer is in effect, not from the thread. Measured: a `read-only` thread resumed under the user's config ran as `danger-full-access` and wrote a file its original policy forbade; the same thread resumed under isolation silently dropped to `read-only` and lost its reasoning effort. This wrapper re-asserts sandbox, model, effort, isolation and cwd **from the registry** — so the protection reaches exactly as far as the registry does. Resuming a run this skill started is covered. Resuming a thread it has never seen, by thread id or by name from the Codex TUI, has nothing to re-assert from and falls back to the defaults: **pass `--sandbox` explicitly the first time you pick up an outside thread**, and it is recorded from then on. A bare `codex` command you type yourself has no protection at all.
 
-**`item.id` restarts at `item_0` on every invocation.** It is per-invocation, not per-thread, so two runs on one thread both have an `item_0`. Always pass `--run` with `--item`; an item id alone identifies nothing.
+**`item.id` restarts at `item_0` on every invocation.** It is per-invocation, not per-thread, so two runs on one thread both have an `item_0` meaning different things. Key anything you keep by `(run_id, item_id)`.
 
 **`resume` replays the entire thread.** Measured on one thread: 15.9k input tokens fresh → 31.8k after one turn → 47.8k after two → 86.1k after an interrupted multi-command turn. Resuming is not free and gets worse as a thread grows, so a fresh thread is sometimes the cheaper choice. Judge it; there is no threshold worth memorising.
 
@@ -125,7 +125,7 @@ These are the traps that cost a real failure to learn. Everything else about dri
 
 **Process groups isolate signals, not files.** Each run gets its own group, so stopping one never touches another — that is the whole of what the separation buys. Two runs in the same directory still edit the same files, and neither can tell another agent's change from its own. That is what worktrees are for, and why `batch start` assigns them when two or more members can write.
 
-**The preamble is a paragraph this wrapper prepends to your prompt**, telling Codex facts it cannot observe from inside a non-interactive turn: that nobody is watching, so a clarifying question ends the turn with the work not done; that its final message is what the caller receives, so the answer belongs there and not only in files it touched. Batch runs additionally get the group size and, when isolated, their worktree's path and base. `--no-preamble` removes all of it at once — reach for it only when you are briefing Codex yourself, and note that `result` depends on the "put the answer in your final message" instruction.
+**The preamble tells Codex facts it cannot observe from inside a non-interactive turn** — that nobody is watching, so a clarifying question ends the turn with the work not done, and that its final message is what the caller receives. Batch members additionally get the group size and, when isolated, their worktree's path and base, because a run in a worktree that is not told so asserts it shares your tree. `--no-preamble` drops all of it at once: reach for it only when you are briefing Codex yourself, and note that `result` depends on the answer being in the final message.
 
 **`CODEX_HOME` may be overridden**, so `~/.codex` is not reliably where sessions, config and auth live. `doctor` prints the resolved value.
 

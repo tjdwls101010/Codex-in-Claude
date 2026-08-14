@@ -507,7 +507,11 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
     if threadless:
         fail(f"{len(threadless)} member(s) of {previous!r} never recorded a "
              f"thread id, so there is no conversation to continue for them — "
-             f"they failed before Codex started one",
+             f"they failed before Codex started one, and their `stderr.log` "
+             f"records why. This refuses the whole batch rather than those "
+             f"slots: --resume-from pairs one task to every started member, so "
+             f"work for a threadless slot has to be started fresh, in a batch "
+             f"of its own",
              members=threadless)
     prior = started
     if len(tasks) != len(prior):

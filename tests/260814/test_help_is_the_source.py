@@ -97,6 +97,80 @@ class TheCommandTableIsTheWholeSurface(unittest.TestCase):
             "diverged; the table is what tells a caller a command exists at all")
 
 
+DEFAULT_RE = re.compile(r"default:\s*([A-Za-z0-9_.\-]+)")
+
+
+def _comparable(stated, real):
+    """(matches, ) for a stated default against argparse's, or None to skip.
+
+    Skipping is the common case and it is deliberate. Most defaults in this CLI
+    are resolved past argparse — `--sandbox`'s `workspace-write` and `--cwd`'s
+    project root are decided in `create_run`, so argparse holds `None` and there
+    is nothing here to compare. A check that guessed at those would fail on
+    correct help text, which is worse than not checking them.
+    """
+    if real is None or isinstance(real, bool):
+        return None
+    if isinstance(real, (int, float)):
+        try:
+            return float(stated) == float(real)
+        except ValueError:
+            return None                      # prose, not a number
+    if isinstance(real, str):
+        return stated == real
+    return None
+
+
+class AStatedDefaultIsTheRealDefault(unittest.TestCase):
+    """Presence is not truth, and this is the part of truth a machine can check.
+
+    That a `help=` string exists says nothing about whether it is right, and a
+    wrong one ships more confidently than none at all now that it is the only
+    copy. Most of what a help string claims — what the flag does, how it
+    interacts with another — can only be checked by reading it against the code.
+    A stated default is the exception: argparse is holding the real one.
+    """
+
+    def comparable_defaults(self):
+        out = []
+        actual = {}
+        for action in _walk_actions(codex_bridge.build_parser()):
+            for opt in action.option_strings or [action.dest]:
+                actual[opt] = action.default
+        for cmd, name, help_ in option_surface(codex_bridge.build_parser()):
+            m = DEFAULT_RE.search(help_ or "")
+            if not m:
+                continue
+            stated, real = m.group(1), actual.get(name)
+            verdict = _comparable(stated, real)
+            if verdict is not None:
+                out.append((cmd, name, stated, real, verdict))
+        return out
+
+    def test_the_scan_found_defaults_it_can_check(self):
+        self.assertGreater(
+            len(self.comparable_defaults()), 3,
+            "no help string states a default argparse also holds, so this "
+            "check is passing without looking at anything")
+
+    def test_each_stated_default_matches_the_parser(self):
+        for cmd, name, stated, real, matches in self.comparable_defaults():
+            with self.subTest(cmd=cmd, flag=name):
+                self.assertTrue(
+                    matches,
+                    f"`{cmd} {name}` --help says the default is {stated!r}, "
+                    f"but argparse's is {real!r}")
+
+
+def _walk_actions(parser):
+    for action in parser._actions:
+        if isinstance(getattr(action, "choices", None), dict) and action.choices:
+            for sub in action.choices.values():
+                yield from _walk_actions(sub)
+        else:
+            yield action
+
+
 class EveryFlagExplainsItself(unittest.TestCase):
     """A flag with no `help=` is a flag whose only explanation is prose.
 

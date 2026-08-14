@@ -45,7 +45,8 @@ from _codex import (  # noqa: E402
     SANDBOX_MODES, query_threads, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
-    CursorOutOfRange, DEFAULT_LEVEL, LEVELS, find_item, format_events, read_events,
+    CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
+    FULL_ITEM_BYTES, LEVELS, find_item, format_events, read_events,
     scan_progress, strip_wrapper,
 )
 from _batch import (  # noqa: E402
@@ -862,25 +863,31 @@ def add_run_options(p, *, kind):
                         "later turn of this thread.")
     p.add_argument("--model",
                    help="model slug, checked against this Codex install before "
-                        "the run spawns. `models` prints the catalog. No "
-                        "default: Codex picks its own.")
+                        "the run spawns; `models` prints the catalog. Unset on "
+                        "a fresh thread nothing is pinned and Codex picks; on a "
+                        "resumed one the thread's recorded model is re-asserted.")
     p.add_argument("--effort",
                    help="reasoning effort. Valid values differ per model — "
-                        "`models` prints each model's, with its default. "
-                        "Omitting this sends nothing at all, which is not the "
-                        "same as naming a level.")
+                        "`models` prints each model's, with its default. Unset "
+                        "on a fresh thread nothing at all is sent and the "
+                        "server applies that model's default; on a resumed one "
+                        "the thread's recorded effort is re-asserted.")
     p.add_argument("--inherit-config", action="store_true",
                    help="load the user's config.toml: their MCP servers, "
                         "plugins, agent roles and hooks. Off by default. Auth "
-                        "is unaffected either way, coming from auth.json.")
+                        "is unaffected either way, coming from auth.json. "
+                        "Given together with --isolate, --isolate wins.")
     p.add_argument("--isolate", action="store_true",
                    help="ignore the user's config.toml. Already the default for "
-                        "a fresh run; pass it to override the inherited setting "
-                        "of a thread being resumed.")
+                        "a fresh run; pass it to override the setting a resumed "
+                        "thread recorded. Wins over --inherit-config when both "
+                        "are given.")
     p.add_argument("--priority", dest="priority", action="store_true", default=None,
                    help="re-inject service_tier=\"priority\", which ignoring the "
-                        "user's config would otherwise drop. Defaults to on "
-                        "exactly when the run is isolated.")
+                        "user's config would otherwise drop. Unset, it follows "
+                        "isolation on a fresh thread and whenever "
+                        "--inherit-config or --isolate just flipped it, and "
+                        "otherwise carries forward what the thread recorded.")
     p.add_argument("--no-priority", dest="priority", action="store_false",
                    help="do not re-inject service_tier")
     p.add_argument("--schema",
@@ -1008,12 +1015,17 @@ def build_parser():
                         "or skipped however often you poll.")
     p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL,
                    help="how much of each event to print (default: compact). "
-                        "compact: lifecycle, the agent's own messages in full, "
-                        "each command line with its exit code and output size, "
-                        "changed paths, errors, usage — and no command output. "
-                        "normal: adds output for commands that exited non-zero. "
-                        "full: adds capped output for every item. "
-                        "raw: the events verbatim.")
+                        "All four carry the lifecycle, the agent's own messages "
+                        "in full, every command line with its exit code and "
+                        "output size, changed paths, errors, searches, MCP "
+                        "calls and usage; they differ only in what rides "
+                        "along. compact: nothing further. normal: a "
+                        f"{FAIL_HEAD_BYTES}B head and {FAIL_TAIL_BYTES}B tail "
+                        "of output for commands that exited non-zero, plus "
+                        "todo lists. full: the same head/tail excerpt for every "
+                        f"command whatever its exit code (to {FULL_ITEM_BYTES}B "
+                        "total), and reasoning items, which no lower level "
+                        "shows. raw: the events verbatim.")
     p.add_argument("--follow", action="store_true",
                    help="print events as they arrive, then one terminal line "
                         "(run.completed / run.failed / run.interrupted / "

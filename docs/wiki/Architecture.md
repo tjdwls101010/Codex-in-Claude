@@ -6,10 +6,13 @@ How the plugin's pieces fit together: the components, the request flow through t
 
 | Component | Responsibility |
 |---|---|
-| `codex_bridge.py` | The CLI entry point. Parses arguments for all nine subcommands, composes and validates them, and prints exactly one line of JSON per call (except `log`, which prints text plus a cursor). |
+| `codex_bridge.py` | The CLI entry point. Parses arguments for all twelve subcommands, composes and validates them, and prints exactly one line of JSON per call except the two that stream: `log`, which prints text plus a cursor, and `status --group --follow`, which prints a line per member state change and then a terminal `group.<state>` line. |
 | `_codex.py` | Composes the actual `codex` argv, spawns the supervised subprocess, manages process groups and signals, and reads Codex's own sqlite thread database for `resume --last` and `--include-external`. |
 | `_events.py` | Reads `events.jsonl` incrementally (cursor-based), and formats events per filter level (`compact`/`normal`/`full`/`raw`). |
 | `_registry.py` | Reads and writes the run registry (`.codex-runs/<run_id>/meta.json`) — the durable record of what a run was started with. |
+| `_run.py` | Builds one run from the caller's arguments and the thread's recorded settings, and describes one back. Sits below `_batch.py` in the import order, which is what lets the batch subsystem live in one file without importing the entrypoint back. |
+| `_batch.py` | The group manifest, the `batch` subcommands, `--resume-from` pairing, and the group-shaped views `status` and `result` grow when given `--group`. |
+| `_worktree.py` | Cuts and removes the per-member git worktrees that keep two writing members from editing the same files. |
 | `_util.py` | Bottom-of-the-dependency-graph helpers: JSON output, error formatting, NFC path normalization, `CODEX_HOME` resolution. Imports nothing from its siblings. |
 
 ## 2. Request Flow
@@ -46,13 +49,17 @@ flowchart LR
 ├── references/
 │   ├── environment.md          # CODEX_HOME, isolation, sandbox mechanics, auth
 │   ├── event-stream.md         # event schemas, filter levels, cursors, `show`
+│   ├── orchestration.md        # groups, worktrees, --resume-from, --as-ready
 │   └── troubleshooting.md      # symptom → cause → fix, and the out-of-scope list
 └── scripts/
-    ├── codex_bridge.py         # CLI entry point, all 9 subcommands
-    ├── _codex.py                # argv composition, process/thread-db management
-    ├── _events.py                # event filtering, cursor logic
-    ├── _registry.py              # run registry read/write
-    └── _util.py                  # low-level helpers
+    ├── codex_bridge.py         # CLI entry point, all 12 subcommands
+    ├── _codex.py               # argv composition, process/thread-db management
+    ├── _events.py              # event filtering, cursor logic
+    ├── _registry.py            # run registry read/write
+    ├── _run.py                 # building one run, and describing one
+    ├── _batch.py               # group manifest, batch subcommands, group views
+    ├── _worktree.py            # per-member git worktrees
+    └── _util.py                # low-level helpers
 
 tests/                          # see Testing.md — T1 unit + T2 integration suites
 docs/

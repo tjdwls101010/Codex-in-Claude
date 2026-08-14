@@ -2,6 +2,8 @@
 
 This file is mechanics and traps. It does not say which work to parallelise, how many ways to split it, or what shape the phases should take — you decide that per task, with more context about the task than this file could ever have. What it can tell you is what the commands actually do, what they cost, and which of their behaviours will surprise you.
 
+That silence is about *your task*, not about *these commands*. Which mode fits a job you have already decided to hand over — a batch or one run, two phases or one prompt, `--as-ready` or the barrier — is mechanism, and SKILL.md's **Which mode** section says it. A reader who takes the paragraph above as "nothing here helps you choose" ends up using one mode for everything, which is the failure this note exists to prevent.
+
 ## The group
 
 A group is a set of runs started by one `batch start` and addressable afterwards as one thing:

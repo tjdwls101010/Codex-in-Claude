@@ -50,6 +50,22 @@ Every subcommand prints **one line of JSON**, except `log`, which prints text pl
 
 Common `start`/`resume`/`review` options: `--sandbox {read-only,workspace-write,danger-full-access}` (default `workspace-write`), `--model`, `--effort`, `--label`, `--schema <file>`, `--inherit-config`, `--timeout <sec>`, `--foreground`, `--no-preamble`, `--config k=v` (passed to Codex as its own `-c k=v`), `--no-priority`. `start` also takes `--cwd`, `--add-dir`, `--image`; `resume` takes `--image`.
 
+## Which mode
+
+Deciding *what* to hand to Codex is yours — it depends on the task, and nothing here knows the task. Deciding *which shape* to hand it in is mechanism, and these are the distinctions the shapes actually turn on.
+
+**`review` or `start`.** `review` is a read-only turn against a diff (`--uncommitted`, `--base <ref>`, `--commit <sha>`) that comes back with findings. It cannot write, and it cannot be redirected mid-turn into fixing what it found. So: `review` when you want a verdict *you* will act on, `start` when you want the change made. If you find yourself planning to review and then apply, that is two phases, not one review.
+
+**`resume` or a fresh `start`.** A resumed thread keeps what it already worked out and replays a transcript that grows every turn; a fresh thread pays the isolation floor once and knows nothing. Continue when the new work depends on the old understanding — a correction, a follow-up question, "now do the same for the other file". Start fresh when it does not, because the replay is not free and an unrelated task inherits a context it has to read past.
+
+**One run or a batch.** See *When a group is worth it* below — the short version is that `batch start` buys you one name for N runs, and you want it exactly when you would otherwise be tracking N run ids by hand.
+
+**One batch or two phases.** `--resume-from` exists for work whose second half depends on the first half's *result* — audit, then fix what the audit found. If you can write both prompts now, it is one prompt: a phase boundary you did not need costs a full turn of replay per member. Add `--as-ready` when the members will finish at very different times, so each one's phase 2 starts as soon as *its* phase 1 is done.
+
+**`status`, `log`, or `result`** answer three different questions, and reaching for the wrong one is how a caller ends up polling something that was never going to change. `status` — is it alive, how long has it been quiet, did it finish. `log --since` — what is it doing, incrementally, without re-reading what you already saw. `result` — what did it conclude. A finished run needs `result`, not more `log`.
+
+**`show --item`** is the escape hatch, and it is worth reaching for in exactly two situations: a summary that looks wrong, and a run that stopped without explaining itself. The `out=NNNNB` marker on each command line is there so that fetching output is a decision rather than a guess.
+
 `--timeout` works in the background too: at the deadline the run's process group gets SIGINT and the run is recorded `timed_out` — a state of its own, distinct from `interrupted` (you stopped it) and `failed` (Codex did), because only the third is answered by raising the timeout. The thread stays resumable across it, with the pre-timeout turn's context intact.
 
 `status` truncates its default view — the one that answers "what is going on here", where a project with 200 old runs would otherwise cost more context than the answer is worth. Without `--run`, `--group` or `--all` it keeps every non-terminal run plus a tail of recent ones, capped at 20 rows, and reports `total_runs` with `runs_truncated` saying how many it withheld; `threads` groups runs that share one. **`--group` never truncates** — you named the members yourself, and a group you started is bounded by definition. Its summary reports `running`, `done`, `failed` and a `group_state` of `running`, `completed` or `partial`.

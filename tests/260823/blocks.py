@@ -6,7 +6,11 @@ a definition a machine applies the same way twice — hence this file rather tha
 paragraph describing the intent.
 
 The old text is read out of git rather than the worktree, because the rewrite
-deletes it. `ORIGIN` is the commit that still holds it.
+deletes it. `ORIGIN` names the commit that still holds it — as a tag, not a sha,
+and the tag is load-bearing: the rewrite landed as a squash merge, so that commit
+is not an ancestor of `main` and nothing else references it. Delete the tag and
+git eventually collects the object; a fresh clone would not have fetched it at
+all, and this whole file would then be reading nothing.
 """
 
 from __future__ import annotations
@@ -19,8 +23,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 
-#: The commit whose tree still carries the pre-rewrite skill package.
-ORIGIN = "2357bd3"
+#: The tag on the commit whose tree still carries the pre-rewrite skill package.
+ORIGIN = "pre-skill-rewrite"
 
 #: The files the inventory covers, relative to the repo root.
 SOURCES = [

@@ -24,6 +24,8 @@ import unittest
 
 from helpers import BRIDGE, REPO, SKILL_MD, BridgeCase
 
+import codex_bridge  # noqa: E402
+
 # `.*?\.(?=\s|$)` and not `[^.]*\.`: every statement of this contract contains
 # `group.<state>`, whose period is not a sentence end. A pattern that stopped at
 # the first period captured only the prefix, so the half of the sentence naming
@@ -76,37 +78,53 @@ class FollowingAGroupPrintsText(BridgeCase):
         self.assertRegex(last, rf"^group\.\w+ group={name} done=\d+ failed=\d+")
 
 
-class TheContractSentencesAreTrue(unittest.TestCase):
-    """Each copy of the claim must name both exceptions, or it is still wrong."""
+class TheContractIsStatedWhereTheCallerReadsIt(unittest.TestCase):
+    """One statement, in the surface the caller is already looking at.
 
-    # The wiki is not part of the skill — Claude never loads it — but it is what
-    # someone reads to decide whether to adopt this, and it carried the same
-    # wrong sentence. `test_suite_integrity.py` already checks docs/wiki, so
-    # holding this one claim true there costs nothing new.
-    SOURCES = {
-        "SKILL.md": SKILL_MD,
-        "codex_bridge.py": BRIDGE,
-        "docs/wiki/CLI-Reference.md": REPO / "docs" / "wiki" / "CLI-Reference.md",
-        "docs/wiki/Architecture.md": REPO / "docs" / "wiki" / "Architecture.md",
-    }
+    This used to require four copies of the sentence to agree — SKILL.md, the
+    module docstring, and two wiki pages. Four copies held true by a test is
+    still four things to edit, and the test only ever caught them after they
+    disagreed. The contract is now the top-level `--help` epilog, which a caller
+    reads before their first call and which ships with the code.
 
-    def test_each_source_states_the_contract_exactly_once(self):
-        for label, path in self.SOURCES.items():
+    Both exceptions still have to be named. A caller who pipes
+    `status --group --follow` into a JSON parser gets a crash, and the sentence
+    that omits it is the one that caused it.
+    """
+
+    def epilog(self):
+        return " ".join((codex_bridge.build_parser().epilog or "").split())
+
+    def test_the_top_level_epilog_states_the_contract(self):
+        claims = contract_claims(self.epilog())
+        self.assertEqual(
+            len(claims), 1,
+            "the top-level --help epilog does not state the output contract "
+            "exactly once; it is the one surface every caller reads first")
+
+    def test_the_statement_names_both_exceptions(self):
+        claim = contract_claims(self.epilog())[0]
+        for exception in ("log", "status --group --follow"):
+            with self.subTest(exception=exception):
+                self.assertIn(
+                    exception, claim,
+                    f"the contract is stated without naming `{exception}`, "
+                    f"which also streams plain text")
+
+    def test_no_prose_copy_survives(self):
+        """A second copy is a second thing that can go wrong, and prose is the
+        copy that goes wrong — nothing regenerates it from the code."""
+        for label, path in {
+                "SKILL.md": SKILL_MD,
+                "docs/wiki/CLI-Reference.md":
+                    REPO / "docs" / "wiki" / "CLI-Reference.md",
+                "docs/wiki/Architecture.md":
+                    REPO / "docs" / "wiki" / "Architecture.md"}.items():
             with self.subTest(source=label):
                 self.assertEqual(
-                    len(contract_claims(path.read_text())), 1,
-                    f"{label} should assert the output contract once; a second "
-                    "copy is a second thing to keep true")
-
-    def test_every_statement_of_the_contract_names_both_exceptions(self):
-        for label, path in self.SOURCES.items():
-            claim = contract_claims(path.read_text())[0]
-            for exception in ("log", "status --group --follow"):
-                with self.subTest(source=label, exception=exception):
-                    self.assertIn(
-                        exception, claim,
-                        f"{label} states the contract without naming "
-                        f"`{exception}`, which also streams plain text")
+                    contract_claims(path.read_text()), [],
+                    f"{label} restates the output contract, which "
+                    f"`--help`'s epilog now owns")
 
 
 if __name__ == "__main__":

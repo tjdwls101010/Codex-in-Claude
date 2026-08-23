@@ -59,7 +59,7 @@ Use `--only <case-id>` to run a single case while iterating. This tier isn't req
 python3 tests/legacy/measure_filter_calibration.py --project <repo-with-a-registry>
 ```
 
-Measures the byte cost of each filter level (`compact`/`normal`/`full`/`raw`) across four real workloads, producing the tables in [Context Discipline & Event Log Levels](Context-Discipline.md) and the raw data in [`docs/measurements/filter-calibration.md`](../measurements/filter-calibration.md). This is what the shipped default (`compact`) is chosen from — not an assumption.
+Measures the byte cost of each filter level (`compact`/`normal`/`full`/`raw`) across four real workloads, producing the tables in [Context Discipline & Event Log Levels](Context-Discipline.md). This is what the shipped default (`compact`) is chosen from — not an assumption.
 
 ## 4. T4 — Headless End-to-End
 

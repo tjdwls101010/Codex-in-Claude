@@ -47,7 +47,7 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `SKILL-04` | `cccca25b56f2` | b | SKILL.md#codex-as-a-managed-subagent | one line per call, same matcher |
 | `SKILL-05` | `d55818006d9f` | b | SKILL.md#troubleshooting | doctor cannot diagnose its own path |
 | `SKILL-06` | `20a5f55cb49c` | a | epilog:(top level) | output contract; Codex corrected the wording to 'every public command that parses' |
-| `SKILL-07` | `efd86bfba9cd` | a | help:(top level) | the 12-row command table is a copy of the subcommand listing; needs __supervise hidden (change 1) |
+| `SKILL-07` | `efd86bfba9cd` | a | help:(top level) cmd | the 12-row command table is a copy of the subcommand listing; needs __supervise hidden (change 1) |
 | `SKILL-08` | `34ee92bd9e65` | b | SKILL.md#codex-as-a-managed-subagent | keep the `--help` pointer; drop the seven-flags drift story as (c) |
 | `SKILL-09` | `96d07cb416e2` | b | SKILL.md#which-mode | what to hand over is the caller's; which shape is mechanism |
 | `SKILL-10` | `8f9e953556e3` | b | SKILL.md#which-mode | review vs start |
@@ -74,7 +74,7 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `SKILL-31` | `bc1af9503334` | d | — | status already filters the stdin notice, so the caller never sees it |
 | `SKILL-32` | `996515efb4d5` | a | help:stop --grace | signals go to the recorded process group, never to a matched name |
 | `SKILL-33` | `4adf43c627ca` | b | SKILL.md#gotchas | only batch start assigns worktrees; plain resume cannot isolate writers |
-| `SKILL-34` | `5f5cdbb6a64b` | a+b | help:batch start --as-ready|SKILL.md#gotchas | the barrier and its lift are the flag's; stopping a predecessor group starting its successors is not |
+| `SKILL-34` | `5f5cdbb6a64b` | a | help:batch start --as-ready|help:stop --group | the barrier and its lift are the flag's; that stopping a predecessor releases its waiters into starting belongs where a caller goes to cancel |
 | `SKILL-35` | `fd3ad34bc125` | a | desc:status | Codex review 3: status already lists the project's groups and carries group and worktree on every row |
 | `SKILL-36` | `e5a0ed2f28e3` | a+b | epilog:batch start|SKILL.md#collecting-a-batch | Codex review 3: that start returns after the spawns is the epilog's; only the host-turn half is prose |
 | `SKILL-37` | `f94e0c517c37` | a | help:stop --grace | Codex review 3: what a process group does and does not buy is stop's to state |
@@ -191,16 +191,16 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `orchestration-14` | `ef6d368228db` | a | help:batch start --resume-from | the resume-from invocation |
 | `orchestration-15` | `74b06b330dde` | a | help:batch start --resume-from | positional pairing in start order |
 | `orchestration-16` | `4b561eaa4434` | a | help:batch start --resume-from | the four pairing rules are refusals that name the case |
-| `orchestration-17` | `31c21b78ef96` | b | SKILL.md#gotchas | phase 2 keeps phase 1's worktrees rather than getting new ones |
+| `orchestration-17` | `31c21b78ef96` | a | help:batch start --resume-from | the flag itself is read before the decision, so it states that phase 1's isolation is preserved rather than reissued |
 | `orchestration-18` | `9e325ae9cbf9` | a | help:batch start --as-ready | the as-ready invocation |
 | `orchestration-19` | `df0f0eb6e311` | a | help:batch start --as-ready | one turn per thread is the invariant the barrier over-serves |
-| `orchestration-20` | `577106f51f10` | a+b | help:batch start --as-ready|SKILL.md#gotchas | terminal states release and waits are unbounded; that stopping phase 1 starts phase 2 is the trap |
+| `orchestration-20` | `577106f51f10` | a | help:batch start --as-ready|help:stop --group | same split as SKILL-34 |
 | `orchestration-21` | `0f9ef84fc327` | c | — | why there is no queue |
 | `orchestration-22` | `7cb54dd0a41a` | b | SKILL.md#gotchas | three resume calls put three writers in one directory |
 | `orchestration-23` | `10d7e57218bd` | b | SKILL.md#gotchas | concurrent_writers is reported after the spawn, so the decision needs prose; its note currently points at this file, which is the lie to fix |
 | `orchestration-24` | `a2f4f49bb98c` | a | epilog:batch start | which members qualify for a worktree |
 | `orchestration-25` | `c315e3121df0` | a | help:stop --grace | same fact as SKILL-37, same owner |
-| `orchestration-26` | `c05e2fa5d4e1` | a+b | epilog:batch start|SKILL.md#gotchas | the worktree rules are the epilog's; that a worktree is a committed base without the caller's uncommitted work has to be known before the spawn |
+| `orchestration-26` | `c05e2fa5d4e1` | a | epilog:batch start | the plan reserved the committed-base fact for prose because the *output* only says it after the spawn; `--help` is read before, so the epilog carries it |
 | `orchestration-27` | `965251689705` | a | help:batch clean --force | what clean refuses and what --force lifts |
 | `orchestration-28` | `4732892c6683` | a+b | help:status --follow|SKILL.md#collecting-a-batch | the line shapes are the flag's; the Bash ceiling is a host fact |
 | `orchestration-29` | `6905e7a9f4b7` | a | help:status --follow | --follow is a pure view |
@@ -221,7 +221,7 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `troubleshooting-01` | `7cfd23e5bb77` | a | desc:doctor | doctor first, and what its exit codes mean |
 | `troubleshooting-02` | `ca7c805bf25d` | c | — | the file's editorial rule for its own table |
 | `troubleshooting-03` | `9ef82ec36adc` | a+b | desc:doctor|SKILL.md#troubleshooting | the rows the tool now owns (auth, exit 127, orphaned, stalled, no pgid, resume --last, schema) leave; the ones outside the bridge stay |
-| `troubleshooting-04` | `5c162336cf06` | b | SKILL.md#gotchas | thread_id:null from start is normal and status backfills it |
+| `troubleshooting-04` | `5c162336cf06` | a | epilog:batch start|help:resume [REF] PROMPT | that null is a normal return belongs where the wait window is explained; that resuming on one is refused belongs on resume |
 | `troubleshooting-05` | `907a128b04a7` | c | — | lead-in to the scope notes |
 | `troubleshooting-06` | `bbf7dc8b03dd` | d | — | the frontmatter description already excludes Codex Cloud |
 | `troubleshooting-07` | `4690670f6dec` | d | — | the frontmatter description already excludes the server modes |

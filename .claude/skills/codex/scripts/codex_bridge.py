@@ -1089,7 +1089,9 @@ def build_parser():
     sub = ap.add_subparsers(
         dest="cmd", required=True,
         metavar="{start,resume,review,status,log,show,stop,result,batch,"
-                "models,doctor}")
+                "models,doctor}",
+        help="the whole command surface. Each takes its own --help, which is "
+             "where every flag, its default and what it refuses are stated.")
 
     p = sub.add_parser("start", formatter_class=HidesSuppressedCommands,
                        help="a fresh thread, backgrounded — when you want the work done rather than judged")
@@ -1124,7 +1126,9 @@ def build_parser():
                         "is passed through to Codex, but its original sandbox "
                         "was never recorded and there is nothing to re-assert, "
                         "so it is refused without an explicit --sandbox. "
-                        "`status --include-external` lists those threads.")
+                        "`status --include-external` lists those threads. A run "
+                        "whose thread_id is still null has no conversation yet "
+                        "and is refused too — wait for `status` to backfill it.")
     p.set_defaults(func=cmd_resume, cwd=None, add_dir=None, ref=None, prompt=None)
     ap.subparser_map["resume"] = p
 
@@ -1278,7 +1282,11 @@ def build_parser():
                         "of --run, --group or --all is required.")
     p.add_argument("--group",
                    help="interrupt every member of a batch group, including one "
-                        "still waiting on its predecessor under --as-ready")
+                        "still waiting on its predecessor under --as-ready. "
+                        "Stopping a group that others are waiting on does the "
+                        "opposite of cancelling them: `interrupted` is a "
+                        "terminal state, so it releases every waiter into "
+                        "starting. Stop both groups to end a pipeline.")
     p.add_argument("--all", action="store_true",
                    help="interrupt every run in this project's registry that "
                         "is still doing something — every non-terminal one, "
@@ -1385,9 +1393,7 @@ def build_parser():
                         "writing does not, and neither does a predecessor still "
                         "waiting on its own. The wait is unbounded: --timeout "
                         "bounds the Codex turn and never the wait, and "
-                        "`stop --group` on this group ends one. Stopping the "
-                        "*predecessor* group does the opposite — `interrupted` "
-                        "is terminal, so it releases every waiter into starting.")
+                        "`stop --group` on this group ends one.")
     b.set_defaults(func=cmd_batch_start)
 
     b = bsub.add_parser("clean", formatter_class=HidesSuppressedCommands,
@@ -1450,7 +1456,10 @@ def build_parser():
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("__supervise", help=argparse.SUPPRESS)
-    p.add_argument("--run-dir", required=True)
+    p.add_argument("--run-dir", required=True,
+                   help="the run directory to supervise. Not a command a caller "
+                        "runs: this process re-execs itself with it to become "
+                        "the detached supervisor for a run it just claimed.")
     p.set_defaults(func=lambda a: sys.exit(supervise(Path(a.run_dir))))
 
     return ap

@@ -36,9 +36,13 @@ class CursorOutOfRange(ValueError):
     """
 
 
-# Chosen from the measured table in docs/measurements/filter-calibration.md.
-# The reasoning is recorded next to that table and restated in
-# references/event-stream.md; do not change this without re-running it.
+# Not the cheapest level, which would be a level with no command output at
+# all. This one is the agent's own answer plus a few hundred bytes of
+# scaffolding: measured across four workloads, 38-85% of what `compact` emits is
+# the agent's own message, which is never filtered at any level. Raw command
+# output is a second copy of a summary the caller already has, in the common
+# case; the exceptions are one command at a time, and the size marker on each
+# command line says which one. Re-measure before changing this.
 DEFAULT_LEVEL = "compact"
 
 # `normal`: bytes of head and tail kept for a FAILED command's output. Enough

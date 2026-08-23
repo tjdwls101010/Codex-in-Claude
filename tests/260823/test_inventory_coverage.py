@@ -70,6 +70,8 @@ def split_help_anchor(body: str):
     left, which can itself contain a space (`resume [REF] PROMPT`). Splitting on
     the longest command path that actually exists is what tells the two apart.
     """
+    if body.startswith("(top level)"):
+        return "", body[len("(top level)"):].strip()
     words = body.split()
     for n in (2, 1):
         if parser_for(" ".join(words[:n])) is not None:

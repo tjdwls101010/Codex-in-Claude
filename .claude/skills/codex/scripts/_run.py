@@ -206,7 +206,7 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     # rc 0, both spawning `codex exec resume <same ref>`.
     # One scan, and the run-id map only when there is a chain to walk: this
     # guard runs on the critical path of every resume, and a registry scan is
-    # 0.63 s at 2,000 runs (`docs/measurements/batch-cost.md`).
+    # 0.63 s at 2,000 runs.
     runs = list(iter_runs(runs_dir))
     chain = (wait_chain(waits_for, {m.get("run_id"): m for _rd, m in runs})
              if waits_for else set())

@@ -6,8 +6,8 @@ worktree gives each writer a private checkout of the same repository at the same
 commit, so the collision surfaces later as a merge rather than sooner as
 corruption.
 
-Three properties of this design were measured before it was built (see
-`harness-spec.md` V-13/V-14/V-15) and each one carries weight here:
+Three properties of this design were measured before it was built, and each
+one carries weight here:
 
   * The worktree lives under `.codex-runs/<run_id>/wt`, whose `.gitignore` is
     `*`, and the main tree's `git status --porcelain` stays empty even while the

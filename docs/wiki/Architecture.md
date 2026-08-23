@@ -6,7 +6,7 @@ How the plugin's pieces fit together: the components, the request flow through t
 
 | Component | Responsibility |
 |---|---|
-| `codex_bridge.py` | The CLI entry point. Parses arguments for all twelve subcommands, composes and validates them, and prints exactly one line of JSON per call except the two that stream: `log`, which prints text plus a cursor, and `status --group --follow`, which prints a line per member state change and then a terminal `group.<state>` line. |
+| `codex_bridge.py` | The CLI entry point. Parses arguments for every subcommand, composes and validates them, and owns the output contract — stated once, in its own top-level `--help` epilog, rather than copied into prose that nothing regenerates. |
 | `_codex.py` | Composes the actual `codex` argv, spawns the supervised subprocess, manages process groups and signals, and reads Codex's own sqlite thread database for `resume --last` and `--include-external`. |
 | `_events.py` | Reads `events.jsonl` incrementally (cursor-based), and formats events per filter level (`compact`/`normal`/`full`/`raw`). |
 | `_registry.py` | Reads and writes the run registry (`.codex-runs/<run_id>/meta.json`) — the durable record of what a run was started with. |
@@ -46,11 +46,6 @@ flowchart LR
 ```
 .claude/skills/codex/
 ├── SKILL.md                    # what Claude reads to learn the CLI surface and gotchas
-├── references/
-│   ├── environment.md          # CODEX_HOME, isolation, sandbox mechanics, auth
-│   ├── event-stream.md         # event schemas, filter levels, cursors, `show`
-│   ├── orchestration.md        # groups, worktrees, --resume-from, --as-ready
-│   └── troubleshooting.md      # symptom → cause → fix, and the out-of-scope list
 └── scripts/
     ├── codex_bridge.py         # CLI entry point, all 12 subcommands
     ├── _codex.py               # argv composition, process/thread-db management

@@ -105,13 +105,32 @@ def documented_commands():
     return out
 
 
+#: The commands SKILL.md has to be caught showing, with a flag attached.
+#:
+#: This replaced a count. A threshold guards the extraction from silently
+#: matching nothing, but it also has to move every time the prose does, and the
+#: 260823 rewrite moved it a long way — four reference files dissolved into
+#: `--help`, and the flag mentions went with them. Lowering the number would
+#: have restored the check's letter and lost its point, because a number cannot
+#: say *which* instructions matter. This can: these are the four commands a
+#: caller cannot get anywhere useful without, and if SKILL.md stops
+#: demonstrating one of them with a flag, the extraction below is reading a
+#: document that no longer teaches the loop.
+INSTRUCTED_COMMANDS = {"start", "log", "stop", "result", "show",
+                       "status", "batch start"}
+
+
 class DocumentedFlagsExist(unittest.TestCase):
     """Every flag the skill tells you to pass must be a flag the CLI takes."""
 
-    def test_the_extraction_found_commands_to_check(self):
-        self.assertGreater(len(documented_commands()), 20,
-                           "the command regex stopped matching the docs, so "
-                           "this check is passing vacuously")
+    def test_the_extraction_found_the_commands_it_is_meant_to(self):
+        found = {sub for _doc, sub, _flag in documented_commands()}
+        self.assertEqual(
+            INSTRUCTED_COMMANDS - found, set(),
+            "the extraction is no longer finding these commands being used "
+            "with a flag, so every check below is looking at less than it "
+            "thinks — either the regex stopped matching or the prose stopped "
+            "teaching them")
 
     def test_every_documented_flag_is_real(self):
         surface, globals_ = cli_surface()
@@ -141,12 +160,15 @@ class DocumentedFlagsAreFindable(unittest.TestCase):
                 if doc == SKILL_MD]
 
     def test_the_extraction_found_instructions_in_skill_md(self):
-        """The guard above counts all five docs, so SKILL.md's own share can
-        fall to zero without it noticing — and this round deleted SKILL.md's
-        densest flag paragraph, which is exactly how that happens."""
-        self.assertGreater(len(self.skill_md_instructions()), 10,
-                           "no flags extracted from SKILL.md, so the check "
-                           "below is passing without looking at anything")
+        """SKILL.md is now the only document in `DOCS`, so this and the guard
+        above have converged — but it stays as its own test because they fail
+        for different reasons: that one is about which commands are taught, and
+        this one is about SKILL.md being the file that teaches them."""
+        subs = {sub for sub, _flag in self.skill_md_instructions()}
+        self.assertEqual(
+            INSTRUCTED_COMMANDS - subs, set(),
+            "SKILL.md no longer shows these commands being run with a flag, so "
+            "the check below is passing without looking at anything")
 
     def test_every_flag_skill_md_instructs_explains_itself_in_help(self):
         surface, globals_ = cli_surface()

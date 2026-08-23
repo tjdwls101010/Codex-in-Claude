@@ -28,18 +28,18 @@ REPO = HERE.parent.parent
 SKILL_DIR = REPO / ".claude" / "skills" / "codex"
 SKILL_MD = SKILL_DIR / "SKILL.md"
 BRIDGE = SKILL_DIR / "scripts" / "codex_bridge.py"
-REFERENCES_DIR = SKILL_DIR / "references"
 FAKE_CODEX_DIR = REPO / "tests" / "legacy" / "fake_codex"
 
 
 def skill_docs():
     """Every markdown file inside the skill package.
 
-    A glob rather than a list: this round's whole question is how many of these
-    there should be, and a hand-kept list would keep passing after the last
-    reference is deleted — or miss a new one.
+    A glob rather than a list: this round's whole question was how many of these
+    there should be, and the answer turned out to be one. A hand-kept list would
+    keep passing if a second file reappeared without anyone checking it against
+    the rules the round settled on.
     """
-    return [SKILL_MD, *sorted(REFERENCES_DIR.glob("*.md"))]
+    return sorted(SKILL_DIR.rglob("*.md"))
 
 sys.path.insert(0, str(BRIDGE.parent))
 

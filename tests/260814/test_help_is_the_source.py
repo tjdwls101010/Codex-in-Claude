@@ -75,26 +75,44 @@ def runnable_subcommands(parser, path=""):
     return out
 
 
-class TheCommandTableIsTheWholeSurface(unittest.TestCase):
-    """SKILL.md keeps a map of what exists; `--help` owns everything below it.
+class TheCommandListingIsTheParsers(unittest.TestCase):
+    """SKILL.md used to keep a map of what exists, held true against the parser
+    by this test. The map is gone.
 
-    The map earns its ~370 tokens by saving a call: a model that does not know
-    `batch` exists never thinks to ask `--help` about it. But it is still a
-    hand-kept copy of what the parser knows, and that is the arrangement that
-    let seven flags drift. So the copy stays and the drift does not.
+    Its argument was that a model which does not know `batch` exists never
+    thinks to ask `--help` about it. That was true of a table listing twelve
+    commands and one it must not call — and the top-level listing now answers
+    the same question, from the parser, once `__supervise` is hidden from it.
+    So what is checked reversed: the table must be absent, and the pointer that
+    replaces it must be present, or the commands become unreachable rather than
+    merely undocumented.
     """
 
-    def table_commands(self):
-        return {m.group(1).strip()
+    def test_skill_md_no_longer_keeps_a_command_table(self):
+        rows = {m.group(1).strip()
                 for m in map(TABLE_ROW_RE.match, SKILL_MD.read_text().splitlines())
                 if m}
-
-    def test_the_table_lists_every_runnable_command_and_no_others(self):
         self.assertEqual(
-            self.table_commands(),
-            runnable_subcommands(codex_bridge.build_parser()),
-            "SKILL.md's command table and the CLI's actual commands have "
-            "diverged; the table is what tells a caller a command exists at all")
+            rows & runnable_subcommands(codex_bridge.build_parser()), set(),
+            "SKILL.md is listing commands again; the listing that cannot drift "
+            "is the parser's own")
+
+    def test_skill_md_sends_the_caller_to_the_listing_instead(self):
+        text = SKILL_MD.read_text()
+        self.assertRegex(
+            text, r"\$CODEX[^`\n]*--help",
+            "with the table gone, nothing tells a caller how to find out which "
+            "commands exist")
+
+    def test_the_listing_it_points_at_hides_nothing_a_caller_needs(self):
+        """The pointer is only honest if what it points at is complete."""
+        import subprocess, sys as _sys
+        listing = subprocess.run(
+            [_sys.executable, str(codex_bridge.__file__), "--help"],
+            capture_output=True, text=True, timeout=60).stdout
+        for command in runnable_subcommands(codex_bridge.build_parser()):
+            with self.subTest(command=command):
+                self.assertIn(command.split()[0], listing)
 
 
 DEFAULT_RE = re.compile(r"default:\s*([A-Za-z0-9_.\-]+)")

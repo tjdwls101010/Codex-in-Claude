@@ -8,6 +8,7 @@ The four-tier test strategy behind this project, and how to run the tiers that l
 python3 -m unittest discover -s tests/legacy -p 'test_*.py'
 python3 -m unittest discover -s tests/260813 -p 'test_*.py'
 python3 -m unittest discover -s tests/260814 -p 'test_*.py'
+python3 -m unittest discover -s tests/260823 -p 'test_*.py'
 ```
 
 **301 tests in `tests/legacy`, passing in about two and a half minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/legacy/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
@@ -58,7 +59,7 @@ Use `--only <case-id>` to run a single case while iterating. This tier isn't req
 python3 tests/legacy/measure_filter_calibration.py --project <repo-with-a-registry>
 ```
 
-Measures the byte cost of each filter level (`compact`/`normal`/`full`/`raw`) across four real workloads, producing the tables in [Context Discipline & Event Log Levels](Context-Discipline.md) and the raw data in [`docs/measurements/filter-calibration.md`](../measurements/filter-calibration.md). This is what the shipped default (`compact`) is chosen from — not an assumption.
+Measures the byte cost of each filter level (`compact`/`normal`/`full`/`raw`) across four real workloads, producing the tables in [Context Discipline & Event Log Levels](Context-Discipline.md). This is what the shipped default (`compact`) is chosen from — not an assumption.
 
 ## 4. T4 — Headless End-to-End
 

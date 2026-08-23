@@ -2,6 +2,38 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-08-23
+
+The skill was written by adding a gotcha at a time across five rounds, so its structure was the order they were discovered in. This version rewrites it against one rule: **whatever the tool can say, the tool says.** A sentence in `--help` is regenerated from the code on every call and cannot drift from it; the same sentence in a paragraph is a copy, and the copy is what goes wrong.
+
+**Read Changed before upgrading.** Four things that used to be accepted are now refused, one flag is gone from `batch start`, and the four `references/` files no longer exist.
+
+### Changed
+
+- **`references/` is empty.** `environment.md`, `event-stream.md`, `orchestration.md` and `troubleshooting.md` — 454 lines — are gone, and `SKILL.md` went from 177 lines to 106. Nothing was lost silently: all 187 prose blocks were classified by owner first, in `docs/plan/skill-rewrite-inventory.md`, and a test fails if that table and the files disagree about which blocks existed. What survived in prose is what the tool cannot say for itself — facts about the *host* (the permission matcher matches command text; a follower dies with the turn that started it) and comparisons *between* commands, which no single command's `--help` can carry because no command knows about the others.
+
+- **Every `help=` string was audited against the code.** A second Codex read all 143 of them and named 73 as false, overstated, or ambiguous — `--worktree` did not isolate "every writing member", `status --all` did not cap at 20 rows, `--as-ready` did not release on "any terminal state", `--config` replaced a resumed thread's extra config rather than adding to it. All 73 are corrected. What was read is recorded in `docs/plan/help-audit-manifest.md`, one row per argument, and a test holds that table and the parser to the same shape — so an argument nobody read is now a red suite rather than an omission.
+
+- **The output contract and the state vocabulary are stated once each**, in the top-level and `status` epilogs. There were four copies of the contract and no gloss at all for `stalled` or `orphaned`, the two states callers misread — `stalled` is derived for display and kills nothing, `orphaned` means the supervisor is gone and not that Codex is.
+
+- **`projected_cost.note` no longer carries its sample story.** "measured 6 under of 11" was a fact about eleven runs in one project on one afternoon, printed to every caller forever. What it is — a median, so a scale rather than a bound — survives.
+
+- **`batch start` no longer accepts `--foreground`.** It was accepted by the parser and refused by the command, which forced its help string to read "Refused on `batch start`" — an option surface documenting a hole in itself. Why it cannot work is unchanged. The refusal is now argparse's, so it arrives as a usage error with exit status **2** rather than a JSON error with exit status 1.
+
+- **`__supervise` is hidden from the command listing.** It is a re-exec target this process spawns for itself, and it used to print as `__supervise ==SUPPRESS==`. It still runs when named; it is no longer advertised. This is what lets `SKILL.md` drop its hand-kept command table and point at `--help` instead.
+
+### Removed
+
+- `docs/measurements/` — the two write-ups were method narratives whose conclusions already live in `.claude/harness-spec.md` and next to the constants they justify.
+
+### Fixed
+
+- **`resume` of a thread this skill has never started is refused without an explicit `--sandbox`.** `codex exec resume` has no `-s`, so this wrapper re-asserts the sandbox it recorded on every turn. A thread it never started has no record — and the fallback invented `workspace-write` for a conversation whose own policy nobody knows. Inventing a write policy is the direction that cannot be undone. Pass `--sandbox` once and it is recorded from then on; `status --include-external` lists the threads this applies to.
+
+- **`status` refuses selectors that contradict each other** — `--run` with `--thread`, `--thread` with `--group`, `--include-external` with `--group` — instead of answering whichever branch came first. It also refuses `--interval` or `--follow-timeout` without `--follow`, which previously shaped nothing and read as an instruction that had been taken.
+
+- **`--priority` and `--no-priority` together are refused.** They share one setting, so argparse took whichever came last, and whether a run paid for the priority tier is not visible afterwards.
+
 ## [0.4.0] — 2026-08-14
 
 Two new capabilities, and twenty-one defects found by running the thing rather than reading it. The theme is the same one the previous version had, arriving one layer up: almost every defect here is a **confident wrong answer** — the command succeeded, the JSON parsed, and what it said was not true.
@@ -174,6 +206,7 @@ First release. A Claude Code plugin containing one skill (`codex`) that drives t
 - **`codex cloud` and `codex mcp-server`/`app-server` are out of scope**, both documented upstream as subject to change without notice.
 - Measurements were taken against `codex-cli 0.144.1` on a single machine. The thread database filename is version-stamped, so a Codex upgrade may degrade `--include-external` and a registry-less `resume --last`; `doctor` reports that case rather than failing.
 
+[0.5.0]: https://github.com/tjdwls101010/Codex-in-Claude/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tjdwls101010/Codex-in-Claude/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tjdwls101010/Codex-in-Claude/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tjdwls101010/Codex-in-Claude/releases/tag/v0.2.0

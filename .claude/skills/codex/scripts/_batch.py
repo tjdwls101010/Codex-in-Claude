@@ -397,10 +397,9 @@ def projected_cost(runs_dir: Path, n_runs: int):
     return {"runs": n_runs, "input_median_per_run": per_run,
             "input_median_total": per_run * n_runs, "samples": len(samples),
             "note": "median input tokens of this project's recent isolated runs, "
-                    "times N. About half of real runs come in under it and half "
-                    "over — measured 6 under of 11 — and a resume grows from "
-                    "there. It is a scale, not a bound: re-measure rather than "
-                    "budgeting from it."}
+                    "times N. A median has about half of real runs under it and "
+                    "half over, and a resume grows from there: it is a scale, "
+                    "not a bound. Re-measure rather than budgeting from it."}
 
 
 def wants_worktree(item, args):
@@ -633,18 +632,13 @@ def cmd_batch_start(args):
         # after the name was claimed would burn that name on a typo, against
         # the whole point of claiming before anything is spawned.
         fail("--worktree and --no-worktree contradict each other; pass one")
-    if getattr(args, "foreground", False):
-        # Checked here for the same reason, and because nothing downstream ever
-        # looks at the flag: `task_args` copies the caller's whole namespace
-        # onto each member, and `create_run` calls `supervise()` synchronously
-        # whenever it sees `foreground`. The spawn loop then waits out each
-        # member's entire turn before starting the next, so a batch of three
-        # two-second members takes six seconds and reports the same shape it
-        # would have concurrently — the caller's only clue is that it was slow.
-        fail("--foreground turns batch start into a serial loop: it blocks on "
-             "each member in turn, which is the opposite of what batch is for. "
-             "Start the batch and wait for it with "
-             "`status --group <name> --follow`.")
+    # `--foreground` used to be accepted here and refused below. The parser no
+    # longer offers it, so argparse refuses it first and this command never sees
+    # it. Why it can never work is unchanged: `task_args` copies the caller's
+    # whole namespace onto each member and `create_run` supervises synchronously
+    # whenever it sees it, so the spawn loop waits out each member's entire turn
+    # before starting the next — a batch of three two-second members takes six
+    # seconds and reports the same shape it would have concurrently.
     # Both refusals sit here, above `claim_group`, for the reason the two above
     # them do: a combination that silently means nothing is worse than an error,
     # and refusing after the claim would burn a single-use group name on a typo.

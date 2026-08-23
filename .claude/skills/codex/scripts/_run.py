@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from _codex import (
-    RESERVED_CONFIG_KEYS, THREAD_ID_WAIT, apply_preamble, build_argv,
+    RESERVED_CONFIG_KEYS, SANDBOX_MODES, THREAD_ID_WAIT, apply_preamble, build_argv,
     check_model_effort, model_catalog, reserved_config_key, spawn_supervised,
     supervise,
 )
@@ -206,7 +206,7 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     # rc 0, both spawning `codex exec resume <same ref>`.
     # One scan, and the run-id map only when there is a chain to walk: this
     # guard runs on the critical path of every resume, and a registry scan is
-    # 0.63 s at 2,000 runs (`docs/measurements/batch-cost.md`).
+    # 0.63 s at 2,000 runs.
     runs = list(iter_runs(runs_dir))
     chain = (wait_chain(waits_for, {m.get("run_id"): m for _rd, m in runs})
              if waits_for else set())
@@ -350,6 +350,33 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         refuse_concurrent_turn(runs_dir, thread_ref,
                                getattr(args, "force", False),
                                waits_for=waits_for)
+        if (kind == "resume" and base is None
+                and not getattr(args, "sandbox", None)
+                and not unreadable_runs(runs_dir)):
+            # `codex exec resume` has no `-s`, so a resumed turn's sandbox is
+            # whatever config layer happens to be in effect — which is why this
+            # wrapper re-asserts the one it recorded on every turn. A thread it
+            # never started has no record to re-assert, and `sandbox` above then
+            # invents `workspace-write` for a conversation whose own policy
+            # nobody knows. Inventing a write policy is the direction that
+            # cannot be undone, so it is refused instead; passed once, it is
+            # recorded against the thread from then on.
+            #
+            # `base is None` has two causes and only one of them is this one:
+            # a run whose meta.json will not parse also resolves to no base.
+            # Telling that caller "this thread has no registry entry" would
+            # send them looking for a run sitting right there. So this sits
+            # behind `refuse_concurrent_turn`, which names the unreadable run
+            # specifically — and skips entirely when anything in the registry
+            # was unreadable, because "never recorded" is a claim about the
+            # whole registry and reading all of it is what earns the right to
+            # make it. `--force` takes the same caller past that guard, which
+            # is why the condition and not the ordering has to carry this.
+            fail("this thread has no registry entry, so its original sandbox "
+                 "was never recorded and there is nothing to re-assert. Pass "
+                 "--sandbox explicitly; it is recorded against the thread from "
+                 "then on.",
+                 thread=thread_ref, sandbox=sorted(SANDBOX_MODES))
         try:
             run_id, run_dir = claim_run_dir(
                 runs_dir, args.label or (base.get("label") if base else None))

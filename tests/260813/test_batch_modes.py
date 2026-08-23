@@ -11,8 +11,18 @@ the flag that turns it into a serial loop reports the same shape either way, so
 the only symptom is that it took N times longer than the caller expected.
 
 There is a working way to block until a batch is done — start it, then
-`status --group --follow` — so the fix is to refuse the flag and say so, not to
-build a second supervision model for it.
+`status --group --follow` — so the fix is to refuse the flag, not to build a
+second supervision model for it.
+
+The 260823 round moved that refusal one layer out. The flag was accepted by the
+parser and rejected by the command, which meant `batch start --help` had to
+carry the sentence "Refused on `batch start`" — an option surface documenting a
+hole in itself. `batch start` no longer offers the argument at all, so argparse
+refuses it and the help is honest by having nothing to say. What this file pins
+is unchanged: the flag cannot get through, and the caller is told where the
+working way to wait is. That second half now lives in `batch start --help`'s
+epilog rather than in an error string, which is where a caller reads it before
+guessing at a flag rather than after.
 """
 
 from __future__ import annotations
@@ -26,25 +36,31 @@ class ForegroundIsNotABatchMode(BridgeCase):
 
     def test_batch_start_refuses_foreground(self):
         tasks = self.tasks_file("a", "b")
-        out = self.bridge("batch", "start", "--group", "g",
-                          "--tasks-file", tasks, "--foreground", expect_rc=1)
-        self.assertIn("--foreground", out["error"])
+        p = self.bridge_raw("batch", "start", "--group", "g",
+                            "--tasks-file", tasks, "--foreground")
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("--foreground", p.stderr)
 
-    def test_the_refusal_names_a_way_to_wait_for_the_batch(self):
-        """A refusal that removes the only obvious way to block is a dead end
-        unless it says where the working one is."""
-        tasks = self.tasks_file("a", "b")
-        out = self.bridge("batch", "start", "--group", "g",
-                          "--tasks-file", tasks, "--foreground", expect_rc=1)
-        self.assertIn("--follow", out["error"])
+    def test_the_option_surface_does_not_offer_it(self):
+        """A refusal a caller meets after typing the flag is worse than a
+        listing that never offered it."""
+        p = self.bridge_raw("batch", "start", "--help")
+        self.assertNotIn("--foreground", p.stdout)
+
+    def test_the_help_names_a_way_to_wait_for_the_batch(self):
+        """Removing the only obvious way to block is a dead end unless the
+        working one is somewhere the caller is already looking."""
+        p = self.bridge_raw("batch", "start", "--help")
+        self.assertIn("--follow", p.stdout)
 
     def test_the_group_name_survives_the_refusal(self):
         """Refused above `claim_group`, for the reason the `--worktree` /
         `--no-worktree` contradiction is: group names are single-use, so
         refusing after the claim burns the name on a typo."""
         tasks = self.tasks_file("a")
-        self.bridge("batch", "start", "--group", "g", "--tasks-file", tasks,
-                    "--foreground", expect_rc=1)
+        p = self.bridge_raw("batch", "start", "--group", "g",
+                            "--tasks-file", tasks, "--foreground")
+        self.assertEqual(p.returncode, 2, p.stdout)
         out = self.bridge("batch", "start", "--group", "g", "--tasks-file", tasks)
         self.assertEqual(out["spawned"], 1)
 

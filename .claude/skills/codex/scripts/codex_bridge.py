@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
     codex_version, model_catalog, review_argv,
-    SANDBOX_MODES, query_threads, state_db_path, supervise,
+    SANDBOX_MODES, THREAD_ID_WAIT, query_threads, state_db_path, supervise,
 )
 from _events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
@@ -61,8 +61,8 @@ from _registry import (  # noqa: E402
     unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
-    WRITING_SANDBOXES, create_run, ordered_by_waiting, resolve_implicit_run,
-    run_row,
+    STALL_SECONDS, WRITING_SANDBOXES, create_run, ordered_by_waiting,
+    resolve_implicit_run, run_row,
 )
 from _util import (  # noqa: E402
     clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
@@ -243,7 +243,19 @@ def cmd_status(args):
     # have made `--follow` mean something. Found by a `review` member reading
     # the commit that added the check below, which is the kind of hole a fix
     # leaves when it guards a symptom instead of the precedence underneath it.
-    refuse_competing_selectors(args, "status", "--run", "--group")
+    # `--thread` joined the pair R28 covered without joining the check: the
+    # branch order below answers `--run` and drops it, so a caller who named
+    # both got one run's row where they asked for a thread's.
+    refuse_competing_selectors(args, "status", "--run", "--thread", "--group")
+    if args.include_external and args.group:
+        # `--include-external` lists threads with *no* registry entry; a group
+        # is a registry construct. There is no run that is both, so the flag
+        # could only ever be a no-op here — and a no-op flag reads as an answer
+        # that considered it.
+        fail("--include-external and --group cannot be combined: a group's "
+             "members are registry entries and --include-external lists "
+             "threads that have none, so no run can be in both.",
+             group=args.group)
     # `--follow` only ever meant "--group --follow": the other branches emit a
     # snapshot and exit. Accepting it silently is the shape of mistake R13 was
     # about — the tool hands back an answer the caller reads as "I waited for
@@ -254,6 +266,17 @@ def cmd_status(args):
              "To watch one run, use `log --run <id> --follow`, which streams its "
              "events and ends on the run's terminal line.",
              run=args.run, interval=args.interval)
+    # Same failure one step further out: these two only shape a follow, so
+    # passing either without `--follow` is an instruction that quietly does
+    # nothing. `--interval` compares against its default rather than None
+    # because argparse fills it in whether or not the caller typed it.
+    unused = [n for n, v in (("--interval", args.interval != 1.0),
+                             ("--follow-timeout", args.follow_timeout is not None))
+              if v]
+    if unused and not args.follow:
+        fail(f"{' and '.join(unused)} only shape a --follow, and there is no "
+             f"--follow here, so nothing would use them.",
+             follow=args.follow, group=args.group)
     rows = []
     if args.run:
         rd, m = find_run(runs_dir, args.run)
@@ -843,6 +866,105 @@ def cmd_doctor(args):
 # CLI
 # --------------------------------------------------------------------------
 
+OUTPUT_CONTRACT = """\
+Output. Every public command that parses its arguments prints one line of JSON,
+success or failure, except `log`, which streams events and ends with
+`# cursor=<n>`, and `status --group --follow`, which streams a line per member
+state change and then a terminal `group.<state>` line. Anything that does not
+parse is argparse's own usage error on stderr instead.
+"""
+
+STATUS_EPILOG = """\
+The states, and what each one is telling you.
+
+  starting    forked; the supervisor has not reported yet
+  waiting     an --as-ready batch member, behind the run it continues
+  running     Codex has the turn
+  stalled     running, with no events for %(stall)ds. Derived for display,
+              never
+              stored, and nothing is ever killed for it — the threshold cannot
+              tell a slow command from a wedged one and you can. It does not
+              look at in_progress_item: read that field alongside it, because
+              idle inside a command_execution is a long build and idle with no
+              item is worth investigating.
+  completed   terminal: Codex finished the turn
+  failed      terminal: Codex ended non-zero
+  interrupted terminal: you stopped it
+  timed_out   terminal: --timeout's deadline passed
+  orphaned    terminal, and the odd one: this run's supervisor died without
+              writing an outcome, so nothing is left recording it — a machine
+              sleep, a hard kill. Codex itself may still be running and still
+              writing files. The thread survives either way, so `resume`
+              continues it.
+
+A group reports its own `group_state`, and it has three values. `running`;
+`completed` when every member reached a terminal state successfully; `partial`
+otherwise — which includes after a `stop --group`, so `partial` means "not all
+members succeeded", never "Codex failed". `--group` never truncates its listing;
+you named the members.
+
+`idle_seconds` is now minus the mtime of the last event.
+""" % {"stall": STALL_SECONDS}
+
+BATCH_START_EPILOG = """\
+When this returns. Every spawn has been attempted; it does not wait for a
+single turn to finish. Each member is given up to %(wait)ds for its thread id
+to appear before the report is written, so a member can come back with
+`thread_id: null`. That is a normal return, not a failure — `status` backfills
+the id from the first line of events.jsonl — but do not resume a member until
+it has one.
+
+Waiting for it, and collecting it. `status --group <name>` is the snapshot and
+`status --group <name> --follow` blocks until the group reaches a terminal
+state; `--follow-timeout` bounds that wait. Neither returns the work: `result
+--group <name>` is a separate call, and a group that finished is not a group
+you have read.
+
+A member that failed to spawn keeps its slot with an `error` and no run_id, so
+the list is never shorter than the tasks you handed over. Those slots appear as
+`unstarted` and make the group `partial`. One member failing never takes the
+others down, whatever the cause.
+
+Worktrees. A member gets its own git checkout at .codex-runs/<run_id>/wt when
+all of this holds: it is a kind=start task, its sandbox can write, it names no
+cwd of its own, two or more members qualify, the project is a git repository,
+and --base resolves. --worktree lifts the "two or more" condition and nothing
+else — a resume, a review, a read-only member and one with an explicit cwd are
+never isolated, by any flag. The checkout is cut from --base (default HEAD), so
+it holds none of your uncommitted work: that is also why a reviewer never gets
+one, since the diff it was started to look at lives only in your tree. Members'
+results stay inside those checkouts until you collect them with `result
+--group`, and `batch clean --group` is what removes them.
+
+Tasks. --task is a bare prompt, kind=start unless --resume-from turns it into
+the resume of the member it pairs with. --tasks-file takes one JSON object per
+line for everything else; its fields are listed above and generated from the
+same tuple the validator checks against. Group-level options are defaults a
+per-item field overrides. An unknown field name, or one with the wrong type,
+fails the whole command before anything starts, because a silently ignored field
+is a member that quietly used the group default instead.
+""" % {"wait": THREAD_ID_WAIT}
+
+
+class HidesSuppressedCommands(argparse.RawDescriptionHelpFormatter):
+    """argparse lists every named subparser and prints `==SUPPRESS==` for one
+    whose help is suppressed, rather than leaving it out.
+
+    That is the difference between a command list a caller can trust and one
+    they have to filter. `__supervise` is a re-exec target this process spawns
+    for itself; a listing that names it is a listing SKILL.md cannot defer to,
+    which is the whole reason SKILL.md carried a hand-kept copy of it.
+
+    Raw description handling comes along because the epilogs below are laid out
+    — argparse's own wrapping would reflow them into one paragraph.
+    """
+
+    def _iter_indented_subactions(self, action):
+        for sub in super()._iter_indented_subactions(action):
+            if sub.help is not argparse.SUPPRESS:
+                yield sub
+
+
 def add_common(p):
     p.add_argument("--runs-dir",
                    help="where run state lives (default: <project>/.codex-runs)")
@@ -852,26 +974,33 @@ def add_common(p):
                         "itself when it is not a repository)")
 
 
-def add_run_options(p, *, kind):
+def add_run_options(p, *, kind, foreground=True):
     p.add_argument("--label",
                    help="short name for the run; appears in its run id and in "
-                        "`status`. A resumed run keeps its thread's unless this "
-                        "replaces it.")
+                        "`status`. A resumed run inherits the label of the run "
+                        "it was resolved from unless this replaces it.")
     p.add_argument("--sandbox", choices=SANDBOX_MODES,
                    help="what the run may do to the filesystem (default: "
-                        "workspace-write). Recorded, and re-asserted on every "
-                        "later turn of this thread.")
+                        "workspace-write). Recorded against the run, and "
+                        "re-asserted on every later turn this registry can "
+                        "resolve a base for — which is every resume of a run "
+                        "this skill started, and none of a thread it did not.")
     p.add_argument("--model",
-                   help="model slug, checked against this Codex install before "
-                        "the run spawns; `models` prints the catalog. Unset on "
-                        "a fresh thread nothing is pinned and Codex picks; on a "
-                        "resumed one the thread's recorded model is re-asserted.")
+                   help="model slug. Checked against this install's catalog "
+                        "before the run spawns when that catalog can be read, "
+                        "and not at all when it cannot — never fail-closed; "
+                        "`models` prints it. Unset on a fresh thread nothing is "
+                        "pinned and Codex picks; on a resumed one the recorded "
+                        "model is re-asserted.")
     p.add_argument("--effort",
                    help="reasoning effort. Valid values differ per model — "
-                        "`models` prints each model's, with its default. Unset "
-                        "on a fresh thread nothing at all is sent and the "
-                        "server applies that model's default; on a resumed one "
-                        "the thread's recorded effort is re-asserted.")
+                        "`models` prints each model's, with its default, and "
+                        "omitting this is not the same as passing `medium`. "
+                        "Unset on a fresh isolated thread nothing at all is "
+                        "sent and the server applies that model's own default; "
+                        "unset under --inherit-config the user's config.toml "
+                        "may supply one. On a resume the recorded effort is "
+                        "re-asserted.")
     p.add_argument("--inherit-config", action="store_true",
                    help="load the user's config.toml: their MCP servers, "
                         "plugins, agent roles and hooks. Off by default. Auth "
@@ -883,34 +1012,55 @@ def add_run_options(p, *, kind):
                         "thread recorded. Wins over --inherit-config when both "
                         "are given.")
     p.add_argument("--priority", dest="priority", action="store_true", default=None,
-                   help="re-inject service_tier=\"priority\", which ignoring the "
-                        "user's config would otherwise drop. Unset, it follows "
-                        "isolation on a fresh thread and whenever "
-                        "--inherit-config or --isolate just flipped it, and "
-                        "otherwise carries forward what the thread recorded.")
+                   help="inject service_tier=\"priority\", which ignoring the "
+                        "user's config would otherwise silently drop. Unset, it "
+                        "follows isolation on a fresh thread or a flipped one, "
+                        "and otherwise carries forward what was recorded.")
     p.add_argument("--no-priority", dest="priority", action="store_false",
-                   help="do not re-inject service_tier")
+                   help="omit service_tier rather than injecting it, and "
+                        "record that choice — not the same as forcing the "
+                        "standard tier, which is the server's default anyway. "
+                        "Refused alongside --priority.")
     p.add_argument("--schema",
-                   help="path to a JSON Schema file handed to Codex. `result` "
-                        "then returns the parsed object as `json`, and fails "
-                        "loudly if the final message is not valid JSON.")
+                   help="path to a JSON Schema file handed to Codex. "
+                        "`result --run` then returns the parsed object as "
+                        "`json` and fails loudly if the final message is not "
+                        "valid JSON; `result --group` does not parse, so "
+                        "collect a schema batch member by member.")
     p.add_argument("--config", action="append", metavar="k=v",
                    help="extra `-c k=v` passed through to Codex. Repeatable. "
                         "The four keys this wrapper records and re-asserts — "
                         "model, model_reasoning_effort, sandbox_mode, "
-                        "service_tier — are refused here; use their own flags.")
-    p.add_argument("--foreground", action="store_true",
-                   help="block until the turn ends instead of backgrounding it. "
-                        "Refused on `batch start`.")
+                        "service_tier — are refused here; use their own flags. "
+                        "On a resume this replaces the thread's recorded set "
+                        "rather than adding to it, so repeat any entry you "
+                        "still want.")
+    if foreground:
+        # Not offered on `batch start`. It was, and was then refused by the
+        # command — so its help string had to read "Refused on `batch start`",
+        # an option surface documenting a hole in itself. The refusal is
+        # argparse's now, and the help is honest by having nothing to say.
+        p.add_argument("--foreground", action="store_true",
+                       help="block until the turn ends instead of "
+                            "backgrounding it")
     p.add_argument("--timeout", type=float,
                    help="give the run this many seconds, then SIGINT its process "
-                        "group and record state=timed_out. Works in background "
-                        "and foreground. No default: no flag, no deadline.")
+                        "group and record state=timed_out — a state of its own, "
+                        "so a deadline is never mistaken for a failure you "
+                        "should not retry. Works in background and foreground. "
+                        "No default: no flag, no deadline. The thread is "
+                        "resumable across it only if a thread id was recorded "
+                        "before the deadline; without one there is no "
+                        "conversation to continue. If Codex does not exit on "
+                        "the SIGINT the signal ladder escalates.")
     p.add_argument("--no-preamble", action="store_true",
-                   help="drop the paragraph this wrapper prepends to the prompt "
-                        "— that nobody is watching the turn, and that the final "
-                        "message is what the caller receives. `result` depends "
-                        "on the second half of that.")
+                   help="drop everything this wrapper prepends to the prompt: "
+                        "that nobody is watching the turn, so a clarifying "
+                        "question ends it with the work not done; that the "
+                        "final message is what the caller receives; and, for a "
+                        "batch member, the group size and its worktree's path "
+                        "and base. It is all or nothing — reach for it only "
+                        "when you are supplying those facts yourself.")
     if kind in ("start", "resume"):
         p.add_argument("--image", action="append",
                        help="attach an image file to the prompt. Repeatable.")
@@ -928,34 +1078,63 @@ def add_run_options(p, *, kind):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(prog="codex_bridge.py",
-                                 description="Drive the OpenAI Codex CLI as a managed subagent.")
+    ap = argparse.ArgumentParser(
+        prog="codex_bridge.py",
+        formatter_class=HidesSuppressedCommands,
+        description="Drive the OpenAI Codex CLI as a managed subagent.",
+        epilog=OUTPUT_CONTRACT)
     ap.subparser_map = {}
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    # An explicit metavar, because argparse builds the default one from every
+    # registered name including the suppressed one.
+    sub = ap.add_subparsers(
+        dest="cmd", required=True,
+        metavar="{start,resume,review,status,log,show,stop,result,batch,"
+                "models,doctor}",
+        help="the whole command surface. Each takes its own --help, which is "
+             "where every flag, its default and what it refuses are stated.")
 
-    p = sub.add_parser("start", help="hand work to a fresh thread — when you want the change made")
+    p = sub.add_parser("start", formatter_class=HidesSuppressedCommands,
+                       help="a fresh thread, backgrounded — when you want the work done rather than judged")
     add_common(p); add_run_options(p, kind="start")
     p.add_argument("prompt", nargs="?",
                    help="the prompt. May instead come from --prompt-file, or "
-                        "from stdin when this is `-` or omitted.")
+                        "from stdin when this is `-` or omitted and stdin is "
+                        "not a terminal.")
     p.set_defaults(func=cmd_start)
 
-    p = sub.add_parser("resume", help="another turn on a thread, keeping what it already worked out")
+    p = sub.add_parser(
+        "resume", formatter_class=HidesSuppressedCommands,
+        help="another turn on a thread, keeping what it already worked out")
     add_common(p); add_run_options(p, kind="resume")
     p.add_argument("--last", action="store_true",
-                   help="pick the thread to continue instead of naming one: the "
-                        "single live run if there is exactly one, else the "
-                        "newest. Two or more live runs are ambiguous and are "
-                        "refused with the candidates listed.")
+                   help="pick the thread to continue instead of naming one. "
+                        "Candidates are registry runs that recorded a thread "
+                        "id: exactly one live run wins, none falls back to the "
+                        "newest and says so, two or more is ambiguous and is "
+                        "refused with the candidates listed. Only when the "
+                        "registry has no candidate at all does it fall through "
+                        "to Codex's own thread list for this directory.")
     p.add_argument("--force", action="store_true",
-                   help="allow a second turn on a thread that already has one running")
+                   help="start a turn on a thread the concurrency check "
+                        "objected to — one that already has a live turn, or one "
+                        "whose metadata could not be read, which is the same "
+                        "refusal for the opposite reason.")
     p.add_argument("rest", nargs="*", metavar="[REF] PROMPT",
                    help="run id / thread id / thread name, then the prompt; "
-                        "with --last, just the prompt")
+                        "with --last, just the prompt. A ref this registry has "
+                        "never seen — a thread id or name from the Codex TUI — "
+                        "is passed through to Codex, but its original sandbox "
+                        "was never recorded and there is nothing to re-assert, "
+                        "so it is refused without an explicit --sandbox. "
+                        "`status --include-external` lists those threads. A run "
+                        "whose thread_id is still null has no conversation yet "
+                        "and is refused too — wait for `status` to backfill it.")
     p.set_defaults(func=cmd_resume, cwd=None, add_dir=None, ref=None, prompt=None)
     ap.subparser_map["resume"] = p
 
-    p = sub.add_parser("review", help="read-only findings on a diff — a verdict you act on, not a change")
+    p = sub.add_parser(
+        "review", formatter_class=HidesSuppressedCommands,
+        help="Codex's review mode against one diff selector — findings, not edits")
     add_common(p); add_run_options(p, kind="review")
     p.add_argument("--uncommitted", action="store_true",
                    help="review the working tree's uncommitted changes")
@@ -969,11 +1148,19 @@ def build_parser():
                    help="directory to review in (default: the project root)")
     p.add_argument("prompt", nargs="?",
                    help="free-form review instruction. Exactly one of "
-                        "--uncommitted, --base, --commit or this is required — "
-                        "the Codex CLI rejects combinations.")
+                        "--uncommitted, --base, --commit or this is required; a "
+                        "combination is refused here, before anything spawns.")
     p.set_defaults(func=cmd_review, image=None, add_dir=None, prompt_file=None)
 
-    p = sub.add_parser("status", help="is it alive and how far along — state, not output")
+    p = sub.add_parser(
+        "status", formatter_class=HidesSuppressedCommands,
+        help="is it alive, how far along, what it last said — registry state, not the event stream",
+        description="State, never output. The default listing also carries this "
+                    "project's `groups` and gives every row its `group` and "
+                    "`worktree`, which is how a session that did not start a "
+                    "batch finds it: the group name is the one thing about a "
+                    "batch nobody can re-derive.",
+        epilog=STATUS_EPILOG)
     add_common(p)
     p.add_argument("--run", metavar="REF",
                    help="one run: a run id, a thread id, or a run-id prefix "
@@ -983,31 +1170,44 @@ def build_parser():
     p.add_argument("--group", help="report on one batch group's members only")
     p.add_argument("--all", action="store_true",
                    help="every run in the registry. Without this, and without "
-                        "--run or --group, the listing keeps every non-terminal "
-                        "run plus a tail of recent ones, caps at 20 rows, and "
-                        "reports how many it withheld as runs_truncated.")
+                        "--run, --thread or --group, the listing keeps every "
+                        "non-terminal run plus the 20 newest — so it can exceed "
+                        "20 rows when older runs are still live — and reports "
+                        "how many it withheld as runs_truncated.")
     p.add_argument("--include-external", action="store_true",
-                   help="also list Codex threads for this directory that have no "
-                        "registry entry — ones started outside this skill. Their "
-                        "original sandbox was never recorded, so resuming one "
-                        "needs an explicit --sandbox.")
+                   help="also list Codex threads for this directory that have "
+                        "no registry entry — ones started outside this skill. "
+                        "Their original sandbox was never recorded, so `resume` "
+                        "refuses one without an explicit --sandbox. Combines "
+                        "with the default listing only: refused with --group, "
+                        "and alongside --run or --thread it would label threads "
+                        "outside that filter as external.")
     p.add_argument("--follow", action="store_true",
-                   help="with --group: print each member state change, then a "
-                        "terminal group line, then exit. Pair with Monitor; the "
-                        "Bash tool's 600s ceiling cannot be crossed by blocking.")
+                   help="requires --group: print each member state change, "
+                        "then a terminal group line, then exit. A pure view — "
+                        "it holds no state, so a follower that dies loses "
+                        "nothing and `status --group` answers the same question "
+                        "at any time.")
     p.add_argument("--interval", type=float, default=1.0,
-                   help="seconds between polls while following (default: 1.0)")
+                   help="seconds between polls while following (default: "
+                        "1.0). Refused without --follow, which is the only "
+                        "thing it shapes.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
-                        "group.still-running. No default: the follow ends only "
-                        "when the group does.")
+                        "group.still-running instead of a terminal group line. "
+                        "No default: the follow ends only when the group does. "
+                        "Refused without --follow.")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("log", help="what it is doing right now — events since a cursor")
+    p = sub.add_parser(
+        "log", formatter_class=HidesSuppressedCommands,
+        help="filtered events from a byte cursor — the whole log, or only what is new")
     add_common(p)
     p.add_argument("--run", metavar="REF",
                    help="a run id, a thread id, or a run-id prefix (newest "
-                        "wins). Omitted, this project's only live run is used.")
+                        "wins). Omitted, the project's single live run is used; "
+                        "with none live the newest terminal one, and with two "
+                        "or more live it is refused rather than guessed.")
     p.add_argument("--since", type=int, default=0,
                    help="resume from the byte offset a previous call printed as "
                         "`# cursor=<n>` (default: 0, the whole log). Only "
@@ -1023,119 +1223,243 @@ def build_parser():
                         f"{FAIL_HEAD_BYTES}B head and {FAIL_TAIL_BYTES}B tail "
                         "of output for commands that exited non-zero, plus "
                         "todo lists. full: the same head/tail excerpt for every "
-                        f"command whatever its exit code (to {FULL_ITEM_BYTES}B "
-                        "total), and reasoning items, which no lower level "
-                        "shows. raw: the events verbatim.")
+                        f"command whatever its exit code ({FULL_ITEM_BYTES}B "
+                        "of excerpt, before the marker naming what was left "
+                        "out), and reasoning items, which no lower level "
+                        "shows. raw: the events verbatim. The split is on exit "
+                        "code rather than size, which is a proxy and not a "
+                        "verdict — a command that exits non-zero because one "
+                        "file argument was missing brings its output along too.")
     p.add_argument("--follow", action="store_true",
                    help="print events as they arrive, then one terminal line "
                         "(run.completed / run.failed / run.interrupted / "
-                        "run.orphaned, with the exit code) before exiting")
+                        "run.timed_out / run.orphaned, with the exit code) "
+                        "before exiting. There is a line for every terminal "
+                        "state on purpose: a follower that only printed "
+                        "progress would go silent through a crash, and silence "
+                        "is indistinguishable from still working.")
     p.add_argument("--interval", type=float, default=1.0,
-                   help="seconds between polls while following (default: 1.0)")
+                   help="seconds between polls while following (default: 1.0). "
+                        "Shapes nothing without --follow.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
-                        "run.still-running instead of a terminal line")
+                        "run.still-running instead of a terminal line, so a "
+                        "watcher cannot hang on a wedged run. Shapes nothing "
+                        "without --follow.")
     p.set_defaults(func=cmd_log)
 
-    p = sub.add_parser("show", help="one item's full output, when the summary looks wrong")
+    p = sub.add_parser(
+        "show", formatter_class=HidesSuppressedCommands,
+        help="one item's output, when the summary looks wrong",
+        description="Returns exactly one item's full aggregated_output (or a "
+                    "file_change's whole change list) and nothing else's. This "
+                    "is the only path by which complete command output reaches "
+                    "a caller's context, and it is always one explicit request "
+                    "at a time.")
     add_common(p)
     p.add_argument("--run", required=True, metavar="REF",
-                   help="required: item ids restart at item_0 on every "
-                        "invocation, so an item id alone identifies nothing")
+                   help="required: item ids restart at item_0 in every run's "
+                        "event stream, so two runs on one thread each have an "
+                        "item_0 meaning different things and an item id alone "
+                        "identifies nothing")
     p.add_argument("--item", required=True, metavar="ITEM_ID",
                    help="the item to fetch, as printed by `log` (item_0, "
-                        "item_1, …). An unknown id is refused with the run's "
-                        "available items listed.")
+                        "item_1, …). An unknown id is refused with up to 60 of "
+                        "the run's completed items listed.")
     p.add_argument("--max-bytes", type=int, default=SHOW_MAX_BYTES,
-                   help=f"cap on the output returned (default: {SHOW_MAX_BYTES}). "
-                        "Truncation is reported, never silent.")
+                   help=f"cap on command output returned (default: "
+                        f"{SHOW_MAX_BYTES}); a file_change's list is not capped. "
+                        "Truncation is reported with the true size and how to "
+                        "raise the cap, never silent.")
     p.set_defaults(func=cmd_show)
 
-    p = sub.add_parser("stop", help="interrupt a run, a group, or everything, by process group")
+    p = sub.add_parser(
+        "stop", formatter_class=HidesSuppressedCommands,
+        help="interrupt a run, a group, or everything, by process group")
     add_common(p)
     p.add_argument("--run", action="append", metavar="REF",
                    help="a run to interrupt. Repeatable. No default target: one "
                         "of --run, --group or --all is required.")
     p.add_argument("--group",
                    help="interrupt every member of a batch group, including one "
-                        "still waiting on its predecessor under --as-ready")
+                        "still waiting on its predecessor under --as-ready. "
+                        "Stopping a group that others are waiting on does the "
+                        "opposite of cancelling them: `interrupted` is a "
+                        "terminal state, so it releases every waiter into "
+                        "starting. Stop both groups to end a pipeline.")
     p.add_argument("--all", action="store_true",
-                   help="interrupt every non-terminal run in this project's "
-                        "registry")
+                   help="interrupt every run in this project's registry that "
+                        "is still doing something — every non-terminal one, "
+                        "plus an orphaned run whose Codex is still writing")
     p.add_argument("--grace", type=float, default=5.0,
                    help="seconds to wait after SIGINT before SIGTERM, then 3s "
                         "before SIGKILL (default: 5.0). Signals go to the run's "
                         "recorded process group, never to a matched process "
-                        "name, so one run's stop cannot reach another's.")
+                        "name, so one run's stop cannot reach another's — "
+                        "matching `codex exec` by name would reach every Codex "
+                        "on the machine, including another person's. The ladder "
+                        "starts at SIGINT because that lets Codex flush its "
+                        "rollout: a stopped run stays resumable and the resumed "
+                        "turn still knows what the interrupted one finished. "
+                        "That is the whole of mid-turn steering — there is no "
+                        "channel into a running turn, so redirecting one is "
+                        "stop then resume. A process group isolates signals and "
+                        "nothing else: two runs in one directory still edit the "
+                        "same files.")
     p.set_defaults(func=cmd_stop)
 
-    p = sub.add_parser("result", help="what it concluded — final message, usage, parsed schema JSON")
+    p = sub.add_parser(
+        "result", formatter_class=HidesSuppressedCommands,
+        help="the run's message and usage — final once it ends, partial while it runs")
     add_common(p)
     p.add_argument("--run", metavar="REF",
-                   help="one run's full final message. No default target: one of "
-                        "--run or --group is required.")
-    p.add_argument("--group", help="collect every member of a batch group, capped "
-                                   "per run, plus the paths more than one wrote")
+                   help="one run's whole message — final once the run ends, "
+                        "and whatever it has said so far while it is live. No "
+                        "default target: one of --run or --group is required.")
+    p.add_argument("--group",
+                   help="collect a batch group: every member that started, "
+                        "capped per run, with usage, files_changed and "
+                        "`overlaps` — the paths more than one member was "
+                        "observed writing. Members that never started are "
+                        "listed separately under `unstarted` rather than "
+                        "silently shortening the list.")
     p.set_defaults(func=cmd_result)
 
-    p = sub.add_parser("batch", help="several runs as one name you can watch, collect and stop together")
+    p = sub.add_parser(
+        "batch", formatter_class=HidesSuppressedCommands,
+        help="several runs as one name you can watch, collect and stop together",
+        description="A group is the set of runs one `batch start` created, "
+                    "addressable afterwards as one thing — by `status --group`, "
+                    "`result --group`, `stop --group`, `batch clean --group` "
+                    "and `batch start --resume-from`. It outlives the session "
+                    "that started it. The name is single-use per project.")
     bsub = p.add_subparsers(dest="batch_cmd", required=True)
-    b = bsub.add_parser("start", help="start N runs as one addressable group")
-    add_common(b); add_run_options(b, kind="start")
+    b = bsub.add_parser("start", help="start N runs as one addressable group",
+                        formatter_class=HidesSuppressedCommands,
+                        epilog=BATCH_START_EPILOG)
+    add_common(b); add_run_options(b, kind="start", foreground=False)
     b.add_argument("--group", required=True,
-                   help="name for this group. Single-use per project: reusing one "
-                        "would make membership and start order ambiguous, and "
-                        "--resume-from pairs positionally against exactly that list.")
+                   help="name for this group. Single-use per project until "
+                        "`batch clean` releases it: reusing a live name would "
+                        "make membership and start order ambiguous, and "
+                        "--resume-from pairs positionally against exactly that "
+                        "list.")
     b.add_argument("--task", action="append",
-                   help="a prompt. Repeatable. Always kind=start.")
+                   help="a prompt. Repeatable, and ordered before any "
+                        "--tasks-file entries. kind=start on its own; under "
+                        "--resume-from each becomes the resume of the member it "
+                        "pairs with.")
     b.add_argument("--tasks-file",
                    help="JSONL, one task object per line, for long or "
-                        "heterogeneous tasks. Fields: " + ", ".join(TASK_FIELDS))
+                        "heterogeneous tasks; see the epilog for how these "
+                        "interact with the group-level options. Fields (`review`"
+                        " takes a nested object of the `review` flags): "
+                        + ", ".join(TASK_FIELDS))
     b.add_argument("--force", action="store_true",
                    help="allow a resume task to start a second turn on a thread "
                         "that already has a live one")
     b.add_argument("--worktree", action="store_true",
-                   help="give every writing member its own git worktree even if "
-                        "there is only one of them")
+                   help="isolate a single writing member, which the two-or-more "
+                        "condition would otherwise skip. It lifts that "
+                        "condition and no other: a resume, a review, a "
+                        "read-only member and one with its own cwd stay in the "
+                        "caller's tree whatever this says.")
     b.add_argument("--no-worktree", action="store_true",
-                   help="never assign worktrees; every member shares the "
-                        "caller's tree")
+                   help="plan no new worktrees. Members with their own cwd, and "
+                        "resumed members already living in one, are unaffected "
+                        "— this stops worktrees being cut, not worktrees that "
+                        "exist.")
     b.add_argument("--base",
-                   help="commit or ref the worktrees are cut from (default HEAD)")
+                   help="commit or ref new worktrees are cut from (default "
+                        "HEAD); ignored when none are being cut. A base older "
+                        "than HEAD can be missing the project's AGENTS.md, "
+                        "which reaches a worktree run only from a base where "
+                        "the file exists.")
     b.add_argument("--resume-from", metavar="GROUP",
                    help="continue an earlier group: task i resumes member i of "
                         "that group, in its start order, keeping its thread and "
-                        "its working directory. One task per started member.")
+                        "the directory it already lives in — including that "
+                        "group's worktrees, which are preserved rather than "
+                        "reissued, so a phase 1 that was never isolated stays "
+                        "un-isolated. One task per started member, unless a "
+                        "task names its own target with kind/resume, which "
+                        "wins over its positional counterpart.")
     b.add_argument("--as-ready", action="store_true",
                    help="with --resume-from: start each member as soon as the "
-                        "member it continues reaches a terminal state, instead "
-                        "of refusing until every one of them has. Any terminal "
-                        "state releases, including a failure. --timeout still "
-                        "bounds only the Codex turn, never the wait; "
-                        "`stop --group` ends a wait.")
+                        "member it continues is done, instead of refusing until "
+                        "every one of them is. A failed predecessor releases "
+                        "its successor too — `predecessor_state` says how it "
+                        "ended — but an orphaned one whose Codex is still "
+                        "writing does not, and neither does a predecessor still "
+                        "waiting on its own. The wait is unbounded: --timeout "
+                        "bounds the Codex turn and never the wait, and "
+                        "`stop --group` on this group ends one.")
     b.set_defaults(func=cmd_batch_start)
 
-    b = bsub.add_parser("clean", help="remove a finished group's worktrees")
+    b = bsub.add_parser("clean", formatter_class=HidesSuppressedCommands,
+                        help="remove a group's worktrees, and release its name when nothing is left")
     add_common(b)
     b.add_argument("--group", required=True,
-                   help="the group to clean up. Removing its worktrees is also "
-                        "what releases the name for reuse.")
+                   help="the group to clean up. The name is released only when "
+                        "nothing is left behind — a live member keeps it "
+                        "claimed even after its worktrees are gone. Refused by "
+                        "name while a member is live, another run is working "
+                        "inside a worktree, a group derived from this one still "
+                        "needs them, or git will not discard uncommitted "
+                        "changes.")
     b.add_argument("--force", action="store_true",
-                   help="remove worktrees that still hold uncommitted changes, "
-                        "and ignore live members and dependent groups. This "
-                        "discards work nothing else has a copy of.")
+                   help="lift all four of those refusals at once, not only the "
+                        "one you hit, and proceed past a manifest or meta file "
+                        "it could not read. The result says what it overrode. "
+                        "Where a worktree held uncommitted changes, that work "
+                        "had no other copy.")
     b.set_defaults(func=cmd_batch_clean)
 
-    p = sub.add_parser("models", help="which models and efforts exist here, before you name one")
+    p = sub.add_parser(
+        "models", formatter_class=HidesSuppressedCommands,
+        help="which models and efforts exist here, before you name one",
+        description="This install's model catalog, read live from `codex debug "
+                    "models` and cached once per process. Each model carries "
+                    "its own `efforts` and its own `default_effort` — they are "
+                    "not a shared ladder every model climbs the same way, which "
+                    "is why no list of them is written down anywhere here. "
+                    "`start`, `resume` and `batch start` check a passed --model "
+                    "or --effort against this before spawning. When it cannot "
+                    "be read the check is skipped rather than failing closed, "
+                    "and `doctor` reports models_catalog as null with a "
+                    "warning saying why.")
     add_common(p)
     p.set_defaults(func=cmd_models)
 
-    p = sub.add_parser("doctor", help="why is Codex not behaving — env, auth, sandbox, paths")
+    p = sub.add_parser(
+        "doctor", formatter_class=HidesSuppressedCommands,
+        help="why is Codex not behaving — env, auth, sandbox, paths",
+        description="Exits 0 when healthy and 2 when there is a blocker, so it "
+                    "is usable in a conditional. Blockers stop a run working at "
+                    "all: no codex on PATH, no authentication, a missing "
+                    "CODEX_HOME, an unwritable runs dir, Python below 3.10. "
+                    "The warnings are things that work but are worth "
+                    "knowing: a "
+                    "config.toml set to danger-full-access, a project "
+                    "AGENTS.md, a thread database it could not read. Check auth "
+                    "before anything else — an unauthenticated run fails in "
+                    "ways that look like other problems. `codex_home` is "
+                    "printed resolved, with `codex_home_from_env` saying "
+                    "whether it was overridden; an override moves sessions, "
+                    "config.toml, auth.json and the thread database with it, so "
+                    "~/.codex is then someone else's state or nothing. "
+                    "`thread_db_readable: false` means no thread row could be "
+                    "read at all — the file may be absent, empty, or a schema "
+                    "this version cannot query. Only --include-external and a "
+                    "registry-less `resume --last` need it.")
     add_common(p)
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("__supervise", help=argparse.SUPPRESS)
-    p.add_argument("--run-dir", required=True)
+    p.add_argument("--run-dir", required=True,
+                   help="the run directory to supervise. Not a command a caller "
+                        "runs: this process re-execs itself with it to become "
+                        "the detached supervisor for a run it just claimed.")
     p.set_defaults(func=lambda a: sys.exit(supervise(Path(a.run_dir))))
 
     return ap
@@ -1143,6 +1467,13 @@ def build_parser():
 
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
+    if "--priority" in raw and "--no-priority" in raw:
+        # The two share one dest, so argparse's answer to both is "whichever
+        # came last" — and nothing downstream records which that was. Whether a
+        # run paid for the priority tier is a cost the caller cannot see again
+        # afterwards, which makes a silent coin toss the wrong answer. Checked
+        # on argv because by the time argparse is done the pair is one boolean.
+        fail("--priority and --no-priority contradict each other; pass one")
     ap = build_parser()
     # `resume` is the only subcommand with two optional positionals
     # (`[REF] PROMPT`). Plain argparse binds them in groups split by any option

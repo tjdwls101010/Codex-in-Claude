@@ -273,14 +273,27 @@ class SandboxDriftRegression(BridgeTestCase):
 
     def test_resume_of_an_unknown_ref_passes_it_through_as_a_thread_name(self):
         """`codex exec resume` accepts a thread name, so an id we have never
-        seen is a legitimate request, not an error."""
-        r = self.bridge("resume", "some-thread-name", "go")
+        seen is a legitimate request, not an error.
+
+        What changed in the 260823 round is which sandbox it runs under. This
+        used to fall back to `workspace-write` — a write policy invented for a
+        conversation whose own policy nobody recorded. The pass-through is
+        unchanged; the caller now has to say what it may do.
+        """
+        r = self.bridge("resume", "--sandbox", "read-only",
+                        "some-thread-name", "go")
         self.wait_for_state(r["run_id"])
         argv = self.argv_records()[0]["argv"]
         self.assertEqual(argv[:3], ["exec", "resume", "some-thread-name"])
-        self.assertIn('sandbox_mode="workspace-write"', argv,
-                      "an unknown thread has no recorded sandbox, so the default "
-                      "applies -- but it is still asserted explicitly")
+        self.assertIn('sandbox_mode="read-only"', argv,
+                      "the sandbox the caller had to supply is still asserted "
+                      "explicitly, because `exec resume` has no -s")
+
+    def test_an_unknown_ref_without_a_sandbox_is_refused(self):
+        """The other half of that change: no invented default."""
+        out = self.bridge("resume", "some-thread-name", "go", expect_rc=1)
+        self.assertIn("--sandbox", out["error"])
+        self.assertNotIn("workspace-write", out["error"])
 
 
 class ReviewArgumentValidation(BridgeTestCase):

@@ -44,7 +44,7 @@ Four real workloads run against a 148-line Python package, at every filter level
 | review (`--uncommitted`) | 16,841 B | **1,974 B** (11.7%) | 1,974 B | 11,964 B |
 | debug-failure ("tests fail, fix them") | 14,629 B | **1,516 B** (10.4%) | 3,647 B | 8,312 B |
 
-`compact` and `normal` come out identical on the first three workloads because every command in them exited `0` — `normal` costs nothing extra until something actually fails. The debug-failure workload was added specifically because the first three gave no evidence for comparing `compact` against `normal` at all. Full methodology, per-workload prompts, and the threats to validity are recorded in [`docs/measurements/filter-calibration.md`](../measurements/filter-calibration.md).
+`compact` and `normal` come out identical on the first three workloads because every command in them exited `0` — `normal` costs nothing extra until something actually fails. The debug-failure workload was added specifically because the first three gave no evidence for comparing `compact` against `normal` at all. The method, the per-workload prompts and the threats to validity were recorded alongside the run; the conclusion the shipped default rests on is the table above.
 
 ## 5. Why `compact` Is the Default
 

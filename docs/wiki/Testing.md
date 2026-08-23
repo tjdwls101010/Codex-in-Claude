@@ -8,6 +8,7 @@ The four-tier test strategy behind this project, and how to run the tiers that l
 python3 -m unittest discover -s tests/legacy -p 'test_*.py'
 python3 -m unittest discover -s tests/260813 -p 'test_*.py'
 python3 -m unittest discover -s tests/260814 -p 'test_*.py'
+python3 -m unittest discover -s tests/260823 -p 'test_*.py'
 ```
 
 **301 tests in `tests/legacy`, passing in about two and a half minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/legacy/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.

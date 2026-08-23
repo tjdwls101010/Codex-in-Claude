@@ -33,10 +33,12 @@ INSTRUCTION_DOCS = [
     *sorted((REPO / "docs" / "wiki").glob("*.md")),
 ]
 
-# The measurement write-ups are not instructions end to end — most of each file
-# is recorded output — but each carries a "reproduce with" command, and a command
-# naming a script that no longer exists is the same broken pointer.
-REPRODUCTION_DOCS = sorted((REPO / "docs" / "measurements").glob("*.md"))
+# There used to be a second list here: the measurement write-ups under
+# docs/measurements, which were not instructions end to end but each carried a
+# "reproduce with" command that could go stale like any other pointer. The
+# 260823 round deleted those files — their conclusions live in
+# .claude/harness-spec.md and what was left was the method — so the list is gone
+# with them rather than globbing a directory that no longer exists.
 
 DISCOVER_RE = re.compile(
     r"python3 -m unittest discover -s (?P<start>\S+) -p (?P<q>['\"])(?P<pattern>.*?)(?P=q)"
@@ -128,7 +130,7 @@ class DocumentedCommands(unittest.TestCase):
         """A command naming a script that moved fails as `No such file`, far from
         the document that sent the reader there."""
         checked = 0
-        for doc in INSTRUCTION_DOCS + REPRODUCTION_DOCS:
+        for doc in INSTRUCTION_DOCS:
             if not doc.exists():
                 continue
             for m in SCRIPT_RE.finditer(doc.read_text()):

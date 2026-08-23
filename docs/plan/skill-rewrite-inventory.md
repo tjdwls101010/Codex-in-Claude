@@ -23,6 +23,20 @@ A `references/` file earns its existence when a real branch in the caller's read
 
 So the four references dissolve. What each loses is recorded per block below.
 
+## Codex review 3 — the table argued against
+
+Run `20260823-151527-inv-rebut-89f6` (gpt-5.6-sol, xhigh, read-only) was given the classification scheme and the bridge source and asked to find misclassifications, ordered by damage. It returned 25. Fourteen changed a row; the rest were rejected, and why is worth recording, because the same argument will be made again.
+
+**Accepted, and what it caught.** Two shapes recurred. One: a (d) whose *consequence* is not derivable from what the tool prints — `doctor` prints `codex_home` and a boolean, which does not tell you that sessions, auth and the thread database moved with the override. Two: a (b) whose fact is genuinely the tool's own behaviour and whose destination was simply unclaimed — that SIGINT leaves a thread resumable is what `stop` does, so `stop --grace` says it; that `status` already lists the project's groups is `status`'s own contract. Ten rows moved from (b) or (d) into (a) on that reading, and one (c) came back: that a non-zero exit code is a *proxy* for "this output matters" rather than a verdict is filter semantics a caller acts on, not measurement narrative.
+
+It also caught a false sentence rather than a misfiled one. `SKILL-20` said the entire context risk is `command_execution.aggregated_output`; agent messages are emitted in full at every level too ([`_events.py:261`](../../.claude/skills/codex/scripts/_events.py)), so they are unbounded as well. What is true is narrower: `aggregated_output` is the risk *the filter can act on*. The block stays (b) and the claim is corrected.
+
+**Rejected, and on what grounds.** Five findings moved the *Which mode* blocks into (a), on the argument that `<cmd> --help` is also read before the command runs, so "the caller needs it before deciding" is not a reason for prose. That argument answers a question this rewrite already settled differently, and it has a hole: to read `resume --help` you must already have `resume` on your shortlist. What SKILL.md holds there is not a copy of each command's one-liner — it is the comparison *between* them, which no single command's help can carry because no single command knows about the others.
+
+Four more argued that facts in the plan's fixed gotcha set are tool-owned: that `--resume-from` preserves phase 1's worktrees rather than making new ones, that a worktree is a committed base with none of the caller's uncommitted work, that the project's `AGENTS.md` reaches an isolated run, and that `thread_id: null` from `start` is normal. Each is reported by the tool *after* the spawn it would have changed. `batch start`'s output tells you how many uncommitted files you left behind at the moment the worktrees already exist.
+
+One finding is neither accepted nor rejected but redirected. `orchestration-23` observed that `concurrent_writers_note` points at `orchestration.md` — a file that is about to stop existing, and which the note described as containing guidance it does not. The classification stands; the note's text is fixed instead.
+
 ## The blocks
 
 | id | hash | class | owner_anchor | note |
@@ -45,15 +59,15 @@ So the four references dissolve. What each loses is recorded per block below.
 | `SKILL-16` | `ba35cb5d5971` | a | help:start --timeout | timed_out is its own state; resumable only when a thread id was recorded |
 | `SKILL-17` | `414e1be837da` | a | epilog:status | truncation, --group never truncating, group_state vocabulary |
 | `SKILL-18` | `d3c768233e62` | b | SKILL.md#which-mode | the start → log → stop → resume → result loop |
-| `SKILL-19` | `b06fa19b0fac` | b | SKILL.md#which-mode | no mid-turn injection; intervention is stop then resume |
-| `SKILL-20` | `2a23f477ed73` | b | SKILL.md#context-discipline | the whole context risk is aggregated_output |
+| `SKILL-19` | `b06fa19b0fac` | a | help:stop --grace | Codex review 3: that SIGINT leaves the thread resumable is what stop does, so stop says it |
+| `SKILL-20` | `2a23f477ed73` | b | SKILL.md#context-discipline | Codex review 3 corrected the claim: agent messages are also unbounded, so aggregated_output is the risk the filter can act on, not the only one |
 | `SKILL-21` | `1f025fa4bb59` | b | SKILL.md#context-discipline | the default level reports size instead of output |
 | `SKILL-22` | `39cab9b2bc24` | b | SKILL.md#context-discipline | the cmd line with its out=NNNNB marker |
-| `SKILL-23` | `c21a681c8d53` | b | SKILL.md#context-discipline | the marker makes fetching a decision |
+| `SKILL-23` | `c21a681c8d53` | a | desc:show | Codex review 3: that show returns exactly one item's output is show's own contract |
 | `SKILL-24` | `1a1a3dd151eb` | b | SKILL.md#context-discipline | agent messages are never filtered, so output is usually a second copy |
 | `SKILL-25` | `58f1c70d0e1b` | b | SKILL.md#context-discipline | when to leave the default; the measured-cost pointer goes with the reference |
 | `SKILL-26` | `37d9970a904f` | b | SKILL.md#gotchas | the section's own framing |
-| `SKILL-27` | `c0e1233e7435` | a+b | help:resume [REF] PROMPT|SKILL.md#gotchas | outside threads have nothing to re-assert from → refusal (change 4); the measured drift tables are (c) |
+| `SKILL-27` | `c0e1233e7435` | a | help:status --include-external|help:resume [REF] PROMPT | Codex review 3: --include-external already states it, and change 4 makes the resume itself say so; the measured drift tables are (c) |
 | `SKILL-28` | `835e03f3dd8c` | a | help:show --run | item ids restart per invocation — already stated there |
 | `SKILL-29` | `317e53d49f1d` | b | SKILL.md#which-mode | resume replays and gets dearer; the token ladder is (c) |
 | `SKILL-30` | `c77252753299` | b | SKILL.md#gotchas | the project's AGENTS.md reaches an isolated run |
@@ -61,11 +75,11 @@ So the four references dissolve. What each loses is recorded per block below.
 | `SKILL-32` | `996515efb4d5` | a | help:stop --grace | signals go to the recorded process group, never to a matched name |
 | `SKILL-33` | `4adf43c627ca` | b | SKILL.md#gotchas | only batch start assigns worktrees; plain resume cannot isolate writers |
 | `SKILL-34` | `5f5cdbb6a64b` | a+b | help:batch start --as-ready|SKILL.md#gotchas | the barrier and its lift are the flag's; stopping a predecessor group starting its successors is not |
-| `SKILL-35` | `fd3ad34bc125` | b | SKILL.md#collecting-a-batch | a group outlives its session and is the only unrecoverable handle |
-| `SKILL-36` | `e5a0ed2f28e3` | b | SKILL.md#collecting-a-batch | collection is a separate call, and how to wait depends on the host's turn |
-| `SKILL-37` | `f94e0c517c37` | b | SKILL.md#collecting-a-batch | signals are isolated, files are not |
+| `SKILL-35` | `fd3ad34bc125` | a | desc:status | Codex review 3: status already lists the project's groups and carries group and worktree on every row |
+| `SKILL-36` | `e5a0ed2f28e3` | a+b | epilog:batch start|SKILL.md#collecting-a-batch | Codex review 3: that start returns after the spawns is the epilog's; only the host-turn half is prose |
+| `SKILL-37` | `f94e0c517c37` | a | help:stop --grace | Codex review 3: what a process group does and does not buy is stop's to state |
 | `SKILL-38` | `587bf83ac7e4` | a | help:start --no-preamble | already stated there |
-| `SKILL-39` | `49317ae3477d` | d | — | doctor prints the resolved codex_home |
+| `SKILL-39` | `49317ae3477d` | a | desc:doctor | Codex review 3: the consequence of an override is not derivable from the two fields doctor already prints |
 | `SKILL-40` | `0bb7736b9426` | a | help:start --effort | efforts are per-model and omitting is not medium |
 | `SKILL-41` | `4b51cfc04d35` | a | help:start --foreground | background is the default |
 | `SKILL-42` | `9f5ede140ae5` | b | SKILL.md#collecting-a-batch | Monitor pairing is a host fact the CLI cannot know |
@@ -82,7 +96,7 @@ So the four references dissolve. What each loses is recorded per block below.
 | `SKILL-53` | `65a2d57ad611` | d | — | the frontmatter description already draws this boundary |
 | `SKILL-54` | `cd46defa7efe` | c | — | the references index goes with the references |
 | `environment-01` | `162ed559f4b8` | c | — | version provenance for the numbers below |
-| `environment-02` | `873f8b0e00a7` | d | — | doctor resolves and prints it |
+| `environment-02` | `873f8b0e00a7` | a | desc:doctor | Codex review 3: a path and a boolean do not say that sessions, auth and the thread database move with the override |
 | `environment-03` | `579927bbf4b0` | c | — | the story of the machine it was found on |
 | `environment-04` | `24f43e9f6744` | d | — | doctor prints both fields |
 | `environment-05` | `6af24acb581f` | c | — | lead-in to the table |
@@ -130,7 +144,7 @@ So the four references dissolve. What each loses is recorded per block below.
 | `environment-47` | `971bb6700c6b` | a | desc:doctor | the blocker and warning lists |
 | `environment-48` | `4cfe4ee3e76c` | a | desc:doctor | thread_db_readable:false means no thread row could be read, not that the schema changed |
 | `eventstream-01` | `ea3059bf5f50` | c | — | the file's own framing |
-| `eventstream-02` | `5b98138f50ca` | d | — | the model reads the raw stream directly at --level raw |
+| `eventstream-02` | `5b98138f50ca` | d | — | the model reads the exec stream directly at --level raw; the one consequence — that a rollout is a different file in a different shape — travels with eventstream-07 |
 | `eventstream-03` | `8abe0131983b` | d | — | the sample is the stream itself |
 | `eventstream-04` | `74cfc411390d` | c | — | lead-in |
 | `eventstream-05` | `7ca3e171b7c1` | a+b | help:show --run|SKILL.md#context-discipline | item ids and the aggregated_output risk; the rest is readable from the stream |
@@ -146,14 +160,14 @@ So the four references dissolve. What each loses is recorded per block below.
 | `eventstream-15` | `c8940d40195a` | b | SKILL.md#context-discipline | compact is the agent's own answer |
 | `eventstream-16` | `7f047184ff37` | b | SKILL.md#context-discipline | when output is not redundant it is one command |
 | `eventstream-17` | `806ce7777385` | b | SKILL.md#context-discipline | when to raise the level |
-| `eventstream-18` | `0606cec7712a` | c | — | the exit-code proxy's honest limitation |
+| `eventstream-18` | `0606cec7712a` | a | help:log --level | Codex review 3: that a non-zero exit is a proxy rather than a verdict is filter semantics a caller acts on |
 | `eventstream-19` | `017addfd6363` | a | help:log --since | the cursor is a byte offset |
 | `eventstream-20` | `fd5599691e10` | a | help:log --since | nothing duplicated or skipped |
 | `eventstream-21` | `895df36c90be` | a | help:log --since | --since 0 replays everything |
 | `eventstream-22` | `58c5495de99f` | d | — | duplicate of SKILL-43's invocation |
 | `eventstream-23` | `593db15761b9` | a | help:log --follow | events then a terminal line |
 | `eventstream-24` | `a48231bb34df` | a | help:log --follow | the terminal line's shape |
-| `eventstream-25` | `fcf737fa3a64` | a | help:log --follow | one for every terminal state |
+| `eventstream-25` | `fcf737fa3a64` | a+b | help:log --follow|SKILL.md#collecting-a-batch | Codex review 3: the terminal line is the flag's; pairing it with Monitor is a host fact |
 | `eventstream-26` | `a1c9ade22f81` | a | help:log --follow-timeout | already stated there |
 | `eventstream-27` | `ab63ae6a73a2` | a | epilog:status | idle_seconds and in_progress_item |
 | `eventstream-28` | `b9cfe6de5bdc` | a | epilog:status | how to read the two together |
@@ -185,13 +199,13 @@ So the four references dissolve. What each loses is recorded per block below.
 | `orchestration-22` | `7cb54dd0a41a` | b | SKILL.md#gotchas | three resume calls put three writers in one directory |
 | `orchestration-23` | `10d7e57218bd` | b | SKILL.md#gotchas | concurrent_writers is reported after the spawn, so the decision needs prose; its note currently points at this file, which is the lie to fix |
 | `orchestration-24` | `a2f4f49bb98c` | a | epilog:batch start | which members qualify for a worktree |
-| `orchestration-25` | `c315e3121df0` | b | SKILL.md#collecting-a-batch | process groups isolate signals, not files |
+| `orchestration-25` | `c315e3121df0` | a | help:stop --grace | same fact as SKILL-37, same owner |
 | `orchestration-26` | `c05e2fa5d4e1` | a+b | epilog:batch start|SKILL.md#gotchas | the worktree rules are the epilog's; that a worktree is a committed base without the caller's uncommitted work has to be known before the spawn |
 | `orchestration-27` | `965251689705` | a | help:batch clean --force | what clean refuses and what --force lifts |
 | `orchestration-28` | `4732892c6683` | a+b | help:status --follow|SKILL.md#collecting-a-batch | the line shapes are the flag's; the Bash ceiling is a host fact |
 | `orchestration-29` | `6905e7a9f4b7` | a | help:status --follow | --follow is a pure view |
 | `orchestration-30` | `5c96459a63ee` | b | SKILL.md#collecting-a-batch | how to wait depends on whether another turn is coming |
-| `orchestration-31` | `732c7997d1c8` | b | SKILL.md#collecting-a-batch | returning is not done and finishing is not collected |
+| `orchestration-31` | `732c7997d1c8` | a+b | epilog:batch start|SKILL.md#collecting-a-batch | Codex review 3: three bridge states; only "ending the turn on a promise produces nothing" is host-owned |
 | `orchestration-32` | `ac459d5751bd` | a | epilog:status | the group_state vocabulary, including partial after a stop |
 | `orchestration-33` | `35b4f1534e08` | a | help:result --group | what result --group returns |
 | `orchestration-34` | `0c15185db4c2` | a | help:result --group | overlaps is the intersection only |

@@ -81,11 +81,15 @@ class HelpCarriesTheMigratedFacts(unittest.TestCase):
             for needle in needles:
                 with self.subTest(fact=name, command=command or "(top level)",
                                   needle=needle):
-                    self.assertIn(
-                        needle, text,
-                        f"`{command or ''} --help` does not state {name!r}; the "
-                        f"rewrite removed that sentence from prose on the "
-                        f"understanding it would live here instead")
+                    # assertTrue rather than assertIn: the latter prints the
+                    # whole help text into the failure, which for an epilog is
+                    # several screens of noise around a one-word answer.
+                    self.assertTrue(
+                        needle in text,
+                        f"`{command or ''} --help` does not state {name!r} — it "
+                        f"is missing {needle!r}. The rewrite removed that "
+                        f"sentence from prose on the understanding it would "
+                        f"live here instead")
 
 
 class TheStateVocabularyIsStated(unittest.TestCase):
@@ -100,14 +104,15 @@ class TheStateVocabularyIsStated(unittest.TestCase):
         text = help_text("status")
         for state in RUN_STATES:
             with self.subTest(state=state):
-                self.assertIn(state, text)
+                self.assertTrue(state in text, f"the epilog never says {state!r}")
 
     def test_the_epilog_names_every_group_state(self):
         text = help_text("status")
-        self.assertIn("group_state", text)
+        self.assertTrue("group_state" in text,
+                        "the epilog never names the field the values belong to")
         for state in GROUP_STATES:
             with self.subTest(group_state=state):
-                self.assertIn(state, text)
+                self.assertTrue(state in text, f"the epilog never says {state!r}")
 
     def test_the_epilog_glosses_the_two_misread_states(self):
         text = help_text("status")

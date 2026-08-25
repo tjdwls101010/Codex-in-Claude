@@ -23,7 +23,7 @@ Every subcommand accepts:
 | `--effort <str>` | Reasoning effort, passed through as `model_reasoning_effort` |
 | `--inherit-config` | Load the user's own `$CODEX_HOME/config.toml` instead of isolating |
 | `--isolate` | Force isolation even if something else would disable it |
-| `--priority` / `--no-priority` | Force `service_tier="priority"` re-injection on or off (default: on exactly when isolating) |
+| `--priority` / `--no-priority` | Force `service_tier="priority"` — the tier Codex labels "Fast mode" — re-injection on or off. Unset, it is derived per run; see `start --help` |
 | `--schema <path>` | Path to a JSON schema file; the run's final message must validate against it |
 | `--config k=v` | Append a raw `-c k="v"` passthrough (repeatable) |
 | `--foreground` | Block until the run finishes instead of returning immediately |

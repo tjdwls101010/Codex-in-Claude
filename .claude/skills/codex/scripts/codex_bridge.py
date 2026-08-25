@@ -1035,15 +1035,20 @@ def add_run_options(p, *, kind, foreground=True):
                         "thread recorded. Wins over --inherit-config when both "
                         "are given.")
     p.add_argument("--priority", dest="priority", action="store_true", default=None,
-                   help="inject service_tier=\"priority\", which ignoring the "
-                        "user's config would otherwise silently drop. Unset, it "
-                        "follows isolation on a fresh thread or a flipped one, "
-                        "and otherwise carries forward what was recorded.")
+                   help="inject service_tier=\"priority\" — the tier Codex "
+                        "labels \"Fast mode\" and its config.toml spells "
+                        "\"fast\". Ignoring the user's config would otherwise "
+                        "silently drop it. Unset, it follows isolation on a "
+                        "fresh thread or a flipped one, and otherwise carries "
+                        "forward what was recorded.")
     p.add_argument("--no-priority", dest="priority", action="store_false",
                    help="omit service_tier rather than injecting it, and "
-                        "record that choice — not the same as forcing the "
-                        "standard tier, which is the server's default anyway. "
-                        "Refused alongside --priority.")
+                        "record that choice. That stops this wrapper "
+                        "re-adding Fast mode; a config the run inherited can "
+                        "still set it, because omitting the key is not the "
+                        "same as forcing the standard tier — which is the "
+                        "server's default anyway. Refused alongside "
+                        "--priority.")
     p.add_argument("--schema",
                    help="path to a JSON Schema file handed to Codex. "
                         "`result --run` then returns the parsed object as "

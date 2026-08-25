@@ -23,7 +23,7 @@ Every subcommand accepts:
 | `--effort <str>` | Reasoning effort, passed through as `model_reasoning_effort` |
 | `--inherit-config` | Load the user's own `$CODEX_HOME/config.toml` instead of isolating |
 | `--isolate` | Force isolation even if something else would disable it |
-| `--priority` / `--no-priority` | Force `service_tier="priority"` re-injection on or off (default: on exactly when isolating) |
+| `--priority` / `--no-priority` | Force `service_tier="priority"` — the tier Codex labels "Fast mode" — re-injection on or off. Unset, it is derived per run; see `start --help` |
 | `--schema <path>` | Path to a JSON schema file; the run's final message must validate against it |
 | `--config k=v` | Append a raw `-c k="v"` passthrough (repeatable) |
 | `--foreground` | Block until the run finishes instead of returning immediately |
@@ -99,7 +99,7 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 | `--all` | Include terminal runs too |
 | `--include-external` | Also list threads Codex knows about for this directory that have no registry entry (e.g. started in the TUI) |
 
-**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
+**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `priority`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
 
 **Top level:** `project`, `runs_dir`, `runs`, `threads` (thread id → run ids), `groups` (every batch group in this project), `running` (currently `running`/`stalled` run ids); with `--include-external`: `external_threads` and an explanatory `external_note`. A run that belongs to a group carries `group`, and one with a worktree carries `worktree` — together these are what let a session find and address a batch it did not start.
 

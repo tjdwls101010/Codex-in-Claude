@@ -635,6 +635,7 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         "exit_code": meta.get("exit_code"), "sandbox": meta.get("sandbox"),
         "model": meta.get("model"), "effort": meta.get("effort"),
         "isolated": meta.get("isolated"),
+        "priority": meta.get("priority"),
         "cwd": meta.get("cwd"),
         "usage": None if review_zero else usage,
         "turns_completed": info["turns_completed"], "commands": info["commands"],

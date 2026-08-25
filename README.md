@@ -32,6 +32,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 - **Background by default** — `start` returns a `run_id`/`thread_id` immediately instead of blocking; check back in whenever it's convenient.
 - **Sandbox stability across turns** — every `resume` re-asserts the sandbox, model, and reasoning effort its thread was created with. See [Sandbox Stability](docs/wiki/Sandbox-Stability.md).
+- **Fast mode survives isolation** — Codex's Fast mode is a `service_tier` setting that lives in the user's config, so an isolated run would drop it. Isolated runs re-inject it by default, and `--no-priority` stops the re-injection. See [CLI Reference](docs/wiki/CLI-Reference.md).
 - **A filtered live event log** — four verbosity levels (`compact` by default, `normal`, `full`, `raw`), with the default chosen from real measurements rather than a guess. See [Context Discipline & Event Log Levels](docs/wiki/Context-Discipline.md).
 - **Stop, then redirect** — interrupt a run mid-task and continue it on the same thread with new instructions. `stop` always targets a run's own process group, never a process by name, so concurrent runs never interfere with each other.
 - **Resume any thread** — including ones started outside this plugin, directly in the Codex TUI.

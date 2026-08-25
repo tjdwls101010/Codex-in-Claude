@@ -67,6 +67,12 @@ FACTS = {
         "review", ["thread_id: null", "Nothing announces"]),
     "which members qualify for a worktree": (
         "batch start", ["worktree", "two or more", "read-only", "review"]),
+    # Both flags carry the name, because it is what a caller searches for and
+    # either one may be the entry they land on. The two needles are each unique
+    # to one of them: a shared "Fast mode" would keep passing after the name was
+    # dropped from one flag, which is what a trial deletion actually showed.
+    "both priority flags name the tier Codex calls Fast mode": (
+        "start", ['labels "Fast mode"', "re-adding Fast mode", "service_tier"]),
     "the output contract and both of its exceptions": (
         "", ["one line of JSON", "log", "status --group --follow"]),
 }

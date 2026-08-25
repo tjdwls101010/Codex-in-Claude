@@ -46,6 +46,25 @@ FACTS = {
         "resume", ["--sandbox", "never recorded"]),
     "batch start returns after the spawns, not after the turns": (
         "batch start", ["spawn", "15", "does not wait"]),
+    # The same three commands, and the same reason `batch start` needed it: the
+    # caller is standing at the moment the handle comes back, deciding what to
+    # do next, and every one of these is a property of what this command just
+    # did. `batch start` had them and the single-run commands did not, which is
+    # how a batch got a waiting doctrine and a lone delegation got silence.
+    "start hands back a handle, not a finished turn": (
+        "start", ["does not wait for the turn", "supervisor"]),
+    "thread_id: null is a normal return from start": (
+        "start", ["thread_id: null", "normal return"]),
+    "nothing announces that a run ended": (
+        "start", ["Nothing announces", "meta.json"]),
+    "the one call that ends when the run ends": (
+        "start", ["log --run", "every terminal state"]),
+    "the result is a separate call from the run finishing": (
+        "start", ["is not a run you have read"]),
+    "resume carries the same return contract": (
+        "resume", ["thread_id: null", "Nothing announces"]),
+    "review carries the same return contract": (
+        "review", ["thread_id: null", "Nothing announces"]),
     "which members qualify for a worktree": (
         "batch start", ["worktree", "two or more", "read-only", "review"]),
     "the output contract and both of its exceptions": (

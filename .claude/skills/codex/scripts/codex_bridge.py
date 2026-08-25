@@ -410,7 +410,7 @@ def cmd_log(args):
         m = reap(rd, read_meta(rd) or {})
         st = m.get("state")
         # A terminal line means the run stopped moving — that is the contract
-        # `--follow` is paired with Monitor on. A run whose supervisor died is
+        # a background watcher is armed on. A run whose supervisor died is
         # terminal while its codex keeps emitting events, so printing it here
         # ends the stream in the middle of the stream.
         if st in TERMINAL_STATES and not still_writing(m):
@@ -906,6 +906,29 @@ you named the members.
 `idle_seconds` is now minus the mtime of the last event.
 """ % {"stall": STALL_SECONDS}
 
+RUN_RETURN_EPILOG = """\
+When this returns. As soon as there is a handle to hand back; it does not wait
+for the turn to finish. The run is spawned under a supervisor process of its
+own, so it is not tied to this command's lifetime. --foreground is the other
+choice, and blocks for the whole turn.
+
+The report waits up to %(wait)ds for the thread id to appear before it is
+written, so this can come back with `thread_id: null`. That is a normal return, not a failure — `status`
+backfills the id from the first line of events.jsonl — and until a run has one
+there is no conversation to continue, so `resume` refuses it.
+
+Nothing announces the end. No callback, no signal: the supervisor writes the
+outcome into this run's meta.json and exits, so a run that finished and a run
+still working are the same thing to look at until something asks. `status --run
+<id>` asks once. `log --run <id> --follow` is the call that ends when the run
+does, and it has a line for every terminal state, so a run that dies is not
+silence.
+
+Collecting it is a separate call. `result --run <id>` is what hands back the
+work, and a run that finished is not a run you have read.
+""" % {"wait": THREAD_ID_WAIT}
+
+
 BATCH_START_EPILOG = """\
 When this returns. Every spawn has been attempted; it does not wait for a
 single turn to finish. Each member is given up to %(wait)ds for its thread id
@@ -1094,7 +1117,8 @@ def build_parser():
              "where every flag, its default and what it refuses are stated.")
 
     p = sub.add_parser("start", formatter_class=HidesSuppressedCommands,
-                       help="a fresh thread, backgrounded — when you want the work done rather than judged")
+                       help="a fresh thread, backgrounded — when you want the work done rather than judged",
+                       epilog=RUN_RETURN_EPILOG)
     add_common(p); add_run_options(p, kind="start")
     p.add_argument("prompt", nargs="?",
                    help="the prompt. May instead come from --prompt-file, or "
@@ -1104,7 +1128,8 @@ def build_parser():
 
     p = sub.add_parser(
         "resume", formatter_class=HidesSuppressedCommands,
-        help="another turn on a thread, keeping what it already worked out")
+        help="another turn on a thread, keeping what it already worked out",
+        epilog=RUN_RETURN_EPILOG)
     add_common(p); add_run_options(p, kind="resume")
     p.add_argument("--last", action="store_true",
                    help="pick the thread to continue instead of naming one. "
@@ -1134,7 +1159,8 @@ def build_parser():
 
     p = sub.add_parser(
         "review", formatter_class=HidesSuppressedCommands,
-        help="Codex's review mode against one diff selector — findings, not edits")
+        help="Codex's review mode against one diff selector — findings, not edits",
+        epilog=RUN_RETURN_EPILOG)
     add_common(p); add_run_options(p, kind="review")
     p.add_argument("--uncommitted", action="store_true",
                    help="review the working tree's uncommitted changes")

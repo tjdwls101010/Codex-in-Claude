@@ -51,13 +51,31 @@ Deciding *what* to hand to Codex is yours; nothing here knows the task. Deciding
 There is no channel into a turn that is already running, so redirecting one is stop then resume:
 
 ```bash
-$CODEX start --label refactor "…"             # → run_id, thread_id, immediately
-$CODEX log --run <id> --since 0               # → events + "# cursor=4213"
-$CODEX log --run <id> --since 4213            # → only what is new
-$CODEX stop --run <id>                        # if it is going wrong
-$CODEX resume <id> "Stop rewriting tests — …" # correct it, same thread
-$CODEX result --run <id>                      # what it concluded
+$CODEX start --label refactor "…"              # hand the work over
+$CODEX log --run <id> --follow --level compact # arm it, in a background Bash call
+$CODEX log --run <id> --since <cursor>         # only to look in mid-run
+$CODEX stop --run <id>                         # if it is going wrong
+$CODEX resume <id> "Stop rewriting tests — …"  # correct it, same thread
+$CODEX result --run <id>                       # what it concluded
 ```
+
+## Arming a wait
+
+**What is forbidden is not the wait. It is a wait that wakes nobody.** The run goes on without you and says nothing when it stops, so something has to be holding a line that ends when the run does.
+
+**The idiom, the moment `start` comes back:** put `log --run <id> --follow --level compact` in a **background Bash** call. It exits on the run's last line, and a background Bash call that exits notifies you — which is the contract the Agent tool gives you for a subagent, and what "Codex as a managed subagent" was always supposed to mean. *Then* decide what to do with the turn. Genuinely parallel work, do it. No parallel work, hand the turn back armed and say so — do not invent work to fill the wait, which spends tokens nobody asked for and, in its most obvious form, walks into the concurrent-writer gotcha below. Arming costs nothing and is safe at any moment: aimed at a run that is already over it prints the last line and exits at once.
+
+The follower's own text goes to a file the notification names — `Read` it when the notification lands. `--since` is for looking in mid-run, not for the wait: a poll you have to remember to repeat is an unarmed wait wearing a different hat.
+
+**Exception — this is your only turn (headless).** Arming is useless, because the follower dies with the turn. Two measured e2e sessions failed precisely there: each started its work correctly, launched a background wait, then ended the turn promising to report back on a watcher that had died with it. Run the same `--follow` in the **foreground** so the call blocks, bounded by `--follow-timeout`, because a foreground Bash call stops at 600 seconds.
+
+**Exception — you need to wake up *during* the run**, not at the end of it: catching an early failure, or moving a batch's members onward as each one lands. That is a notification per event, which is the **Monitor** tool's job — and there it needs `persistent: true`, because Monitor's default lifetime is five minutes, a Codex run routinely outlasts that, and the expiry announces itself in a way that reads like an ending.
+
+**This corrects what this repository used to say**, which was to pair `--follow` with Monitor. The tool is chosen by how many notifications you want, not by how long the run is, and Monitor's own contract sends a single "tell me when it finishes" to background Bash instead. The reasoning being replaced was that Bash stops at 600 seconds — true of a foreground call, and not of a backgrounded one, which survives the turn: measured here at 200 seconds through a 120-second default, untouched.
+
+Either way, never end a turn on a promise. Say what you have, or hold a wait that will wake you.
+
+**A batch is the N-case, not a different rule.** `status --group <name> --follow` is the line that ends when the group does, and `result --group <name>` is what collects it. One thing about a batch genuinely is different: it outlives the session that started it, and `status` is how a later session finds one it did not start — the group name being the one thing about a batch nobody can re-derive.
 
 ## Context discipline
 
@@ -80,16 +98,6 @@ This works because the agent's own account of what it found and did is never fil
 **Isolation buys a clean stream. What it saves in tokens is not a number, and do not quote one.** The clean stream is the reliable half: an inherited-config run on a machine with a malformed user config emits config-error events before it does any work, and has been observed leaking an unrelated plugin advertisement into the agent's own message. The saving is the unreliable half — the same prompt on the same machine measured a 2.9× difference during design and 1.09× two weeks later, because the delta is whatever the user's config happens to load at that moment and an MCP server that fails to start contributes nothing. So reach for `--inherit-config` when a run genuinely needs a tool that only exists in the user's config, a specific MCP server or a custom agent role. "To be safe" is not a reason, and if the cost matters to a decision, measure this machine rather than budgeting from someone else's ratio.
 
 **Only `batch start` can isolate writers — `resume` cannot.** A resumed run takes its directory from its thread, and there is no `--worktree` on `resume`. So continuing three writing threads with three `resume` calls puts three writers in one directory, editing at once, which is the collision worktrees exist to prevent. Measured in an e2e session: it did precisely this and escaped only because the three edits happened to land in three different files. To continue several writers at once, use `batch start --resume-from <group>`. You do not have to spot this yourself either — a writing run started into a directory another live writing run already occupies comes back with `concurrent_writers` naming them, and `doctor` reports the same across the registry — but that report arrives after the spawn, and the decision is before it.
-
-## Collecting a batch
-
-**A batch is not delivered until you have collected it, and how you wait depends on whether you get another turn.** `batch start` returns as soon as the members are spawned; the work is in `result --group`, which is a separate call you have to make.
-
-If more turns are coming, run `status --group <name> --follow` beside you and pair it with the **Monitor** tool, so each line becomes a notification and you collect when it fires. If this is your only turn, that pairing is exactly wrong — the follower dies with the turn and nothing arrives. Two measured e2e sessions failed there: both started their batch correctly, launched a background wait, then ended the turn saying they would report back, and nothing ever resumed them. With one turn, run the same follow in the **foreground** so the call blocks until the group ends, bounded by `--follow-timeout` because the Bash tool stops at 600 seconds.
-
-Either way, never end a turn on a promise. Say what you have, or wait for it.
-
-A batch also outlives the session that started it, and `status` is how a later session finds one it did not start — the group name is the one thing about a batch nobody can re-derive.
 
 ## Troubleshooting
 

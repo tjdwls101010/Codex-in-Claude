@@ -95,7 +95,7 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 | `--run <ref>` | Show just one run (by id, prefix, or thread id) |
 | `--thread <thread_id>` | Filter to runs on one thread |
 | `--group <name>` | Show one batch group's members, with a `group_state` of `running`, `completed`, or `partial` |
-| `--follow` | With `--group`: print one line per tick until the group ends, then a terminal `group.completed` / `group.partial` / `group.still-running` line. Pair with the Monitor tool |
+| `--follow` | With `--group`: print one line per tick until the group ends, then a terminal `group.completed` / `group.partial` / `group.still-running` line. Arm it in a background Bash call — see Orchestration §7 |
 | `--all` | Include terminal runs too |
 | `--include-external` | Also list threads Codex knows about for this directory that have no registry entry (e.g. started in the TUI) |
 

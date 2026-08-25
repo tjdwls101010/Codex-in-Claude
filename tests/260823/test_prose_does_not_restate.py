@@ -52,6 +52,17 @@ RESTATEMENTS = {
     "the projected_cost sample story": (
         re.compile(r"\b6 (under )?of 11\b", re.I),
         "the sample narrative leaves the output entirely"),
+    # This round's addition. The waiting section has to argue *from* the return
+    # contract — arm it now, because nothing will tell you later — and the
+    # nearest wrong turn is to restate the contract on the way, which puts the
+    # copy in the document that cannot regenerate it.
+    "when a start returns": (
+        re.compile(r"returns? (as soon as|immediately|right away|the moment)"
+                   r"|does not wait for the turn", re.I),
+        "when a run hands back its handle is `start --help`'s to state"),
+    "the thread_id: null gotcha": (
+        re.compile(r"thread[_ ]id\b[^.\n]{0,40}\bnull\b", re.I),
+        "that a null thread id is a normal return is the same epilog's"),
 }
 
 

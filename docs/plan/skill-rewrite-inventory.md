@@ -76,13 +76,13 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `SKILL-33` | `4adf43c627ca` | b | SKILL.md#gotchas | only batch start assigns worktrees; plain resume cannot isolate writers |
 | `SKILL-34` | `5f5cdbb6a64b` | a | help:batch start --as-ready|help:stop --group | the barrier and its lift are the flag's; that stopping a predecessor releases its waiters into starting belongs where a caller goes to cancel |
 | `SKILL-35` | `fd3ad34bc125` | a | desc:status | Codex review 3: status already lists the project's groups and carries group and worktree on every row |
-| `SKILL-36` | `e5a0ed2f28e3` | a+b | epilog:batch start|SKILL.md#collecting-a-batch | Codex review 3: that start returns after the spawns is the epilog's; only the host-turn half is prose |
+| `SKILL-36` | `e5a0ed2f28e3` | a+b | epilog:batch start|SKILL.md#arming-a-wait | Codex review 3: that start returns after the spawns is the epilog's; only the host-turn half is prose |
 | `SKILL-37` | `f94e0c517c37` | a | help:stop --grace | Codex review 3: what a process group does and does not buy is stop's to state |
 | `SKILL-38` | `587bf83ac7e4` | a | help:start --no-preamble | already stated there |
 | `SKILL-39` | `49317ae3477d` | a | desc:doctor | Codex review 3: the consequence of an override is not derivable from the two fields doctor already prints |
 | `SKILL-40` | `0bb7736b9426` | a | help:start --effort | efforts are per-model and omitting is not medium |
 | `SKILL-41` | `4b51cfc04d35` | a | help:start --foreground | background is the default |
-| `SKILL-42` | `9f5ede140ae5` | b | SKILL.md#collecting-a-batch | Monitor pairing is a host fact the CLI cannot know |
+| `SKILL-42` | `9f5ede140ae5` | b | SKILL.md#arming-a-wait | Monitor pairing is a host fact the CLI cannot know |
 | `SKILL-43` | `58c5495de99f` | a | help:log --follow | the follow invocation |
 | `SKILL-44` | `4732a30b40b4` | a | help:log --follow | the terminal line, with timed_out added |
 | `SKILL-45` | `f70316dfd5cf` | a | epilog:status | idle_seconds with and without an in-progress item |
@@ -167,7 +167,7 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `eventstream-22` | `58c5495de99f` | d | — | duplicate of SKILL-43's invocation |
 | `eventstream-23` | `593db15761b9` | a | help:log --follow | events then a terminal line |
 | `eventstream-24` | `a48231bb34df` | a | help:log --follow | the terminal line's shape |
-| `eventstream-25` | `fcf737fa3a64` | a+b | help:log --follow|SKILL.md#collecting-a-batch | Codex review 3: the terminal line is the flag's; pairing it with Monitor is a host fact |
+| `eventstream-25` | `fcf737fa3a64` | a+b | help:log --follow|SKILL.md#arming-a-wait | Codex review 3: the terminal line is the flag's; pairing it with Monitor is a host fact |
 | `eventstream-26` | `a1c9ade22f81` | a | help:log --follow-timeout | already stated there |
 | `eventstream-27` | `ab63ae6a73a2` | a | epilog:status | idle_seconds and in_progress_item |
 | `eventstream-28` | `b9cfe6de5bdc` | a | epilog:status | how to read the two together |
@@ -178,10 +178,10 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `orchestration-01` | `52eed5583459` | c | — | the file's own framing |
 | `orchestration-02` | `3ea5070c9a2e` | c | — | a correction to the framing above it |
 | `orchestration-03` | `167b87e62e53` | a | desc:batch | what a group is |
-| `orchestration-04` | `ed956a019742` | b | SKILL.md#collecting-a-batch | the five calls a group answers to |
+| `orchestration-04` | `ed956a019742` | b | SKILL.md#arming-a-wait | the five calls a group answers to |
 | `orchestration-05` | `b14986acc565` | a | help:batch start --group | already stated there |
 | `orchestration-06` | `4060ece3c6cf` | c | — | where membership is stored |
-| `orchestration-07` | `e1a831eab3b3` | b | SKILL.md#collecting-a-batch | a later session can find a group it did not start |
+| `orchestration-07` | `e1a831eab3b3` | b | SKILL.md#arming-a-wait | a later session can find a group it did not start |
 | `orchestration-08` | `59554ebb0bad` | a | epilog:batch start | an unstarted member keeps its slot |
 | `orchestration-09` | `310a8fdd471c` | a | epilog:batch start | one failure does not take the batch down |
 | `orchestration-10` | `29c6b0c44b56` | a | help:batch start --tasks-file | the per-item field list is generated from the validator's own tuple |
@@ -202,10 +202,10 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `orchestration-25` | `c315e3121df0` | a | help:stop --grace | same fact as SKILL-37, same owner |
 | `orchestration-26` | `c05e2fa5d4e1` | a | epilog:batch start | the plan reserved the committed-base fact for prose because the *output* only says it after the spawn; `--help` is read before, so the epilog carries it |
 | `orchestration-27` | `965251689705` | a | help:batch clean --force | what clean refuses and what --force lifts |
-| `orchestration-28` | `4732892c6683` | a+b | help:status --follow|SKILL.md#collecting-a-batch | the line shapes are the flag's; the Bash ceiling is a host fact |
+| `orchestration-28` | `4732892c6683` | a+b | help:status --follow|SKILL.md#arming-a-wait | the line shapes are the flag's; the Bash ceiling is a host fact |
 | `orchestration-29` | `6905e7a9f4b7` | a | help:status --follow | --follow is a pure view |
-| `orchestration-30` | `5c96459a63ee` | b | SKILL.md#collecting-a-batch | how to wait depends on whether another turn is coming |
-| `orchestration-31` | `732c7997d1c8` | a+b | epilog:batch start|SKILL.md#collecting-a-batch | Codex review 3: three bridge states; only "ending the turn on a promise produces nothing" is host-owned |
+| `orchestration-30` | `5c96459a63ee` | b | SKILL.md#arming-a-wait | how to wait depends on whether another turn is coming |
+| `orchestration-31` | `732c7997d1c8` | a+b | epilog:batch start|SKILL.md#arming-a-wait | Codex review 3: three bridge states; only "ending the turn on a promise produces nothing" is host-owned |
 | `orchestration-32` | `ac459d5751bd` | a | epilog:status | the group_state vocabulary, including partial after a stop |
 | `orchestration-33` | `35b4f1534e08` | a | help:result --group | what result --group returns |
 | `orchestration-34` | `0c15185db4c2` | a | help:result --group | overlaps is the intersection only |

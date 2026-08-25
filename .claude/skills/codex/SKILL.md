@@ -75,7 +75,7 @@ The follower's own text goes to a file the notification names — `Read` it when
 
 Either way, never end a turn on a promise. Say what you have, or hold a wait that will wake you.
 
-**A batch is the N-case, not a different rule.** One name replaces N ids in the same three places: `status --group <name> --follow` is the line that ends when the group does, `result --group <name>` is what collects it, and a batch outlives the session that started it — `status` is how a later session finds one it did not start, the group name being the one thing about a batch nobody can re-derive.
+**A batch is the N-case, not a different rule.** `status --group <name> --follow` is the line that ends when the group does, and `result --group <name>` is what collects it. One thing about a batch genuinely is different: it outlives the session that started it, and `status` is how a later session finds one it did not start — the group name being the one thing about a batch nobody can re-derive.
 
 ## Context discipline
 

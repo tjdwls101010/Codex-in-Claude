@@ -9,6 +9,10 @@ caveat went away.
 
 Each change is one test, driven through the real CLI, because a refusal that
 exists in the source and not in the process is not a refusal.
+
+A seventh followed later, from the same rule read the other way round. Help that
+names what a flag costs is only honest if the cost is visible afterwards, and
+`status` reported every other setting the run was pinned to except this one.
 """
 
 from __future__ import annotations
@@ -191,6 +195,60 @@ class ProjectedCostStatesNoSampleStory(BridgeCase):
         note = self.note()
         self.assertIn("median", note)
         self.assertRegex(note, r"scale, not a bound")
+
+
+class StatusReportsTheTierTheRunIsPayingFor(BridgeCase):
+    """7. `run_row` reported `sandbox`, `model`, `effort` and `isolated` and
+    stopped one short of `priority`, so the one recorded setting that costs
+    money was the one nothing read back. A caller could pass `--priority`, be
+    charged the faster tier for every turn on that thread, and find no surface
+    that would say so.
+
+    The row is checked against the argv the fake `codex` was actually handed,
+    not against `meta.json`, which is where the row reads from: a claim compared
+    with its own source agrees with itself however wrong both are.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.argv_log = self.tmp / "argv.jsonl"
+        self.env["FAKE_CODEX_ARGV_LOG"] = str(self.argv_log)
+
+    def injected_tier(self):
+        """Did the last invocation really carry the tier?
+
+        The exact value, not a `service_tier=` prefix: the prefix is also what
+        a typo'd tier looks like, and Codex answers one of those with a warning
+        and the standard tier rather than an error.
+        """
+        lines = [json.loads(l) for l in
+                 self.argv_log.read_text().splitlines() if l.strip()]
+        return 'service_tier="priority"' in lines[-1]["argv"]
+
+    def row(self, run_id):
+        return self.bridge("status", "--run", run_id)["runs"][0]
+
+    def test_a_run_on_the_faster_tier_says_so(self):
+        r = self.bridge("start", "--sandbox", "read-only",
+                        "--inherit-config", "--priority", "hi")
+        self.wait_terminal(r["run_id"])
+        self.assertTrue(self.injected_tier(),
+                        "fixture check: this run was supposed to be pinned to "
+                        "the tier and argv says it was not")
+        self.assertIs(
+            self.row(r["run_id"]).get("priority"), True,
+            "the run was handed the faster tier and `status` does not report "
+            "it, so the caller pays for it with no surface saying so")
+
+    def test_a_run_that_opted_out_says_that_too(self):
+        r = self.bridge("start", "--sandbox", "read-only", "--no-priority", "hi")
+        self.wait_terminal(r["run_id"])
+        self.assertFalse(self.injected_tier(),
+                         "fixture check: --no-priority still injected the tier")
+        self.assertIs(
+            self.row(r["run_id"]).get("priority"), False,
+            "`--no-priority` is a recorded choice a resume carries forward; a "
+            "row that omits it cannot be told from one that never chose")
 
 
 if __name__ == "__main__":

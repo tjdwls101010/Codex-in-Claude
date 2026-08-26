@@ -15,7 +15,7 @@
    - `timeout_ms` **기본값 300,000ms(5분)**, `persistent: true`가 없으면 거기서 죽는다. 코덱스 런은 5분을 넘긴다. `SKILL.md`는 `persistent`도 `timeout_ms`도 언급하지 않는다 — **5분 뒤 워처가 죽고 완료 알림이 영영 안 오는 것**이 관찰된 침묵의 유력한 정체다.
    - *"Monitors that produce too many events are automatically stopped"* — `log --follow`는 이벤트마다 한 줄을 뱉는다.
 
-   원 설계 근거(`docs/plan/260801/implementation-plan.md:189`)는 *"Bash 600초 상한을 블로킹으로 못 넘어서 Monitor"*였다. **600초 상한은 포그라운드 Bash의 것**이고, `run_in_background`는 턴을 넘겨 살아남으며 종료 시 알림을 보낸다. 전제가 틀렸고, 필요 없는 도구를 집었다.
+   원 설계 근거(`.claude/plans/260801/implementation-plan.md:189`)는 *"Bash 600초 상한을 블로킹으로 못 넘어서 Monitor"*였다. **600초 상한은 포그라운드 Bash의 것**이고, `run_in_background`는 턴을 넘겨 살아남으며 종료 시 알림을 보낸다. 전제가 틀렸고, 필요 없는 도구를 집었다.
 
 **결과물**: 단일 런이든 배치든, `start` 직후 워처를 무장하는 것이 기본 관용구가 되고, 도구가 말할 수 있는 반환 계약은 `--help`가, 호스트 의존 사실은 프로즈가 갖는 스킬.
 
@@ -61,7 +61,7 @@
 - **첫 호출의 경로·권한 gotcha.** 절대 경로 + 한 줄 명령이라는 제약은 문서 맨 앞 두 문단을 차지한다. 어기면 매 호출 승인 프롬프트 — 정의상 병목이다. 기계로 잡히는지(훅 등) 볼 가치가 있다.
 - **`thread_id: null`.** 정상 반환인데 호출자가 실패로 읽기 쉽다. Phase 1이 epilog으로 옮기는 것으로 충분한지, 아니면 출력 자체가 말해야 하는지.
 
-산출물은 `docs/plan/`의 짧은 목록 하나. 그 이상 진행하지 않는다.
+산출물은 `.claude/plans/260825/`의 짧은 목록 하나. 그 이상 진행하지 않는다.
 
 ---
 
@@ -76,7 +76,7 @@
 - 끝날 때 같이 끝나는 표면은 `log --run <id> --follow` 하나이고, 모든 terminal state에 줄이 있다.
 - `result --run <id>`는 별도 호출 — *"a run that finished is not a run you have read"* (배치 epilog의 문장과 대칭).
 
-**들어가지 않는 것**: Monitor, 백그라운드 Bash, 턴 수명, 600초. 전부 호스트 의존 → 프로즈. `docs/plan/260823_스킬 재작성.md:73`의 결정("`status --follow`의 Monitor/Bash 600초 안내는 호스트 의존 → 프로즈")을 그대로 지킨다.
+**들어가지 않는 것**: Monitor, 백그라운드 Bash, 턴 수명, 600초. 전부 호스트 의존 → 프로즈. `.claude/plans/260823/260823_스킬 재작성.md:73`의 결정("`status --follow`의 Monitor/Bash 600초 안내는 호스트 의존 → 프로즈")을 그대로 지킨다.
 
 **검증 규율 (260823의 교훈, R55)**: epilog의 모든 문장은 "검증 전 주장"이다. 초안을 쓴 뒤 `_run.py:create_run`·`_codex.py:supervise`/`spawn_supervised`·`_events.py`와 대조하고, 대조된 문장만 넣는다. 1차 이전 때 10문장 중 7개가 코드와 달랐다.
 
@@ -178,5 +178,5 @@ $CODEX result --run <id>                       # 결론
 
 ## 계획 밖으로 보고만 하는 것
 
-- **루트 `CLAUDE.md`가 0바이트다.** `AGENTS.md → CLAUDE.md` 심링크로 Codex 런에 주입되는 브리핑 채널이 비어 있다. `docs/plan/260823_스킬 재작성.md`는 이 비움을 *"성진의 의도"*로 기록하고 있지만, 내 메모리(`claude-md-feeds-codex-runs`)는 *"비우지 말 것"*이라고 반대로 적혀 있다. 둘 중 하나가 낡았다. **이번 변경에서는 건드리지 않는다** — 어느 쪽이 맞는지 알려주면 메모리를 고치거나 파일을 되살린다.
+- **루트 `CLAUDE.md`가 0바이트다.** `AGENTS.md → CLAUDE.md` 심링크로 Codex 런에 주입되는 브리핑 채널이 비어 있다. `.claude/plans/260823/260823_스킬 재작성.md`는 이 비움을 *"성진의 의도"*로 기록하고 있지만, 내 메모리(`claude-md-feeds-codex-runs`)는 *"비우지 말 것"*이라고 반대로 적혀 있다. 둘 중 하나가 낡았다. **이번 변경에서는 건드리지 않는다** — 어느 쪽이 맞는지 알려주면 메모리를 고치거나 파일을 되살린다.
 - `audit_harness.py`가 보고한 harness-spec "드리프트" 31건은 오탐이다. B-표의 *메커니즘* 칸(`codex_bridge.py start` 등)을 파일명으로 파싱한 결과. 조치 불필요.

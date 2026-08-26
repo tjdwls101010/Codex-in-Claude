@@ -33,7 +33,7 @@ from helpers import BRIDGE, SKILL_MD, skill_docs
 sys.path.insert(0, str(BRIDGE.parent))
 import codex_bridge  # noqa: E402
 
-INVENTORY = REPO / "docs" / "plan" / "skill-rewrite-inventory.md"
+INVENTORY = REPO / ".claude" / "plans" / "260823" / "skill-rewrite-inventory.md"
 ROW_RE = re.compile(r"^\|\s*`([\w-]+)`\s*\|\s*`([0-9a-f]+)`\s*\|\s*([abcd+]+)\s*"
                     r"\|\s*([^|]*?)\s*\|")
 

@@ -6,7 +6,7 @@
 >
 > §1.7의 `doctor` 경고는 계획에 적히고 M4b에 배정됐는데 **구현되지 않은 채 릴리즈 직전까지 갔다**(R16). 마일스톤 점검이 "계획 대비"가 아니라 "diff 대비"로 이루어지면 이렇게 된다.
 **독자:** 이것을 구현할 다음 Claude 세션.
-**동반 파일:** `audit-findings.md`(같은 디렉터리 — 근거 기록), `.claude/harness-spec.md`(계약), `docs/plan/codex-skill-implementation-plan.md`(v0.1.0의 원 계획, 여전히 유효한 배경).
+**동반 파일:** `audit-findings.md`(같은 디렉터리 — 근거 기록), `.claude/harness-spec.md`(계약), `.claude/plans/260725/codex-skill-implementation-plan.md`(v0.1.0의 원 계획, 여전히 유효한 배경).
 
 이 문서는 *지시*다. "왜 이게 문제인가"는 `audit-findings.md`에 있으니 여기서 반복하지 않는다.
 
@@ -80,7 +80,7 @@
 | D13 | 이름은 **`batch`** 동사, 그룹 식별자는 **`--group <name>`** | |
 | D14 | 검증은 **T1~T4 전부** | |
 | D15 | **v0.2.0까지** 계획에 포함 (CHANGELOG·README·wiki·태그·GitHub 릴리즈) | |
-| D16 | 계획서는 **2파일**, `docs/plan/260801/` | |
+| D16 | 계획서는 **2파일**, `.claude/plans/260801/` | |
 | D17 | 더러운 트리는 **상태를 찍고 그대로 진행** | D10과 같은 자세 |
 | D18 | worktree는 **workspace-write 런이 2개 이상일 때 자동**, `--no-worktree`로 끔 | read-only 검토 배치는 worktree를 받지 않아 사용자의 미커밋 변경을 그대로 봄 — 검토엔 이게 맞음 |
 | D19 | 작업별 **`kind: start\|resume\|review`**, 기본 `start` | 세 경로가 이미 구현되어 있어 추가 비용이 거의 없음 |

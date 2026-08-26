@@ -316,6 +316,28 @@ class WhatAWorktreeDoesNotHave(WorktreeTestCase):
             self.assertTrue((Path(r["worktree"]) / "cache" / "marker").exists())
             self.wait_for_state(r["run_id"])
 
+    def test_a_directory_the_base_only_partly_tracked_is_still_reported(self):
+        """`--ignored=matching` collapses a wholly-ignored directory to one
+        entry, so asking git whether the base "knows that path" answers yes for
+        the whole collapsed tree when it tracked a single file under it — and
+        the ninety-nine that really are absent go unreported. A false positive
+        names something the checkouts do have; this is the other direction."""
+        d = self.project / ".venv"
+        d.mkdir()
+        (d / "keep").write_text("tracked then")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "one file under it")
+        old = self.git("rev-parse", "HEAD").stdout.strip()
+        (self.project / ".gitignore").write_text(".venv/\n")
+        self.git("rm", "-r", "--cached", "-q", ".venv")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "ignore it")
+        (d / "python").write_text("never tracked")
+        out = self.start_group("--worktree", "--base", old)
+        self.assertEqual(out["worktrees"]["missing_ignored"], [".venv/"])
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
     def test_a_path_git_would_c_quote_arrives_as_a_path(self):
         """Plain porcelain C-quotes anything non-ASCII, so the field would hand
         back an encoded token where the caller expects a path — and this

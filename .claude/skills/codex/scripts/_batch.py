@@ -1395,6 +1395,12 @@ def follow_group_log(args, project, runs_dir):
         # is what leads back from an index to a `stop --run`. Putting the run id
         # in every line instead cost 24 characters of every line to answer a
         # question asked once.
+        # Flattened, because this is a line-oriented protocol and the label is
+        # caller text. A label holding a newline splits both the header and
+        # every prefix into extra physical lines, and one shaped like
+        # `x\ngroup.completed group=g done=2 failed=0` puts a forged terminal
+        # line into the stream a watcher is armed on.
+        label = " ".join(label.split()) if label else label
         prefixes.append(f"[{i}:{label}] " if label else f"[{i}] ")
         header.append(f"{i}={rid}" + (f":{label}" if label else ""))
         cursors.append(0)

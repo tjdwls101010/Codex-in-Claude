@@ -29,6 +29,7 @@ that makes `git worktree remove` protect it.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -128,13 +129,55 @@ def ignored_entries(cwd: Path, base=None, skip=(), limit=20):
              if rec.startswith("!! ")
              and not any(rec[3:].startswith(s) for s in skip)]
     if base:
-        found = [f for f in found if not _tracked_at(cwd, base, f)]
+        tracked = _tree_paths(cwd, base)
+        found = [f for f in found if not _covered_by(cwd, tracked, f)]
     return found[:limit], max(0, len(found) - limit)
 
 
-def _tracked_at(cwd: Path, base: str, path: str):
-    p = _git(cwd, "ls-tree", "--name-only", base, "--", path.rstrip("/"))
-    return p.returncode == 0 and bool(p.stdout.strip())
+#: How much of one ignored directory this will walk before giving up on
+#: deciding and simply reporting it. A false positive here names something the
+#: checkouts do have; a false negative hides something they do not, which is
+#: the answer the field exists to give — so the cap fails towards reporting.
+WALK_CAP = 500
+
+
+def _tree_paths(cwd: Path, base: str):
+    """Every path the base commit tracks, from one `git ls-tree`.
+
+    One process rather than one per entry: `base` is supplied for every
+    isolated batch now, and a repository whose ignore rules match a thousand
+    siblings would otherwise spend a thousand forks here before the 20-entry
+    cap is even applied.
+    """
+    p = _git(cwd, "ls-tree", "-r", "-z", "--name-only", base)
+    if p.returncode != 0:
+        return set()
+    return {x for x in p.stdout.split("\0") if x}
+
+
+def _covered_by(cwd: Path, tracked, entry: str):
+    """Whether a checkout at that base already has all of this entry.
+
+    A file is simple. A directory is not: `--ignored=matching` collapses a
+    wholly-ignored directory to one entry, and a base that tracked a single
+    file under it makes "does the base know this path" answer yes for the whole
+    collapsed tree — dropping a `.venv/` whose hundred other files really are
+    absent. So a directory is only covered when everything now under it was
+    tracked then.
+    """
+    if not entry.endswith("/"):
+        return entry in tracked
+    root = entry.rstrip("/")
+    seen = 0
+    for dirpath, _dirs, files in os.walk(cwd / root):
+        for name in files:
+            rel = os.path.relpath(os.path.join(dirpath, name), cwd)
+            if rel not in tracked:
+                return False
+            seen += 1
+            if seen > WALK_CAP:
+                return False
+    return seen > 0
 
 
 def uncommitted_count(cwd: Path):

@@ -274,6 +274,7 @@ def cmd_status(args):
         fail("--follow-timeout only shapes a --follow, and there is no --follow "
              "here, so nothing would use it.",
              follow=args.follow, group=args.group)
+    refuse_unusable_heartbeat(args)
     rows = []
     if args.run:
         rd, m = find_run(runs_dir, args.run)
@@ -361,11 +362,31 @@ def cmd_status(args):
 # log / show
 # --------------------------------------------------------------------------
 
+def refuse_unusable_heartbeat(args):
+    """A beat only a follower can emit, at an interval only a positive number
+    can name.
+
+    Both are refusals rather than silent no-ops for C4's reason: a flag that
+    parses and decides nothing reads as having been obeyed. `--heartbeat 0`
+    especially — it looks like "off", and off is what omitting it already does.
+    """
+    beat = getattr(args, "heartbeat", None)
+    if beat is None:
+        return
+    if not args.follow:
+        fail("--heartbeat is a line a follower prints while it follows, and "
+             "there is no --follow here, so nothing would print it.")
+    if beat <= 0:
+        fail("--heartbeat is an interval in seconds and has to be positive; "
+             "omitting it is how a follower stays quiet.", heartbeat=beat)
+
+
 def cmd_log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    refuse_unusable_heartbeat(args)
     if args.group:
-        if args.since:
+        if args.since is not None:
             # Refused rather than given some collapsed meaning: every member has
             # its own byte offset into its own file, and one integer applied to
             # all of them answers with some member's events silently dropped —
@@ -394,7 +415,11 @@ def cmd_log(args):
     events_path = rd / "events.jsonl"
     rel_to = Path(meta.get("cwd") or project)
     run_id = meta.get("run_id")
-    cursor = args.since
+    # `None` rather than `0` as the default, so that "not passed" and "passed
+    # zero" are two answers: a group refuses the flag, and refusing it only
+    # when the value was truthy accepted `--since 0` into a command that has no
+    # single cursor to apply it to.
+    cursor = args.since or 0
 
     def dump(cur):
         try:
@@ -978,19 +1003,23 @@ the list is never shorter than the tasks you handed over. Those slots appear as
 `unstarted` and make the group `partial`. One member failing never takes the
 others down, whatever the cause.
 
-Worktrees. Off unless --worktree is passed, in which case a member gets its own
-git checkout at .codex-runs/<run_id>/wt when all of this holds: it is a
+Worktrees. Off unless --worktree is passed, in which case a member is eligible
+for its own git checkout at <run_dir>/wt when all of this holds: it is a
 kind=start task, its sandbox can write, it names no cwd of its own, the project
-is a git repository, and --base resolves. A resume, a review, a read-only member
-and one with an explicit cwd are never isolated, by any flag. The checkout is
-cut from --base (default HEAD), so it holds none of your uncommitted work — that
-is also why a reviewer never gets one, since the diff it was started to look at
-lives only in your tree — and none of what git does not track either, so a
-canonical interpreter, a provider cache or a fixture directory kept out of git
-is absent from it — `missing_ignored` in the reply names the ones this tree
-actually has. Members' results stay inside those checkouts until you
-collect them with `result --group`, and `batch clean --group` is what removes
-them.
+is a git repository, and --base resolves. Eligible, not guaranteed — if git
+cannot cut the checkout, that member's spawn fails and the others carry on. A
+resume, a review, a read-only member and one with an explicit cwd are never
+isolated, by any flag. The checkout is cut from --base (default HEAD), so it
+holds none of your uncommitted work — which is also why a reviewer never gets
+one, since an uncommitted diff it was started to look at lives only in your
+tree — and none of what git does not track either, so a canonical interpreter,
+a provider cache or a fixture directory kept out of git is absent from it.
+`missing_ignored` in the reply names up to 20 of the ones this tree actually
+has, with `missing_ignored_truncated` counting any beyond that. Members' results
+stay inside those checkouts: `result --group` reports what each member did and
+which paths more than one wrote, and moving the changes into your tree is yours
+to do. `batch clean --group` removes the checkouts once they are clean, or
+discards their contents under --force.
 
 Without it, every member works in your tree, which is what a fan-out of Claude's
 own subagents does: the changes are in front of you as they are made and there
@@ -1034,13 +1063,15 @@ class HidesSuppressedCommands(argparse.RawDescriptionHelpFormatter):
 
 def add_heartbeat(p):
     p.add_argument("--heartbeat", type=float, metavar="SEC",
-                   help="every SEC seconds of following, print "
-                        "`still-running elapsed=<s> running=<n>`. Off by "
-                        "default. A run that has gone quiet already announces "
-                        "itself — `stalled` is derived after 300 idle seconds "
-                        "— so what this adds is the other half: a follower "
-                        "that is alive and has nothing to say looks exactly "
-                        "like one that died.")
+                   help="print `still-running elapsed=<s> running=<n>` on the "
+                        "first poll at or after each SEC of following — a poll "
+                        "period, not a timer. Off by default, and refused "
+                        "without --follow or at zero or less. What it adds is "
+                        "the half nothing else covers: a run that has gone "
+                        "quiet shows up as `stalled` in `status --group "
+                        "--follow` after 300 idle seconds, while a follower "
+                        "that is alive with nothing to say and one that died "
+                        "look the same in either follower.")
 
 
 def add_common(p):
@@ -1255,14 +1286,16 @@ def build_parser():
                    help="requires --group: plain text rather than the one "
                         "JSON object `status --group` returns — a "
                         "`run <id> <prev> -> <state>` line per member state "
-                        "change, `exit=N` appended when a run ended non-zero, "
-                        "then one terminal "
-                        "`group.<state> group=<name> done=N failed=N` line, "
-                        "then exit. A group with no resolvable member is one "
-                        "`group.empty group=<name>` line instead, which carries "
-                        "neither tally. A pure view — it holds no state, so a "
-                        "follower that dies loses nothing and `status --group` "
-                        "answers the same question at any time.")
+                        "change, with ` exit=N` appended when the state is not "
+                        "`completed` and an exit code was recorded, then one "
+                        "terminal `group.<state> group=<name> done=N failed=N` "
+                        "line, then exit. A group with no resolvable member is "
+                        "one `group.empty group=<name>` line instead, carrying "
+                        "neither tally. Both closing lines append ` unstarted=N` "
+                        "and ` unreadable=N` when either is non-zero. A pure "
+                        "view — it holds no state, so a follower that dies loses "
+                        "nothing and `status --group` answers the same question "
+                        "at any time.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
                         "group.still-running instead of a terminal group line. "
@@ -1286,16 +1319,19 @@ def build_parser():
                         help="every member of one batch group, interleaved as "
                              "each writes. A first line maps index to run id "
                              "(`group.members group=<name> 0=<run_id>[:label] "
-                             "…`), every event line is prefixed "
-                             "`[<index>:<label>]`, and the stream ends on the "
-                             "group's own terminal line — the same one "
-                             "`status --group --follow` ends on, or "
-                             "`group.empty` if no member resolves. --since is "
-                             "refused here: a cursor is a byte offset into one "
-                             "file and every member has its own.")
-    p.add_argument("--since", type=int, default=0,
+                             "…`), and every event line is prefixed "
+                             "`[<index>:<label>]`, or `[<index>]` for a member "
+                             "with no label. Under --follow the stream ends on "
+                             "the group's own terminal line, the same one "
+                             "`status --group --follow` ends on; without it, one "
+                             "pass over every member's whole log ending on the "
+                             "group's line as it stands, which for a live group "
+                             "is `group.running`. --since is refused here: a "
+                             "cursor is a byte offset into one file and every "
+                             "member has its own.")
+    p.add_argument("--since", type=int, default=None,
                    help="resume from the byte offset a previous call printed as "
-                        "`# cursor=<n>` (default: 0, the whole log). Only "
+                        "`# cursor=<n>`. Omitted, the whole log. Only "
                         "complete lines are consumed, so nothing is duplicated "
                         "or skipped however often you poll.")
     p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL,

@@ -27,7 +27,7 @@ from helpers import BRIDGE
 sys.path.insert(0, str(BRIDGE.parent))
 import codex_bridge  # noqa: E402
 
-MANIFEST = REPO / "docs" / "plan" / "help-audit-manifest.md"
+MANIFEST = REPO / ".claude" / "plans" / "260823" / "help-audit-manifest.md"
 ROW_RE = re.compile(r"^\|\s*`([^`]*)`\s*\|\s*`([^`]+)`\s*\|\s*(keep|change|remove)\s*\|")
 
 

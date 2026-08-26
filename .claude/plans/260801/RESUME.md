@@ -20,7 +20,7 @@
 | M6 검증 T1/T2/T4 | ⬜ |
 | M7 릴리즈 v0.2.0 | ⬜ |
 
-정본 계획: `docs/plan/260801/implementation-plan.md`(D01~D33) + `~/.claude/plans/docs-plan-260801-expressive-sparkle.md`(D34~D37, §1의 추가 수정 항목, 실행 순서, §3.5 오케스트레이션 방식).
+정본 계획: `.claude/plans/260801/implementation-plan.md`(D01~D33) + `~/.claude/plans/docs-plan-260801-expressive-sparkle.md`(D34~D37, §1의 추가 수정 항목, 실행 순서, §3.5 오케스트레이션 방식).
 
 ## 재개하자마자 할 일
 

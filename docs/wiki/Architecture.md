@@ -57,17 +57,15 @@ flowchart LR
     └── _util.py                # low-level helpers
 
 tests/                          # see Testing.md — T1 unit + T2 integration suites
-docs/
-├── plan/                       # design rationale and decision log
-├── measurements/               # T3 filter-calibration raw data
-└── wiki/                       # this documentation
+.claude/plans/                  # design rationale and decision log, one folder per round
+docs/wiki/                      # this documentation
 
 <project>/.codex-runs/          # the run registry itself — created per project, gitignored
 ```
 
 ## 4. Design Decisions
 
-A few choices worth knowing the reasoning behind, since they aren't obvious from the code alone (full rationale in `.claude/harness-spec.md` and `docs/plan/codex-skill-implementation-plan.md`):
+A few choices worth knowing the reasoning behind, since they aren't obvious from the code alone (full rationale in `.claude/harness-spec.md` and `.claude/plans/260725/codex-skill-implementation-plan.md`):
 
 - **The run registry exists at all** because `codex exec resume` has no way to be told a sandbox — the only way to hold one stable across turns is to remember it and re-assert it on every call.
 - **Isolation (`--ignore-user-config`) is the default**, not an opt-in, because inheriting a user's full Codex configuration measurably triggers a much larger, noisier prompt (see [Sandbox Stability § isolation cost](Sandbox-Stability.md#3-the-cost-of-inheriting-config)) — and because inherited config is also what re-enables the sandbox-drift bug in the first place.

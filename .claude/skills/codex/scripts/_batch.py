@@ -920,9 +920,9 @@ def cmd_batch_clean(args):
     only copy of what a run produced, and nothing should delete that on a
     schedule the caller did not choose.
 
-    Four things stop a clean without `--force`, and only the first two are
-    checks this code performs. The other two are git's own refusal, and a fact
-    about groups that outlive each other.
+    Four things stop a clean without `--force`. Three are checks this code
+    performs, listed in `guards` below in the order they run; the fourth is
+    git's own refusal of a dirty worktree, which is not reimplemented here.
     """
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -931,18 +931,6 @@ def cmd_batch_clean(args):
     if manifest is None and not lost_manifest:
         fail(f"no such group in this project: {args.group}",
              known_groups=list_groups(runs_dir)[:20])
-    if lost_manifest and not args.force:
-        # The fourth thing that stops a clean, and the only one that used to be
-        # unliftable. `--force` already overrides a member's corrupt meta.json;
-        # a corrupt manifest left the group unaddressable by anything, with its
-        # worktrees — the only copy of what its runs produced — stranded.
-        fail(f"group {args.group!r} has a manifest that will not parse, so what "
-             f"it was and what order it ran in cannot be read. Its members are "
-             f"still recoverable from the registry; pass --force to remove their "
-             f"worktrees and release the name",
-             manifest=str(group_path(runs_dir, args.group)),
-             members_recorded_by_runs=owned_run_ids(runs_dir, args.group))
-
     live, removed, kept = [], [], []
     for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
@@ -967,30 +955,52 @@ def cmd_batch_clean(args):
             live.append({"run_id": rid, "state": meta.get("state"),
                          **({"codex_still_running": True} if still_writing(meta) else {})})
 
-    # 1. A live member is still writing into the very directory being removed.
-    if live and not args.force:
-        fail(f"group {args.group!r} still has running members; stop them first "
-             f"or pass --force", running=live)
-    # One flag lifts all three protections, and a caller usually reaches for it
-    # to get past one of them. What it actually overrode therefore has to be in
-    # the result, not only in --help: the caller who forced past a dependent
-    # group needs to see that a running member's directory went with it.
-    overrode = {}
-    if args.force and live:
-        overrode["running_members"] = live
-    if lost_manifest:
-        overrode["unreadable_manifest"] = str(group_path(runs_dir, args.group))
-
-    # 2. A group that another group resumed into. `--resume-from` puts phase 2
-    #    in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
-    #    under runs that are still using it. Free to detect thanks to the
-    #    manifest's `derived_from`.
     children = derived_groups(runs_dir, args.group)
-    if children and not args.force:
-        fail(f"group {args.group!r} was resumed by another group, whose members "
-             f"are working in these worktrees", derived_groups=children)
-    if args.force and children:
-        overrode["derived_groups"] = children
+    # The three refusals in one list, in check order, because one flag lifts all
+    # three and a caller reaches for it to get past exactly one. What `--force`
+    # actually overrode therefore has to be in the result and not only in
+    # `--help`: whoever forced past a dependent group needs to see that a
+    # running member's directory went with it.
+    #
+    # `(key, tripped, message, detail, forced_value)` — `detail` is what the
+    # refusal reports, `forced_value` what `forced_past` records instead.
+    guards = [
+        # R35 — the one that used to be unliftable, because it was checked
+        # before `--force` was consulted. `--force` already overrides a
+        # member's corrupt meta.json; a corrupt manifest left the group
+        # addressable by nothing, with its worktrees — the only copy of what
+        # its runs produced — stranded.
+        ("unreadable_manifest", lost_manifest,
+         f"group {args.group!r} has a manifest that will not parse, so what it "
+         f"was and what order it ran in cannot be read. Its members are still "
+         f"recoverable from the registry; pass --force to remove their "
+         f"worktrees and release the name",
+         {"manifest": str(group_path(runs_dir, args.group)),
+          "members_recorded_by_runs": owned_run_ids(runs_dir, args.group)},
+         str(group_path(runs_dir, args.group))),
+        # The reason the loop above bothers with `still_writing` as well as the
+        # state: a live member is writing into the very directory being removed.
+        ("running_members", bool(live),
+         f"group {args.group!r} still has running members; stop them first or "
+         f"pass --force",
+         {"running": live}, live),
+        # R10's better error message, and only that: `--resume-from` puts phase
+        # 2 in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
+        # under runs still using it. Free to detect thanks to the manifest's
+        # `derived_from` — but one hop deep, which is why the removal loop asks
+        # the registry the same question again.
+        ("derived_groups", bool(children),
+         f"group {args.group!r} was resumed by another group, whose members are "
+         f"working in these worktrees",
+         {"derived_groups": children}, children),
+    ]
+    overrode = {}
+    for key, tripped, message, detail, forced_value in guards:
+        if not tripped:
+            continue
+        if not args.force:
+            fail(message, **detail)
+        overrode[key] = forced_value
 
     worktree_prune(project)
     for rid in owned_run_ids(runs_dir, args.group) or []:
@@ -1007,16 +1017,17 @@ def cmd_batch_clean(args):
         path = Path(wt["path"]) if wt else rd / "wt"
         if not path.exists():
             continue
-        # 3. Uncommitted changes in the worktree, i.e. results nobody collected.
-        #    Not implemented here: `git worktree remove` refuses a dirty tree by
-        #    itself (measured, V-13), and git's definition of dirty is the
-        #    correct one. Its refusal is reported as the reason.
-        # Who is actually living here, asked of the registry rather than of the
-        # group graph. The `derived_from` check above is a better error message
-        # when the chain is intact, but it is only one hop and it evaporates the
-        # moment an intermediate manifest is cleaned: p1 -> p2 -> p3, clean p2,
-        # and p1 looks unreferenced while p3 is still running in p1's worktree.
-        # A run's own recorded cwd cannot go stale that way.
+        # The fourth refusal, and the one this code does not perform: `git
+        # worktree remove` declines a dirty tree by itself (measured, V-13) and
+        # git's definition of dirty is the correct one, so its refusal is
+        # reported as the reason rather than pre-empted.
+        #
+        # R10 — who is actually living here, asked of the registry rather than
+        # of the group graph. The `derived_from` guard above is a better error
+        # message when the chain is intact, but it is one hop and it evaporates
+        # the moment an intermediate manifest is cleaned: p1 -> p2 -> p3, clean
+        # p2, and p1 looks unreferenced while p3 is still running in p1's
+        # worktree. A run's own recorded cwd cannot go stale that way.
         occupants = [m for _rd, m in iter_runs(runs_dir)
                      if (m.get("state") not in TERMINAL_STATES
                          or still_writing(m))

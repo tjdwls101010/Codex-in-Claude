@@ -738,6 +738,36 @@ class ResumeFrom(WorktreeTestCase):
         self.assertEqual(self.bridge("doctor")["worktrees"], 2,
                          "resuming must not cut a second checkout per member")
 
+    def test_a_resume_phase_sharing_the_tree_says_how_many_share_it(self):
+        """C-A made this the ordinary shape and left it unwarned. The note was
+        keyed off worktree *eligibility*, and `wants_worktree` excludes every
+        resume — so the batch that most needs the warning, N writers continuing
+        into the one directory phase 1 shared, was the only one that could not
+        produce it."""
+        self.phase_one()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from",
+                          "p1", "--task", "a", "--task", "b")
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+        note = (two.get("worktrees") or {}).get("note") or ""
+        self.assertIn("2 members", note)
+        self.assertIn(str(self.project), note)
+
+    def test_worktree_on_a_resume_phase_says_why_it_cuts_nothing(self):
+        """`--worktree` here answered "no member writes to the tree", which is
+        false of two workspace-write members — and it is the answer a caller
+        acts on. What is true is narrower: a resumed thread keeps the directory
+        it already lives in, so isolation is a decision phase 1 makes and phase
+        2 inherits."""
+        self.phase_one("--worktree")
+        two = self.bridge("batch", "start", "--group", "p2", "--worktree",
+                          "--resume-from", "p1", "--task", "a", "--task", "b")
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+        note = two["worktrees"]["note"]
+        self.assertNotIn("nothing to isolate", note)
+        self.assertIn("resume", note)
+
     def test_a_count_mismatch_fails_before_anything_starts(self):
         """Pairing a short list lands a phase-2 task on the wrong phase-1
         thread, and every member after the mismatch continues work it was not
@@ -885,6 +915,16 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
     three edits landed in three different files. `resume` has no worktree
     option, so nothing but this could have told it."""
 
+    def assertNoFalseRemedy(self, note):
+        """The note used to prescribe `batch start --worktree --resume-from`.
+        Measured: that phase cuts nothing — `wants_worktree` excludes every
+        resume, so the command reports success and leaves the writers exactly
+        where they were. A remedy that does not work is worse than none, since
+        the caller stops looking."""
+        self.assertNotIn("--resume-from", note)
+        self.assertIn("--worktree", note)
+        self.assertIn("resumed thread", note)
+
     def hanging_writer(self, label):
         r = self.bridge("start", "keep going", "--label", label,
                         "--sandbox", "workspace-write",
@@ -898,7 +938,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
                              env_extra={"FAKE_CODEX_HANG": "60"})
         self.assertEqual([w["run_id"] for w in second["concurrent_writers"]],
                          [first["run_id"]])
-        self.assertIn("--resume-from", second["concurrent_writers_note"])
+        self.assertNoFalseRemedy(second["concurrent_writers_note"])
         self.bridge("stop", "--all")
 
     def test_resuming_into_an_occupied_directory_is_named_too(self):
@@ -914,7 +954,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
                           env_extra={"FAKE_CODEX_HANG": "60"})
         named = {w["run_id"] for w in out["concurrent_writers"]}
         self.assertIn(second["run_id"], named)
-        self.assertIn("--resume-from", out["concurrent_writers_note"])
+        self.assertNoFalseRemedy(out["concurrent_writers_note"])
         self.bridge("stop", "--all")
 
     def test_a_read_only_run_is_not_a_writer_and_is_not_warned_about(self):

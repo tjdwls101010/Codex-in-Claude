@@ -385,7 +385,7 @@ def I10(project):
     before = subprocess.run(["git", "-C", str(project), "status", "--porcelain"],
                             capture_output=True, text=True).stdout
     g = bridge(project, "batch", "start", "--group", "i10",
-               "--sandbox", "workspace-write",
+               "--sandbox", "workspace-write", "--worktree",
                "--task", "Create a file named shared.txt containing exactly the word ONE. "
                          "Then reply with exactly: DONE",
                "--task", "Create a file named shared.txt containing exactly the word TWO. "
@@ -526,7 +526,7 @@ def I15(project):
     and the point of the case is that the wrapper surfaces it rather than
     working around it."""
     g = bridge(project, "batch", "start", "--group", "i15",
-               "--sandbox", "workspace-write",
+               "--sandbox", "workspace-write", "--worktree",
                "--task", "Create a file named note.txt containing the word KEEP. "
                          "Reply with exactly: DONE",
                "--task", "Create a file named note.txt containing the word KEEP. "

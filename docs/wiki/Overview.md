@@ -40,7 +40,7 @@ Codex in Claude is a Claude Code plugin — one skill (`codex`) backed by a Pyth
 - Interrupt-and-redirect on a running task, without losing the work already done.
 - Resuming any thread, including ones started outside this plugin entirely, in the Codex TUI.
 - Schema-validated structured results.
-- Several runs started, watched, collected and cleaned up as one named group, with a git worktree per writing member so concurrent runs cannot edit each other's files.
+- Several runs started, watched, collected and cleaned up as one named group, sharing the caller's tree by default and, under `--worktree`, given a git worktree per writing member so concurrent runs cannot edit each other's files.
 
 There is deliberately **no automatic cleanup**. A background run is not stopped when a session ends, and a worktree is never removed on a schedule the caller did not choose — it holds the only copy of what its run produced. `status --all` finds what is still there, `stop` ends it, `batch clean --group` removes a group's worktrees, and `doctor` reports what the registry is holding so the accumulation is visible rather than silent. The skill holds capability; cost policy stays the user's.
 

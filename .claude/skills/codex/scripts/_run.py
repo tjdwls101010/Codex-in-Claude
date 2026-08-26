@@ -339,7 +339,15 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     elif getattr(args, "priority", None) is False:
         tier = None
     elif inherits:
-        tier = base.get("service_tier")
+        # `service_tier` replaced a boolean `priority` in the same release that
+        # started reading the tier from config.toml. A thread recorded under
+        # the old one holds the boolean and not the key, so reading only the
+        # key drops Fast mode from the rest of that conversation — silently,
+        # and on exactly the threads that had asked for it. The key is checked
+        # for presence rather than truth, because a new record whose tier is
+        # None is a choice this must not overwrite.
+        tier = (base["service_tier"] if "service_tier" in base
+                else ("priority" if base.get("priority") else None))
     else:
         tier = user.get("service_tier")
 
@@ -606,13 +614,18 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
                                     waits_for=waits_for)
         if others:
             out["concurrent_writers"] = others
+            # The remedy this used to name — `batch start --worktree` with
+            # `--resume-from` — cuts nothing: `wants_worktree` excludes every
+            # resume, so that phase reports success and leaves the writers
+            # exactly where they were. A remedy that does not work is worse
+            # than none, because the caller stops looking for one.
             out["concurrent_writers_note"] = (
                 f"{len(others)} other live run(s) can write to {cwd}. None of you "
-                "can tell another agent's change from your own. `batch start "
-                "--worktree` gives each writing member its own checkout — "
-                "including when continuing an earlier group with "
-                "--resume-from, which is the only isolated way to resume "
-                "several writers at once.")
+                "can tell another agent's change from your own. Only a member "
+                "starting fresh can be given a checkout of its own, with "
+                "`batch start --worktree`; a resumed thread keeps the directory "
+                "it already lives in, so runs already under way can no longer "
+                "be separated.")
     return out
 
 

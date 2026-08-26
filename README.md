@@ -131,7 +131,7 @@ See [Getting Started](docs/wiki/Getting-Started.md) for a fuller walkthrough, an
 | `show` | One item's full output, fetched on request |
 | `stop` | Interrupt by process group — never by matching a process name |
 | `result` | Final message, usage, and parsed JSON when `--schema` was used |
-| `batch start` | N runs as one named group, with a git worktree per writing member |
+| `batch start` | N runs as one named group, sharing your tree unless `--worktree` gives each writing member a checkout |
 | `batch clean` | Remove a finished group's worktrees, once you've collected them |
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, registry health, worktrees |
 
@@ -160,10 +160,10 @@ To hand three independent pieces of work to three Codex runs at once and collect
 $CODEX batch start --group audit --task "audit the parser" --task "audit the lexer" --task "audit the cache"
 $CODEX status --group audit --follow      # ends on a terminal line, never in silence
 $CODEX result --group audit               # each message, plus which paths more than one wrote
-$CODEX batch clean --group audit          # once you've collected
+$CODEX batch clean --group audit          # only if you asked for worktrees
 ```
 
-Two or more members that can write get a git worktree each, so they can't edit each other's files mid-edit — and your own tree stays clean while they work. See [Orchestration](docs/wiki/Orchestration.md).
+Members work in your tree, the way a fan-out of your own subagents does: their changes are there as they make them, with nothing to collect. Add `--worktree` when they would edit the same files, and each writing member gets its own checkout instead. See [Orchestration](docs/wiki/Orchestration.md).
 
 Full command and flag reference: [CLI Reference](docs/wiki/CLI-Reference.md).
 

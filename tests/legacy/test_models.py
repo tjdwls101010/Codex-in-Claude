@@ -204,6 +204,64 @@ class BatchValidatesBeforeSpawning(BridgeTestCase):
                          "one bad task must cost zero spawned runs")
 
 
+class BatchPreflightsTheConfigsOwnDefaults(BridgeTestCase):
+    """C10 put a third source under `--model`/`--effort`, and this check did
+    not know about it.
+
+    `load_tasks` reads the whole file before anything starts, precisely so a
+    typo in the eighth task is not found with seven runs already spawned. The
+    config's values were reaching validation one member at a time inside
+    `resolve_settings` — after the group name was claimed and earlier members
+    had gone — so a stale `config.toml` produced the half-started batch this
+    function exists to prevent.
+    """
+
+    def write_tasks(self, *objs):
+        f = self.tmp / "tasks.jsonl"
+        f.write_text("\n".join(json.dumps(o) for o in objs) + "\n")
+        return str(f)
+
+    def test_an_effort_from_config_that_one_task_s_model_refuses(self):
+        """Codex's own example: the config sets the effort, a later task
+        overrides only the model, and that pair is valid nowhere."""
+        self.write_codex_config('model_reasoning_effort = "ultra"\n')
+        tf = self.write_tasks({"prompt": "a", "model": "fake-big"},
+                              {"prompt": "b", "model": "fake-small"})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf,
+                          expect_rc=1)
+        self.assertIn("task 2", out["error"])
+        self.assertIn("ultra", out["error"])
+        self.assertEqual(started_run_dirs(self.project), [],
+                         "the first member must not already be running")
+        self.assertFalse(
+            (self.project / ".codex-runs" / ".groups" / "p1.json").exists(),
+            "a refused batch must not burn its single-use name")
+
+    def test_a_model_retired_since_the_config_was_written(self):
+        self.write_codex_config('model = "retired-last-year"\n')
+        out = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b", expect_rc=1)
+        self.assertIn("retired-last-year", out["error"])
+        self.assertIn("config.toml", out["error"])
+        self.assertEqual(started_run_dirs(self.project), [])
+
+    def test_a_resume_phase_is_not_held_to_the_config_as_it_is_now(self):
+        """The same rule `ResumeDoesNotRecheckInheritedSettings` states, at the
+        batch level: these members take their model from the threads they
+        continue, so a `config.toml` that has gone stale in the meantime must
+        not refuse the whole phase."""
+        one = self.bridge("batch", "start", "--group", "p1",
+                          "--task", "a", "--task", "b")
+        for r in one["runs"]:
+            self.wait_for_state(r["run_id"])
+        self.write_codex_config('model = "retired-last-year"\n')
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from",
+                          "p1", "--task", "x", "--task", "y")
+        self.assertEqual(two["spawned"], 2, two)
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+
+
 class DoctorReportsModelCatalogHealth(BridgeTestCase):
 
     def test_a_count_when_the_catalog_reads_fine(self):

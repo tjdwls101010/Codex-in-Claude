@@ -38,7 +38,8 @@ from _registry import (
     meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
     still_writing, unreadable_runs,
 )
-from _codex import check_model_effort, model_catalog, review_argv
+from _codex import (check_model_effort, model_catalog, review_argv,
+                    user_defaults)
 from _run import (
     WRITING_SANDBOXES, create_run, run_row,
 )
@@ -319,12 +320,33 @@ def load_tasks(args):
     # cost this function exists to avoid. One catalog lookup covers every task.
     group_model = getattr(args, "model", None)
     group_effort = getattr(args, "effort", None)
+    # C10 put a third source under those two, and it was reaching validation
+    # one member at a time inside `resolve_settings` — after the group name was
+    # claimed and earlier members had already spawned. Measured: config effort
+    # `ultra` with a task naming `fake-small` produced `spawned: 1` of 2, which
+    # is the half-started batch this whole block exists to prevent.
+    #
+    # Not for a phase that continues threads: those members take their model
+    # from what each thread recorded, so holding them to a `config.toml` that
+    # has gone stale since would refuse the continuation `resume` exists for —
+    # the rule `resolve_settings` states for one run, at group scale.
+    user = ({} if getattr(args, "resume_from", None)
+            or getattr(args, "inherit_config", False) else user_defaults())
+
+    def defaults_for(item):
+        if item["kind"] == "resume":
+            return group_model, group_effort
+        return (group_model or user.get("model"),
+                group_effort or user.get("effort"))
+
     named = [t for t in tasks if t.get("model") or t.get("effort")]
-    catalog = (model_catalog() if group_model or group_effort or named else None)
+    fresh_defaults = any(defaults_for(t) != (None, None) for t in tasks)
+    catalog = model_catalog() if named or fresh_defaults else None
     if catalog:
-        check_model_effort(group_model, group_effort, catalog=catalog, fail=fail)
         for n, item in enumerate(tasks, 1):
-            if not (item.get("model") or item.get("effort")):
+            dm, de = defaults_for(item)
+            model, effort = item.get("model") or dm, item.get("effort") or de
+            if not (model or effort):
                 continue
 
             def fail_at(msg, _n=n, **extra):
@@ -332,9 +354,15 @@ def load_tasks(args):
 
             # The task's own fields over the group's, matching `task_args` —
             # checking the pair that will actually be used is the whole point.
-            check_model_effort(item.get("model") or group_model,
-                               item.get("effort") or group_effort,
-                               catalog=catalog, fail=fail_at)
+            # A value the caller did not type is named as such, because "your
+            # config.toml says ultra" and "you passed --effort ultra" send the
+            # reader to two different files.
+            check_model_effort(
+                model, effort, catalog=catalog, fail=fail_at,
+                model_source=None if (item.get("model") or group_model)
+                else "config.toml",
+                effort_source=None if (item.get("effort") or group_effort)
+                else "config.toml")
     return tasks
 
 
@@ -428,7 +456,52 @@ def wants_worktree(item, args):
     return sandbox in WRITING_SANDBOXES
 
 
-def plan_worktrees(tasks, args, project):
+def writers_by_directory(tasks, args, project, runs_dir):
+    """Which members will write, grouped by the directory they will write in.
+
+    Resolved the way `create_run` will resolve it, which for a resume means the
+    parent run's own `cwd` — a resumed thread keeps the directory it already
+    lives in. Counting worktree *eligibility* instead answered "nobody writes
+    here" for an entire `--resume-from` phase, because `wants_worktree` excludes
+    every resume; and after C-A that phase is N writers continuing into the one
+    tree phase 1 shared, which is the case the warning exists for.
+    """
+    dirs = {}
+    for i, item in enumerate(tasks):
+        sandbox = item.get("sandbox") or args.sandbox or "workspace-write"
+        if sandbox not in WRITING_SANDBOXES:
+            continue
+        where = item.get("cwd") or getattr(args, "cwd", None)
+        if not where and item["kind"] == "resume" and item.get("resume"):
+            _rd, meta = find_run(runs_dir, item["resume"])
+            where = (meta or {}).get("cwd")
+        dirs.setdefault(str(where or project), []).append(i)
+    return dirs
+
+
+def sharing_note(shared, *, separable):
+    """Who is about to write into one directory, and what can be done about it.
+
+    The remedy is split because only one of the two is `--worktree`. A fresh
+    member can be handed its own checkout; a resumed one cannot, since its
+    thread already lives somewhere and `--worktree` on a resume phase cuts
+    nothing. Naming the flag anyway is R19's shape — the caller acts on the
+    remedy and lands exactly where they started, with the tool reporting
+    success.
+    """
+    parts = "; ".join(f"{len(idx)} members write to {d} and share it"
+                      for d, idx in shared.items())
+    tail = (" `--worktree` gives each its own checkout instead; `result --group` "
+            "then reports which paths more than one wrote."
+            if separable else
+            " A resumed thread keeps the directory it already lives in, so no "
+            "flag on this phase can separate them — isolation is decided when "
+            "the group is first started.")
+    return (parts + ", so each one's changes are in that tree as it makes them "
+            "— and none of them can tell another's edit from its own." + tail)
+
+
+def plan_worktrees(tasks, args, project, runs_dir):
     """Decide isolation for the batch, then report why in the same breath.
 
     Returns `(eligible_indices, base_sha, note)`.
@@ -454,22 +527,33 @@ def plan_worktrees(tasks, args, project):
     of what has to be taught.
     """
     eligible = {i for i, t in enumerate(tasks) if wants_worktree(t, args)}
+    # Stated, not silent, and only where it means something: two or more members
+    # that can reach the same files. With one writer there is nobody to collide
+    # with, and a note about a hazard that cannot occur is how a field stops
+    # being read.
+    shared = {d: idx for d, idx in
+              writers_by_directory(tasks, args, project, runs_dir).items()
+              if len(idx) > 1}
     if not getattr(args, "worktree", False):
-        # Stated, not silent, and only where it means something: two or more
-        # members that can reach the same files. With one writer there is
-        # nobody to collide with, and a note about a hazard that cannot occur
-        # is how a field stops being read.
-        if len(eligible) < 2:
+        if not shared:
             return set(), None, None
-        return set(), None, (
-            f"{len(eligible)} members write to {project} and share it, so each "
-            f"one's changes are in your tree as it makes them — and none of "
-            f"them can tell another's edit from its own. `--worktree` gives "
-            f"each its own checkout instead; `result --group` then reports "
-            f"which paths more than one wrote.")
+        return set(), None, sharing_note(
+            shared, separable=all(i in eligible for idx in shared.values()
+                                  for i in idx))
     if not eligible:
-        return set(), None, ("no member writes to the tree, so there is nothing "
-                             "to isolate")
+        resumes = [t for t in tasks if t["kind"] == "resume"]
+        if not resumes:
+            return set(), None, ("no member writes to the tree, so there is "
+                                 "nothing to isolate")
+        # The answer this used to give — "no member writes to the tree" — is
+        # false of a phase of workspace-write resumes, and it is the answer a
+        # caller acts on. What is true is narrower.
+        note = (f"{len(resumes)} member(s) here continue a thread, and a "
+                f"resumed thread keeps the directory it already lives in, so "
+                f"no worktree is cut. Isolation is a decision `batch start` "
+                f"makes when the group is created and this phase inherits.")
+        return set(), None, note + (" " + sharing_note(shared, separable=False)
+                                    if shared else "")
     if git_toplevel(project) is None:
         return set(), None, (f"{project} is not a git repository, so worktrees "
                              "are unavailable; members share the caller's tree")
@@ -707,7 +791,8 @@ def cmd_batch_start(args):
              created_at=existing.get("created_at"),
              members=len(existing.get("members") or []))
 
-    isolated_idx, wt_base, wt_note = plan_worktrees(tasks, args, project)
+    isolated_idx, wt_base, wt_note = plan_worktrees(
+        tasks, args, project, runs_dir)
     batch_ctx = {"n": len(tasks), "group": args.group}
 
     members, results = [], []

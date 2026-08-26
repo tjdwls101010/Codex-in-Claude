@@ -548,6 +548,34 @@ class UserDefaultsSurviveIsolation(BridgeTestCase):
         self.assertNotIn("model_reasoning_effort", " ".join(argv))
         self.assertNotIn("service_tier", " ".join(argv))
 
+    def test_a_run_recorded_before_this_version_keeps_its_tier(self):
+        """The field changed name and type in the same commit, and a resume
+        reads whatever the registry already holds. A thread started under the
+        old release records `priority: true` and no `service_tier`, so reading
+        only the new key drops Fast mode from every remaining turn of it —
+        silently, and on exactly the threads that asked for it."""
+        r = self.bridge("start", "x", "--priority")
+        self.wait_for_state(r["run_id"])
+        meta_path = (self.project / ".codex-runs" / r["run_id"] / "meta.json")
+        meta = json.loads(meta_path.read_text())
+        del meta["service_tier"]
+        meta["priority"] = True
+        meta_path.write_text(json.dumps(meta))
+        r2 = self.bridge("resume", r["run_id"], "second turn")
+        self.wait_for_state(r2["run_id"])
+        self.assertIn('service_tier="priority"', self.argv_records()[-1]["argv"])
+
+    def test_a_recorded_no_tier_stays_no_tier(self):
+        """The reason the record is read rather than defaulted: `--no-priority`
+        is a choice, and a resume that could not tell it from "nothing recorded"
+        would re-add the tier the caller turned off."""
+        r = self.bridge("start", "x", "--no-priority")
+        self.wait_for_state(r["run_id"])
+        r2 = self.bridge("resume", r["run_id"], "second turn")
+        self.wait_for_state(r2["run_id"])
+        self.assertNotIn("service_tier",
+                         " ".join(self.argv_records()[-1]["argv"]))
+
     def test_a_model_the_install_does_not_offer_is_refused_before_spawning(self):
         """D38's catalog check follows the value rather than the flag. A model
         retired upstream sits in `config.toml` until someone edits it, and

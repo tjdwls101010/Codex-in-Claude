@@ -18,6 +18,14 @@ Twenty-one headless sessions were run before a line of this was written, each on
 
 - **`--base` is refused without `--worktree`.** It names the commit a checkout is cut from, and no checkout is cut otherwise. Accepted silently it would hand back a success the caller reads as "cut from that commit".
 
+- **A batch that continues threads now says who shares your tree.** The warning was keyed off worktree *eligibility*, and a resumed member is never eligible — its thread keeps the directory it already lives in. So a `--resume-from` phase, which after the default change is N writers continuing into the one tree phase 1 shared, was the only batch that could not produce the warning it most needed. Members are now grouped by the directory they will actually write in, resolved per member the way the run itself resolves it.
+
+- **Two remedies that did not work are gone.** `--worktree` on a resume phase answered *"no member writes to the tree, so there is nothing to isolate"* — false of a phase of `workspace-write` members, and it is the sentence a caller acts on; it now says that a resumed thread keeps its directory and that isolation is decided when the group is first started. The `concurrent_writers_note` prescribed `batch start --worktree --resume-from`, which cuts no worktrees for the same reason: it now names what actually separates writers, and says plainly that runs already under way cannot be separated.
+
+- **A batch validates the config's own model and effort before it claims its name.** With the three keys above now feeding every isolated member, a `config.toml` effort the second task's model does not accept was found inside that member's own setup — after the group name was claimed and the first member had spawned. Measured at `spawned: 1` of 2. The check `load_tasks` already did for `--model`/`--effort` now covers the values the file supplies, and skips a `--resume-from` phase for the same reason a resume is never re-checked: those members take their model from the threads they continue.
+
+- **A run recorded before this version keeps its tier when resumed.** `meta.json`'s boolean `priority` became the string `service_tier` in the same release that started reading the tier from `config.toml`; a thread recorded under the old key would have lost Fast mode for the rest of its life. The old key is read when the new one is absent — presence, not truth, so a new record that deliberately holds no tier is not overwritten.
+
 ### Removed
 
 **Five flags.** Each is now argparse's usage error, exit status **2**, refused before anything is claimed. The shared reason is that none was used in 51 real delegations, which on its own would only argue for leaving them alone — what decided each one is the second reason.

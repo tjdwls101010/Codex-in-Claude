@@ -1218,11 +1218,15 @@ def build_parser():
                         "and alongside --run or --thread it would label threads "
                         "outside that filter as external.")
     p.add_argument("--follow", action="store_true",
-                   help="requires --group: print each member state change, "
-                        "then a terminal group line, then exit. A pure view — "
-                        "it holds no state, so a follower that dies loses "
-                        "nothing and `status --group` answers the same question "
-                        "at any time.")
+                   help="requires --group: plain text rather than the one "
+                        "JSON object `status --group` returns — a "
+                        "`run <id> <prev> -> <state>` line per member state "
+                        "change, `exit=N` appended when a run ended non-zero, "
+                        "then one terminal "
+                        "`group.<state> group=<name> done=N failed=N` line, "
+                        "then exit. A pure view — it holds no state, so a "
+                        "follower that dies loses nothing and `status --group` "
+                        "answers the same question at any time.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
                         "group.still-running instead of a terminal group line. "

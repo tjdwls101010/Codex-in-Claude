@@ -78,6 +78,54 @@ class FollowingAGroupPrintsText(BridgeCase):
         self.assertRegex(last, rf"^group\.\w+ group={name} done=\d+ failed=\d+")
 
 
+class StatusFollowHelpNamesTheShapesItPrints(BridgeCase):
+    """C6 — the top-level epilog says `status --group --follow` is the exception
+    to the JSON contract; `status --help` did not say what it prints instead.
+
+    A field report read the *non*-follow output line by line, found nothing that
+    looked like a state change, and concluded the group was finished. Naming an
+    exception without naming its shape is what left that reading available.
+
+    Both tests read the same help text: one that it names the shapes, one that
+    the stream matches them. Either alone is half a check — a help string
+    nothing compares against is prose that happens to live in the code.
+    """
+
+    RUN_LINE = "run <id> <prev> -> <state>"
+    TERMINAL_LINE = "group.<state>"
+
+    def follow_help(self):
+        p = self.bridge_raw("status", "--help")
+        text = " ".join(p.stdout.split())
+        # The options section, not the usage line: `--follow` appears in both,
+        # and slicing from the first occurrence returns the empty string
+        # between them, which passes nothing and fails everything.
+        end = text.rindex("--follow-timeout FOLLOW_TIMEOUT")
+        return text[text.rindex("--follow ", 0, end):end]
+
+    def test_the_help_names_both_shapes_and_the_non_follow_one(self):
+        h = self.follow_help()
+        for shape in (self.RUN_LINE, self.TERMINAL_LINE, "JSON"):
+            with self.subTest(shape=shape):
+                self.assertIn(shape, h)
+
+    def test_every_line_it_prints_matches_a_shape_the_help_names(self):
+        name = "shapes"
+        out = self.bridge("batch", "start", "--group", name, "--sandbox",
+                          "read-only", "--task", "a", "--task", "b")
+        self.assertEqual(out["spawned"], 2, out)
+        p = self.bridge_raw("status", "--group", name, "--follow")
+        shapes = (re.compile(r"^run \S+ \S+ -> \w+( exit=-?\d+)?$"),
+                  re.compile(r"^group\.\S+ group=\S+( \w+=\S+)*$"))
+        for ln in [x for x in p.stdout.splitlines() if x.strip()]:
+            with self.subTest(line=ln):
+                self.assertTrue(
+                    any(r.match(ln) for r in shapes),
+                    f"{ln!r} is neither `{self.RUN_LINE}` nor "
+                    f"`{self.TERMINAL_LINE} …`, so --follow's help now "
+                    "describes a stream this command does not print")
+
+
 class TheContractIsStatedWhereTheCallerReadsIt(unittest.TestCase):
     """One statement, in the surface the caller is already looking at.
 

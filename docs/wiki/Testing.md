@@ -11,7 +11,7 @@ python3 -m unittest discover -s tests/260814 -p 'test_*.py'
 python3 -m unittest discover -s tests/260823 -p 'test_*.py'
 ```
 
-**301 tests in `tests/legacy`, passing in about two and a half minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/legacy/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
+**340 tests in `tests/legacy`, passing in about three minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/legacy/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
 
 `tests/260814` is the third start directory. It holds the checks that keep the CLI's own signature the source of truth for its option surface: that every argument the parser accepts carries a `help=` string, and that the output contract the docs state is the one the tool actually keeps. Both close drift that the docs-versus-CLI checks in `tests/260813` cannot see, because a flag nobody documented is a flag those checks never look at.
 

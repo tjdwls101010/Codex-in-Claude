@@ -61,6 +61,7 @@ When you do pass it, assignment is **per member**, and each exclusion has its ow
 `--base` is refused without `--worktree`, because it names the commit a checkout is cut from and there is no checkout otherwise. Two things to know when you do use it:
 
 - A worktree cut from an older base can silently lack `AGENTS.md`, so those runs start without your project's instructions. `batch start` compares and tells you when that happens.
+- The same reply's `missing_ignored` names what git does not track and the checkouts therefore do not have. What it cannot tell you is the consequence: a run whose canonical interpreter or fixture directory is missing cannot run the verification it was asked for, and one that rebuilds its own cache compares against live data and calls every difference a regression.
 - The members' results are uncommitted changes **inside each worktree**, not in your tree. `result --group` reports `files_changed` per member; collecting the content is yours to do.
 
 ## 5. Cleaning up
@@ -83,7 +84,7 @@ $CODEX batch start --group fix --resume-from audit \
        --task "now fix what you found" --task "now fix what you found"
 ```
 
-Task *i* continues member *i* of `audit`, keeping that thread and the directory it already lives in. Note that continuing several writing threads with individual `resume` calls is **not** equivalent: `resume` has no `--worktree` and takes its directory from its thread, so three of them put three writers in one directory at once. Only `batch start` assigns worktrees, which makes `--resume-from` the only isolated way to continue a group. You don't have to spot this yourself: a writing run started into a directory another live writing run already occupies comes back with `concurrent_writers` naming them, and `doctor` reports the same across the whole registry. Phase 2 inherits phase 1's worktrees rather than getting new ones, and the new group records where it came from — which is what makes cleaning phase 1 refuse while phase 2 is still there.
+Task *i* continues member *i* of `audit`, keeping that thread and the directory it already lives in. Note that continuing several writing threads with individual `resume` calls puts three writers in one directory at once — `resume` has no `--worktree` and takes its directory from its thread. `batch start --worktree --resume-from` is **not** the fix: a resumed member is never eligible for a checkout for the same reason, so that phase cuts nothing and reports success. Isolation is decided when the group is first started, and phase 2 inherits whatever phase 1 got. You don't have to spot this yourself: a writing run started into a directory another live writing run already occupies comes back with `concurrent_writers` naming them, and `doctor` reports the same across the whole registry. Phase 2 inherits phase 1's worktrees rather than getting new ones, and the new group records where it came from — which is what makes cleaning phase 1 refuse while phase 2 is still there.
 
 Everything that could go wrong here is a refusal rather than a guess:
 

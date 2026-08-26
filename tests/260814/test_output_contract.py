@@ -93,6 +93,7 @@ class StatusFollowHelpNamesTheShapesItPrints(BridgeCase):
 
     RUN_LINE = "run <id> <prev> -> <state>"
     TERMINAL_LINE = "group.<state>"
+    EMPTY_LINE = "group.empty group=<name>"
 
     def follow_help(self):
         p = self.bridge_raw("status", "--help")
@@ -105,9 +106,27 @@ class StatusFollowHelpNamesTheShapesItPrints(BridgeCase):
 
     def test_the_help_names_both_shapes_and_the_non_follow_one(self):
         h = self.follow_help()
-        for shape in (self.RUN_LINE, self.TERMINAL_LINE, "JSON"):
+        for shape in (self.RUN_LINE, self.TERMINAL_LINE, self.EMPTY_LINE,
+                      "JSON"):
             with self.subTest(shape=shape):
                 self.assertIn(shape, h)
+
+    def test_a_group_with_no_resolvable_member_prints_the_shape_named_for_it(self):
+        """The third shape, and the one a caller meets by accident: a group
+        whose only member never spawned prints neither a `run` line nor the
+        tally, so a reader holding the two documented shapes rejects a valid
+        record."""
+        name = "empties"
+        self.bridge("batch", "start", "--group", name, "--sandbox", "read-only",
+                    "--task", "a")
+        for row in self.bridge("status", "--group", name)["runs"]:
+            self.wait_terminal(row["run_id"])
+        for d in (self.project / ".codex-runs").iterdir():
+            if d.is_dir() and not d.name.startswith("."):
+                (d / "meta.json").unlink()
+        p = self.bridge_raw("status", "--group", name, "--follow")
+        lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
+        self.assertRegex(lines[-1], r"^group\.empty group=" + name)
 
     def test_every_line_it_prints_matches_a_shape_the_help_names(self):
         name = "shapes"

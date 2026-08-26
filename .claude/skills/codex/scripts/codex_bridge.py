@@ -52,8 +52,8 @@ from _events import (  # noqa: E402
 )
 from _batch import (  # noqa: E402
     TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
-    group_snapshot, list_groups, resolve_group, unstarted_members,
-    vanished_members,
+    follow_group_log, group_snapshot, heartbeat_due, list_groups, resolve_group,
+    unstarted_members, vanished_members,
 )
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
@@ -364,6 +364,20 @@ def cmd_status(args):
 def cmd_log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    if args.group:
+        if args.since:
+            # Refused rather than given some collapsed meaning: every member has
+            # its own byte offset into its own file, and one integer applied to
+            # all of them answers with some member's events silently dropped —
+            # which is the failure `--since`'s own out-of-range guard exists to
+            # prevent, arriving by another road.
+            fail("--since is one cursor and a group has one per member, each a "
+                 "byte offset into its own file. `log --run <id> --since` is "
+                 "where a cursor belongs; a group follower re-reads from the "
+                 "start of each stream instead.",
+                 group=args.group)
+        follow_group_log(args, project, runs_dir)
+        return
     if args.run:
         rd, meta = find_run(runs_dir, args.run)
         refuse_unresolved_run(args.run, rd, meta, runs_dir)
@@ -400,7 +414,9 @@ def cmd_log(args):
     # --follow must emit terminal states, not only progress. A monitor that
     # prints happy-path lines only is silent through a crash, and silence is
     # indistinguishable from "still working".
-    deadline = time.time() + args.follow_timeout if args.follow_timeout else None
+    started = time.time()
+    beat_at = started
+    deadline = started + args.follow_timeout if args.follow_timeout else None
     while True:
         cursor = dump(cursor)
         sys.stdout.flush()
@@ -416,11 +432,17 @@ def cmd_log(args):
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
-        if deadline and time.time() > deadline:
+        now = time.time()
+        if deadline and now > deadline:
             sys.stdout.write(f"run.still-running run={m.get('run_id')} state={st}\n")
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
+        beat, beat_at = heartbeat_due(beat_at, args.heartbeat, now)
+        if beat:
+            sys.stdout.write(f"still-running elapsed={int(now - started)} "
+                             f"running=1\n")
+            sys.stdout.flush()
         time.sleep(FOLLOW_INTERVAL)
 
 
@@ -1010,6 +1032,17 @@ class HidesSuppressedCommands(argparse.RawDescriptionHelpFormatter):
                 yield sub
 
 
+def add_heartbeat(p):
+    p.add_argument("--heartbeat", type=float, metavar="SEC",
+                   help="every SEC seconds of following, print "
+                        "`still-running elapsed=<s> running=<n>`. Off by "
+                        "default. A run that has gone quiet already announces "
+                        "itself — `stalled` is derived after 300 idle seconds "
+                        "— so what this adds is the other half: a follower "
+                        "that is alive and has nothing to say looks exactly "
+                        "like one that died.")
+
+
 def add_common(p):
     p.add_argument("--runs-dir",
                    help="where run state lives (default: <project>/.codex-runs)")
@@ -1225,7 +1258,9 @@ def build_parser():
                         "change, `exit=N` appended when a run ended non-zero, "
                         "then one terminal "
                         "`group.<state> group=<name> done=N failed=N` line, "
-                        "then exit. A pure view — it holds no state, so a "
+                        "then exit. A group with no resolvable member is one "
+                        "`group.empty group=<name>` line instead, which carries "
+                        "neither tally. A pure view — it holds no state, so a "
                         "follower that dies loses nothing and `status --group` "
                         "answers the same question at any time.")
     p.add_argument("--follow-timeout", type=float,
@@ -1233,17 +1268,31 @@ def build_parser():
                         "group.still-running instead of a terminal group line. "
                         "No default: the follow ends only when the group does. "
                         "Refused without --follow.")
+    add_heartbeat(p)
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser(
         "log", formatter_class=HidesSuppressedCommands,
         help="filtered events from a byte cursor — the whole log, or only what is new")
     add_common(p)
-    p.add_argument("--run", metavar="REF",
-                   help="a run id, a thread id, or a run-id prefix (newest "
-                        "wins). Omitted, the project's single live run is used; "
-                        "with none live the newest terminal one, and with two "
-                        "or more live it is refused rather than guessed.")
+    target = p.add_mutually_exclusive_group()
+    target.add_argument("--run", metavar="REF",
+                        help="a run id, a thread id, or a run-id prefix (newest "
+                             "wins). Omitted, the project's single live run is "
+                             "used; with none live the newest terminal one, and "
+                             "with two or more live it is refused rather than "
+                             "guessed.")
+    target.add_argument("--group", metavar="NAME",
+                        help="every member of one batch group, interleaved as "
+                             "each writes. A first line maps index to run id "
+                             "(`group.members group=<name> 0=<run_id>[:label] "
+                             "…`), every event line is prefixed "
+                             "`[<index>:<label>]`, and the stream ends on the "
+                             "group's own terminal line — the same one "
+                             "`status --group --follow` ends on, or "
+                             "`group.empty` if no member resolves. --since is "
+                             "refused here: a cursor is a byte offset into one "
+                             "file and every member has its own.")
     p.add_argument("--since", type=int, default=0,
                    help="resume from the byte offset a previous call printed as "
                         "`# cursor=<n>` (default: 0, the whole log). Only "
@@ -1279,6 +1328,7 @@ def build_parser():
                         "run.still-running instead of a terminal line, so a "
                         "watcher cannot hang on a wedged run. Shapes nothing "
                         "without --follow.")
+    add_heartbeat(p)
     p.set_defaults(func=cmd_log)
 
     p = sub.add_parser(

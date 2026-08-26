@@ -28,7 +28,23 @@ Twenty-one headless sessions were run before a line of this was written, each on
 
 ### Added
 
+- **`log --group <name>` follows a whole batch's events.** `log --run --follow` gives one run its commands, exit codes and agent messages as they arrive; a group had no equivalent, so wanting the same from three members meant arming three followers. A field report wrote its own polling loop instead, got its format wrong, and came within one step of reporting a false completion — its reviewer's bootstrap trouble, two suite failures and a render phase were all found by hand-polling `status --group`, which prints only state *changes* and stays silent through the twenty minutes a member spends `running`. A first line maps index to run id, every event line is prefixed `[<index>:<label>]`, and the stream ends on the same terminal line `status --group --follow` ends on. `--since` is refused here: a cursor is a byte offset into one file and every member has its own.
+
+- **`--heartbeat SEC` on both followers.** A periodic `still-running elapsed=<s> running=<n>` line. Off by default, and worth turning on only under a watcher woken per event: a run that has genuinely gone quiet already announces itself, since `stalled` is derived after 300 idle seconds. What had no signal at all was the other half — a follower that is alive with nothing to say, and one that died, look identical from outside.
+
 - **`batch start --worktree` names what the checkouts do not have.** A worktree is `git worktree add` output — tracked files at the base commit and nothing else — so `.venv`, provider caches and fixture directories are all absent. Reproduced directly: `.venv/bin/python` planted in a fixture, two worktree members asked to `ls .venv/bin`, both `No such file or directory`. The reply now carries `missing_ignored` listing what this tree actually has, at the moment the checkouts are cut, since that is the last point where the caller could still act on it. The tool's own run registry is left out — it gitignores itself, and a checkout not having it is neither news nor actionable.
+
+### Fixed
+
+Four defects found by adversarial review of this release's own commits, each reproduced before it was fixed.
+
+- **`missing_ignored` handed back an encoded token instead of a path** for any name git C-quotes — anything non-ASCII, or with a tab, quote or backslash. This repository keeps Korean paths in its own fixtures. The scan now asks for NUL-delimited output.
+
+- **`missing_ignored` could name a path the checkouts do have.** A `--base` older than the commit that stopped tracking something puts that something back in every worktree. Entries are now filtered against the base the checkouts were cut from.
+
+- **A phase resuming read-only members was warned that they share your tree.** A resume inherits its sandbox from its thread, and the count defaulted every member to the group's `workspace-write` instead — a warning about a collision that cannot happen, which is how a field stops being read. The same resolution now supplies each member's directory and its sandbox.
+
+- **The sharing note explained every exclusion as a resume.** `--worktree` also passes over a review, which has to see the uncommitted work in your tree, and a member given its own `cwd`. Two fresh tasks pointed at one directory were told they were resumed threads whose isolation had been decided in an earlier phase. The note now names the reason that actually applies.
 
 ### Removed
 

@@ -262,6 +262,21 @@ class BatchPreflightsTheConfigsOwnDefaults(BridgeTestCase):
             self.wait_for_state(r["run_id"])
 
 
+    def test_a_task_resuming_a_thread_this_registry_never_started(self):
+        """`resolve_settings` decides by whether the run resolves here, and an
+        external Codex thread resolves to nothing — so the config's values do
+        reach that member. Skipping them for every `kind: resume` alike found a
+        stale `config.toml` only after the group name had been claimed."""
+        self.write_codex_config('model = "retired-last-year"\n')
+        tf = self.write_tasks({"kind": "resume", "resume": "0199-not-ours",
+                               "prompt": "carry on"})
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf,
+                          expect_rc=1)
+        self.assertIn("retired-last-year", out["error"])
+        self.assertFalse(
+            (self.project / ".codex-runs" / ".groups" / "p1.json").exists())
+
+
 class DoctorReportsModelCatalogHealth(BridgeTestCase):
 
     def test_a_count_when_the_catalog_reads_fine(self):

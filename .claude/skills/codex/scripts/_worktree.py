@@ -91,7 +91,7 @@ def missing_at_base(cwd: Path, base: str, names=("AGENTS.md", "CLAUDE.md")):
     return missing
 
 
-def ignored_entries(cwd: Path, skip=(), limit=20):
+def ignored_entries(cwd: Path, base=None, skip=(), limit=20):
     """What git ignores in the caller's tree, at the shallowest ignored level.
 
     A worktree is `git worktree add` output: tracked files at the base commit,
@@ -110,16 +110,31 @@ def ignored_entries(cwd: Path, skip=(), limit=20):
 
     `skip` drops paths under a prefix: the run registry gitignores itself, and
     a checkout not having this tool's own bookkeeping is neither news nor a
-    thing the caller can act on.
+    thing the caller can act on. `base` drops a path the checkout does have —
+    a `--base` older than the commit that stopped tracking something puts that
+    something back in every worktree, and this field is a claim about what is
+    absent.
+
+    `-z` rather than plain porcelain: without it git C-quotes any path with a
+    non-ASCII character, a tab, a quote or a backslash, so the field would hand
+    back an encoded token where the caller expects a path — and this repository
+    has Korean paths in its own test fixtures.
     """
-    p = _git(cwd, "status", "--porcelain", "--ignored=matching",
+    p = _git(cwd, "status", "--porcelain", "-z", "--ignored=matching",
              "--untracked-files=normal")
     if p.returncode != 0:
         return [], 0
-    found = [ln[3:] for ln in p.stdout.splitlines()
-             if ln.startswith("!! ")
-             and not any(ln[3:].startswith(s) for s in skip)]
+    found = [rec[3:] for rec in p.stdout.split("\0")
+             if rec.startswith("!! ")
+             and not any(rec[3:].startswith(s) for s in skip)]
+    if base:
+        found = [f for f in found if not _tracked_at(cwd, base, f)]
     return found[:limit], max(0, len(found) - limit)
+
+
+def _tracked_at(cwd: Path, base: str, path: str):
+    p = _git(cwd, "ls-tree", "--name-only", base, "--", path.rstrip("/"))
+    return p.returncode == 0 and bool(p.stdout.strip())
 
 
 def uncommitted_count(cwd: Path):

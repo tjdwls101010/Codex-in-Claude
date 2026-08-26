@@ -297,6 +297,35 @@ class WhatAWorktreeDoesNotHave(WorktreeTestCase):
                              "the claim is checked against the checkout itself")
             self.wait_for_state(r["run_id"])
 
+    def test_a_path_the_base_still_tracks_is_not_reported_missing(self):
+        """The field is a claim about what a checkout does not have, and a
+        `--base` older than the commit that stopped tracking something puts
+        that something back in every worktree."""
+        (self.project / "cache").mkdir()
+        (self.project / "cache" / "marker").write_text("x")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "cache tracked here")
+        old = self.git("rev-parse", "HEAD").stdout.strip()
+        (self.project / ".gitignore").write_text("cache/\n")
+        self.git("rm", "-r", "--cached", "-q", "cache")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "stop tracking it")
+        out = self.start_group("--worktree", "--base", old)
+        self.assertNotIn("missing_ignored", out["worktrees"])
+        for r in out["runs"]:
+            self.assertTrue((Path(r["worktree"]) / "cache" / "marker").exists())
+            self.wait_for_state(r["run_id"])
+
+    def test_a_path_git_would_c_quote_arrives_as_a_path(self):
+        """Plain porcelain C-quotes anything non-ASCII, so the field would hand
+        back an encoded token where the caller expects a path — and this
+        repository keeps Korean paths in its own fixtures."""
+        self.ignore("빌드/")
+        out = self.start_group("--worktree")
+        self.assertEqual(out["worktrees"]["missing_ignored"], ["빌드/"])
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
     def test_a_tree_with_nothing_ignored_says_nothing(self):
         """A field reporting an empty list on every batch is a field that stops
         being read."""
@@ -312,6 +341,32 @@ class WhatAWorktreeDoesNotHave(WorktreeTestCase):
         self.ignore(".venv/")
         out = self.start_group()
         self.assertNotIn("missing_ignored", out.get("worktrees") or {})
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+
+class TheNoteNamesTheRealExclusion(WorktreeTestCase):
+    """`--worktree` passes a member over for four different reasons, and the
+    sharing note read the boolean as "these must be resumes" — so two fresh
+    tasks pointed at one `cwd` were told they were resumed threads whose
+    isolation had been decided in an earlier phase."""
+
+    def test_an_explicit_cwd_is_not_described_as_a_resume(self):
+        out = self.start_group("--cwd", str(self.project))
+        note = out["worktrees"]["note"]
+        self.assertIn("cwd of its own", note)
+        self.assertNotIn("resumed", note)
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_worktree_over_a_review_only_batch_says_what_a_review_needs(self):
+        tf = self.tasks_file({"kind": "review", "review": {"uncommitted": True}},
+                             {"kind": "review", "review": {"uncommitted": True}})
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--tasks-file", tf)
+        note = out["worktrees"]["note"]
+        self.assertIn("uncommitted work in your tree", note)
+        self.assertNotIn("resumed", note)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
@@ -819,6 +874,18 @@ class ResumeFrom(WorktreeTestCase):
         note = two["worktrees"]["note"]
         self.assertNotIn("nothing to isolate", note)
         self.assertIn("resume", note)
+
+    def test_read_only_members_resumed_are_not_reported_as_sharing(self):
+        """A resume inherits its sandbox from its thread, so a phase continuing
+        read-only members has no writers in it. Counting them as
+        `workspace-write` — the group's default, which they never take —
+        warned about a collision that cannot happen."""
+        self.phase_one("--sandbox", "read-only")
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from",
+                          "p1", "--task", "a", "--task", "b")
+        self.assertNotIn("worktrees", two)
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
 
     def test_a_count_mismatch_fails_before_anything_starts(self):
         """Pairing a short list lands a phase-2 task on the wrong phase-1

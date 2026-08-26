@@ -323,5 +323,120 @@ class LogAndShowEndToEnd(BridgeTestCase):
         self.assertIn("thread ", joined)
 
 
+class AGroupsMidRunSignal(BridgeTestCase):
+    """C9 — `log --run --follow` gives one run its events as they arrive; a
+    group had no equivalent, so wanting the same thing meant arming N followers.
+
+    A field report did the other thing instead: `status --group --follow` prints
+    only state *changes*, and a twenty-minute member is `running` throughout, so
+    the reviewer's bootstrap trouble, two suite failures and a render phase were
+    all found by hand-polling. That reporter wrote their own polling loop, got
+    its format wrong, and came within one step of reporting a false completion.
+    """
+
+    fixture = "mixed-bigout-and-failure.jsonl"
+
+    def group(self, name="g", n=2, *extra):
+        out = self.bridge("batch", "start", "--group", name, "--sandbox",
+                          "read-only",
+                          *[a for i in range(n) for a in ("--task", f"t{i}")],
+                          *extra)
+        self.assertEqual(out["spawned"], n, out)
+        return out
+
+    def follow(self, name="g", *extra):
+        p = self.bridge_raw("log", "--group", name, "--follow", *extra,
+                            timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return [ln for ln in p.stdout.splitlines() if ln.strip()]
+
+    def test_a_header_names_which_run_each_index_is(self):
+        """The prefix has to be short enough to read at a glance and still lead
+        back to a `stop --run`. One header line buys both."""
+        g = self.group()
+        lines = self.follow()
+        for r in g["runs"]:
+            self.assertIn(r["run_id"], lines[0])
+        self.assertTrue(lines[0].startswith("group.members group=g"), lines[0])
+
+    def test_every_event_line_says_which_member_it_came_from(self):
+        g = self.group()
+        body = [ln for ln in self.follow()[1:] if not ln.startswith("group.")]
+        self.assertTrue(body, "the members' events did not reach the stream")
+        for ln in body:
+            self.assertRegex(ln, r"^\[\d+(:[^\]]+)?\] ")
+        self.assertEqual({ln[1] for ln in body}, {"0", "1"},
+                         "one member's stream is missing from the interleave")
+
+    def test_the_label_rides_in_the_prefix_when_there_is_one(self):
+        self.group("h", 2, "--label", "audit")
+        body = [ln for ln in self.follow("h")[1:] if not ln.startswith("group.")]
+        self.assertTrue(all(ln.startswith("[0:audit] ") or ln.startswith("[1:audit] ")
+                            for ln in body), body[:3])
+
+    def test_it_ends_on_the_groups_own_terminal_line(self):
+        """The same line `status --group --follow` ends on, because a watcher
+        armed on either has to recognise the ending without being told which
+        follower it attached."""
+        self.group()
+        self.assertRegex(self.follow()[-1],
+                         r"^group\.\w+ group=g done=\d+ failed=\d+")
+
+    def test_since_is_refused_because_a_group_has_no_single_cursor(self):
+        """Every member has its own byte offset into its own file. One integer
+        cannot address them, and accepting it would answer with some member's
+        events silently dropped."""
+        self.group()
+        p = self.bridge_raw("log", "--group", "g", "--since", "10")
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("cursor", json.loads(p.stdout)["error"])
+
+    def test_a_group_and_a_run_cannot_both_be_named(self):
+        self.group()
+        p = self.bridge_raw("log", "--group", "g", "--run", "whatever")
+        self.assertEqual(p.returncode, 2, p.stdout)
+
+
+class AHeartbeatSeparatesABusyRunFromADeadFollower(BridgeTestCase):
+    """`follow_group` already prints `running -> stalled` after 300 idle
+    seconds, so a *dead run* announces itself. What nothing announced was a live
+    follower with nothing to say — and the two look identical from outside,
+    which is what sent a field reporter back to hand-polling.
+
+    Opt-in, because the line means something only to a watcher woken per event.
+    """
+
+    def test_the_group_follower_beats_while_a_member_is_working(self):
+        self.bridge("batch", "start", "--group", "g", "--sandbox", "read-only",
+                    "--task", "a", "--task", "b",
+                    env_extra={"FAKE_CODEX_HANG": "30"})
+        p = self.bridge_raw("status", "--group", "g", "--follow",
+                            "--heartbeat", "1", "--follow-timeout", "4",
+                            timeout=60)
+        beats = [ln for ln in p.stdout.splitlines()
+                 if ln.startswith("still-running ")]
+        self.assertGreaterEqual(len(beats), 2, p.stdout)
+        self.assertRegex(beats[0], r"^still-running elapsed=\d+ running=2$")
+        self.bridge("stop", "--all")
+
+    def test_a_single_runs_follower_beats_too(self):
+        r = self.bridge("start", "x", env_extra={"FAKE_CODEX_HANG": "30"})
+        self.wait_for_state(r["run_id"], ("running",), timeout=30)
+        p = self.bridge_raw("log", "--run", r["run_id"], "--follow",
+                            "--heartbeat", "1", "--follow-timeout", "4",
+                            timeout=60)
+        beats = [ln for ln in p.stdout.splitlines()
+                 if ln.startswith("still-running ")]
+        self.assertGreaterEqual(len(beats), 2, p.stdout)
+        self.assertRegex(beats[0], r"^still-running elapsed=\d+ running=1$")
+        self.bridge("stop", "--all")
+
+    def test_off_by_default(self):
+        r = self.bridge("start", "x", env_extra={"FAKE_CODEX_HANG": "3"})
+        p = self.bridge_raw("log", "--run", r["run_id"], "--follow",
+                            timeout=60)
+        self.assertNotIn("still-running", p.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

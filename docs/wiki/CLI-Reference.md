@@ -92,7 +92,8 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 | `--run <ref>` | Show just one run (by id, prefix, or thread id) |
 | `--thread <thread_id>` | Filter to runs on one thread |
 | `--group <name>` | Show one batch group's members, with a `group_state` of `running`, `completed`, or `partial` |
-| `--follow` | With `--group`: print one line per tick until the group ends, then a terminal `group.completed` / `group.partial` / `group.still-running` line. Arm it in a background Bash call — see Orchestration §7 |
+| `--follow` | With `--group`: print one line per member state change until the group ends, then a terminal group line. Arm it in a background Bash call — see Orchestration §7. For the members' events rather than their states, use `log --group` |
+| `--heartbeat <sec>` | Add a periodic `still-running` line while following |
 | `--all` | Include terminal runs too |
 | `--include-external` | Also list threads Codex knows about for this directory that have no registry entry (e.g. started in the TUI) |
 
@@ -103,12 +104,14 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 ## 6. `log`
 
 ```bash
-$CODEX log --run <ref> [--since <n>] [--level {compact,normal,full,raw}] [--follow] [--follow-timeout <sec>]
+$CODEX log (--run <ref> [--since <n>] | --group <name>) [--level {compact,normal,full,raw}] [--follow] [--follow-timeout <sec>] [--heartbeat <sec>]
 ```
 
 Prints a run's event log, filtered to `--level` (default `compact` — see [Context Discipline & Event Log Levels](Context-Discipline.md)), starting from byte offset `--since` (default `0`). Ends with `# cursor=<n>` — pass that number back as `--since` on the next call to get only new events.
 
 `--follow` polls once a second and streams new events as they arrive, printing a terminal line (`run.completed`, `run.failed`, `run.interrupted`, or `run.orphaned`, each with the exit code) once the run reaches a terminal state, or `run.still-running` if `--follow-timeout` elapses first.
+
+`--group <name>` follows every member of a batch group at once, which is what a session watching a fan-out wants instead of one follower per member. `--heartbeat <sec>` adds a periodic `still-running` line to either follower; it is off by default and only means anything to a watcher woken per event, since a run that has actually gone quiet already shows up as `stalled`. Both flags' exact output shapes are in `log --help`.
 
 ## 7. `show`
 

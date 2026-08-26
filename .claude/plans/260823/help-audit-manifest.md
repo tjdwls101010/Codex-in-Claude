@@ -6,6 +6,8 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 
 **2026-08-26.** The 260826 round retires arguments rather than rewording them, so its rows are marked `remove` here rather than getting a manifest of their own — the finish line this table draws is "every argument a caller can pass has been read", and an argument that no longer exists is read by nobody. `test_the_removals_actually_left` turns each of those rows into a claim about the tree.
 
+The same round adds three — `log --group`, `log --heartbeat`, `status --heartbeat` — and rewords `status --follow`. They are marked `change` on the same reasoning read the other way: the finish line is that every string a caller can reach has been read, and these were written and read in this round rather than carried over unexamined.
+
 `(top level)` is the bridge itself. Arguments repeated across `start`, `resume`, `review` and `batch start` come from one shared block, so a `change` on one of them is the same edit four times — they are listed separately because that is how a caller meets them.
 
 | command | argument | verdict |
@@ -86,15 +88,18 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `status` | `--follow` | change |
 | `status` | `--interval` | remove |
 | `status` | `--follow-timeout` | change |
+| `status` | `--heartbeat` | change |
 | `log` | `-h` | keep |
 | `log` | `--runs-dir` | keep |
 | `log` | `--project` | keep |
 | `log` | `--run` | change |
+| `log` | `--group` | change |
 | `log` | `--since` | keep |
 | `log` | `--level` | change |
 | `log` | `--follow` | change |
 | `log` | `--interval` | remove |
 | `log` | `--follow-timeout` | change |
+| `log` | `--heartbeat` | change |
 | `show` | `-h` | keep |
 | `show` | `--runs-dir` | keep |
 | `show` | `--project` | keep |

@@ -53,6 +53,14 @@ class BridgeTestCase(unittest.TestCase):
         self.env["PATH"] = f"{FAKE_DIR}{os.pathsep}{self.env.get('PATH', '')}"
         self.env["FAKE_CODEX_ARGV_LOG"] = str(self.argv_log)
         self.env["CLAUDE_CODE_SESSION_ID"] = "test-session-aaaa"
+        # Pinned, and empty unless a test writes into it. The bridge reads
+        # `config.toml` for the user's model, effort and service tier, so a
+        # suite that inherited the developer's CODEX_HOME would assert against
+        # whatever that person happens to have configured — green here, red on
+        # a clean checkout, for reasons no diff would explain.
+        self.codex_home = self.tmp / "codex-home"
+        self.codex_home.mkdir()
+        self.env["CODEX_HOME"] = str(self.codex_home)
         if self.fixture:
             self.env["FAKE_CODEX_FIXTURE"] = str(FIXTURES / self.fixture)
 
@@ -76,6 +84,16 @@ class BridgeTestCase(unittest.TestCase):
                         except Exception:
                             pass
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def doctor_rc(self):
+        """`doctor` exits 2 when it has blockers and 0 when it does not; a test
+        that cares about the report body should not also have to predict
+        which."""
+        return self.bridge_raw("doctor").returncode
+
+    def write_codex_config(self, body: str):
+        """The user's `config.toml`, in the CODEX_HOME this case pinned."""
+        (self.codex_home / "config.toml").write_text(body, encoding="utf-8")
 
     # -- invoking the bridge -------------------------------------------------
 

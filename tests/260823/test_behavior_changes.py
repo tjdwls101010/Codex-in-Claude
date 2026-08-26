@@ -199,10 +199,14 @@ class ProjectedCostStatesNoSampleStory(BridgeCase):
 
 class StatusReportsTheTierTheRunIsPayingFor(BridgeCase):
     """7. `run_row` reported `sandbox`, `model`, `effort` and `isolated` and
-    stopped one short of `priority`, so the one recorded setting that costs
-    money was the one nothing read back. A caller could pass `--priority`, be
-    charged the faster tier for every turn on that thread, and find no surface
-    that would say so.
+    stopped one short of the service tier, so the one recorded setting that
+    costs money was the one nothing read back. A caller could pass
+    `--priority`, be charged the faster tier for every turn on that thread, and
+    find no surface that would say so.
+
+    The field carries the tier's own name rather than a boolean since C10, so a
+    run that took `fast` from the user's config.toml reads back as `fast` — the
+    string that was actually sent, not a flag's idea of it.
 
     The row is checked against the argv the fake `codex` was actually handed,
     not against `meta.json`, which is where the row reads from: a claim compared
@@ -235,8 +239,8 @@ class StatusReportsTheTierTheRunIsPayingFor(BridgeCase):
         self.assertTrue(self.injected_tier(),
                         "fixture check: this run was supposed to be pinned to "
                         "the tier and argv says it was not")
-        self.assertIs(
-            self.row(r["run_id"]).get("priority"), True,
+        self.assertEqual(
+            self.row(r["run_id"]).get("service_tier"), "priority",
             "the run was handed the faster tier and `status` does not report "
             "it, so the caller pays for it with no surface saying so")
 
@@ -246,7 +250,7 @@ class StatusReportsTheTierTheRunIsPayingFor(BridgeCase):
         self.assertFalse(self.injected_tier(),
                          "fixture check: --no-priority still injected the tier")
         self.assertIs(
-            self.row(r["run_id"]).get("priority"), False,
+            self.row(r["run_id"]).get("service_tier"), None,
             "`--no-priority` is a recorded choice a resume carries forward; a "
             "row that omits it cannot be told from one that never chose")
 

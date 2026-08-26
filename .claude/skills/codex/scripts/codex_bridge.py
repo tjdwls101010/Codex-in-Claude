@@ -41,8 +41,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
-    codex_version, model_catalog, review_argv,
+    codex_version, config_scalars, model_catalog, review_argv,
     SANDBOX_MODES, THREAD_ID_WAIT, query_threads, state_db_path, supervise,
+    user_defaults,
 )
 from _events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
@@ -694,18 +695,21 @@ def cmd_doctor(args):
 
     cfg = home / "config.toml"
     report["config_toml"] = str(cfg) if cfg.exists() else None
-    cfg_sandbox = cfg_approval = None
-    if cfg.exists():
-        try:
-            txt = cfg.read_text(encoding="utf-8", errors="replace")
-            m = re.search(r'(?m)^\s*sandbox_mode\s*=\s*"?([\w-]+)"?', txt)
-            cfg_sandbox = m.group(1) if m else None
-            m = re.search(r'(?m)^\s*approval_policy\s*=\s*"?([\w-]+)"?', txt)
-            cfg_approval = m.group(1) if m else None
-        except Exception as e:
-            warnings.append(f"could not read config.toml: {e}")
-    report["config_sandbox_mode"] = cfg_sandbox
-    report["config_approval_policy"] = cfg_approval
+    # One reader for config.toml, here and in `create_run` — two would drift,
+    # and this file's own history has that happening twice (R20, R28). It also
+    # fixes what the hand-rolled regex here got wrong: `(?m)^\s*sandbox_mode`
+    # matched a key nested under a `[profiles.…]` table and reported a profile's
+    # value as the top-level one.
+    scalars = config_scalars(("sandbox_mode", "approval_policy"), cfg)
+    report["config_sandbox_mode"] = scalars.get("sandbox_mode")
+    report["config_approval_policy"] = scalars.get("approval_policy")
+    cfg_sandbox = report["config_sandbox_mode"]
+    # What a run with no --model/--effort/--priority would actually be handed.
+    # It was answerable only by starting one and reading its argv, and the spec
+    # carried "the model a run actually uses when none is named" as an open
+    # item for three weeks because of that. `sandbox_mode` is absent on purpose:
+    # this wrapper never reads it from here.
+    report["effective_defaults"] = user_defaults()
     if cfg_sandbox == "danger-full-access":
         warnings.append(
             'config.toml sets sandbox_mode = "danger-full-access". `codex exec resume` '
@@ -1029,18 +1033,19 @@ def add_run_options(p, *, kind, foreground=True):
                    help="model slug. Checked against this install's catalog "
                         "before the run spawns when that catalog can be read, "
                         "and not at all when it cannot — never fail-closed; "
-                        "`models` prints it. Unset on a fresh thread nothing is "
-                        "pinned and Codex picks; on a resumed one the recorded "
-                        "model is re-asserted.")
+                        "`models` prints it. Four steps decide it when this is "
+                        "unset: what a resumed thread recorded, then your "
+                        "config.toml's `model`, then nothing at all and the "
+                        "server picks. `doctor` prints which of those applies "
+                        "here as effective_defaults.")
     p.add_argument("--effort",
                    help="reasoning effort. Valid values differ per model — "
                         "`models` prints each model's, with its default, and "
                         "omitting this is not the same as passing `medium`. "
-                        "Unset on a fresh isolated thread nothing at all is "
-                        "sent and the server applies that model's own default; "
-                        "unset under --inherit-config the user's config.toml "
-                        "may supply one. On a resume the recorded effort is "
-                        "re-asserted.")
+                        "Unset it follows the same four steps as --model, "
+                        "reading `model_reasoning_effort` from your "
+                        "config.toml; with nothing to read, nothing is sent "
+                        "and the server applies that model's own default.")
     p.add_argument("--inherit-config", action="store_true",
                    help="load the user's config.toml: their MCP servers, "
                         "plugins, agent roles and hooks. Off by default — a "
@@ -1048,19 +1053,21 @@ def add_run_options(p, *, kind, foreground=True):
                         "whatever its thread recorded. Auth is unaffected "
                         "either way, coming from auth.json.")
     p.add_argument("--priority", dest="priority", action="store_true", default=None,
-                   help="inject service_tier=\"priority\" — the tier Codex "
+                   help="force service_tier=\"priority\" — the tier Codex "
                         "labels \"Fast mode\" and its config.toml spells "
-                        "\"fast\". Ignoring the user's config would otherwise "
-                        "silently drop it. Unset, it follows isolation on a "
-                        "fresh thread or a flipped one, and otherwise carries "
-                        "forward what was recorded.")
+                        "\"fast\"; both names are advertised and both were "
+                        "measured to run clean. Only needed to override: "
+                        "unset, an isolated run already takes whatever "
+                        "service_tier your config.toml sets, and a resumed one "
+                        "carries forward what its thread recorded.")
     p.add_argument("--no-priority", dest="priority", action="store_false",
-                   help="omit service_tier rather than injecting it, and "
-                        "record that choice. That stops this wrapper "
-                        "re-adding Fast mode; a config the run inherited can "
-                        "still set it, because omitting the key is not the "
-                        "same as forcing the standard tier — which is the "
-                        "server's default anyway. Refused alongside "
+                   help="send no service_tier at all, and record that choice "
+                        "so later turns on the thread do not re-add Fast "
+                        "mode. That "
+                        "is not the same as forcing the standard tier — "
+                        "omitting the key leaves the server's own default, and "
+                        "a run under --inherit-config can still pick the tier "
+                        "up from your config.toml. Refused alongside "
                         "--priority.")
     p.add_argument("--schema",
                    help="path to a JSON Schema file handed to Codex. "

@@ -22,14 +22,14 @@ Every subcommand accepts:
 | `--model <str>` | Override the model for this run |
 | `--effort <str>` | Reasoning effort, passed through as `model_reasoning_effort` |
 | `--inherit-config` | Load the user's own `$CODEX_HOME/config.toml` instead of isolating |
-| `--priority` / `--no-priority` | Force `service_tier="priority"` — the tier Codex labels "Fast mode" — re-injection on or off. Unset, it is derived per run; see `start --help` |
+| `--priority` / `--no-priority` | Force `service_tier="priority"` — the tier Codex labels "Fast mode" — on or off. Unset, an isolated run takes whatever `service_tier` your `config.toml` sets; see `start --help` |
 | `--schema <path>` | Path to a JSON schema file; the run's final message must validate against it |
 | `--foreground` | Block until the run finishes instead of returning immediately |
 | `--timeout <seconds>` | Give the run this long, then SIGINT its process group and record `timed_out`. Works in the background too |
 
 A `start` or `resume` that can write to a directory another live writing run already occupies returns `concurrent_writers` naming them. Reported, never refused — sharing a directory is sometimes what you meant, but it is not something you can otherwise see. Runs in their own worktrees never appear there.
 
-Defaults across all of them: **background**, `workspace-write`, isolated from the user's own Codex config, `service_tier=priority` re-injected under isolation, no model or reasoning effort pinned, no hard timeout.
+Defaults across all of them: **background**, `workspace-write`, isolated from the user's own Codex config except for the three keys it re-injects (`model`, `model_reasoning_effort`, `service_tier` — `doctor` prints them as `effective_defaults`), no hard timeout.
 
 ## 2. `start`
 
@@ -96,7 +96,7 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 | `--all` | Include terminal runs too |
 | `--include-external` | Also list threads Codex knows about for this directory that have no registry entry (e.g. started in the TUI) |
 
-**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `priority`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
+**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `service_tier`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
 
 **Top level:** `project`, `runs_dir`, `runs`, `threads` (thread id → run ids), `groups` (every batch group in this project), `running` (currently `running`/`stalled` run ids); with `--include-external`: `external_threads` and an explanatory `external_note`. A run that belongs to a group carries `group`, and one with a worktree carries `worktree` — together these are what let a session find and address a batch it did not start.
 
@@ -184,7 +184,7 @@ Refuses without `--force` when the group still has running members, when another
 $CODEX doctor
 ```
 
-Diagnoses the environment in one call, including what batches leave behind — registry size and run count, the project's groups, residual worktrees, and any set of live runs sharing one directory where at least one can write. It also covers: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, and whether Codex's thread database is readable.
+Diagnoses the environment in one call, including what batches leave behind — registry size and run count, the project's groups, residual worktrees, and any set of live runs sharing one directory where at least one can write. It also covers: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, `effective_defaults` (the `model`, `model_reasoning_effort` and `service_tier` an unnamed run would actually use), the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, and whether Codex's thread database is readable.
 
 Exits `0` when healthy, `2` when there's a **blocker** (missing `codex`, failed auth, missing `CODEX_HOME`, unwritable runs dir, Python below 3.10) — which makes it usable directly in a shell conditional. Non-fatal issues are reported separately as **warnings** (e.g. `config.toml` set to `danger-full-access`, a project `AGENTS.md` present, an unreadable thread database).
 

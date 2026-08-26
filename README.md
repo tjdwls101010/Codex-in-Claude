@@ -32,7 +32,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 - **Background by default** — `start` returns a `run_id`/`thread_id` immediately instead of blocking; check back in whenever it's convenient.
 - **Sandbox stability across turns** — every `resume` re-asserts the sandbox, model, and reasoning effort its thread was created with. See [Sandbox Stability](docs/wiki/Sandbox-Stability.md).
-- **Fast mode survives isolation** — Codex's Fast mode is a `service_tier` setting that lives in the user's config, so an isolated run would drop it. Isolated runs re-inject it by default, and `--no-priority` stops the re-injection. See [CLI Reference](docs/wiki/CLI-Reference.md).
+- **Your Codex defaults survive isolation** — `--ignore-user-config` drops `config.toml` whole, so an isolated run would lose the model, reasoning effort and Fast mode you configured and take the server's defaults instead. Three keys are read back out of the file and re-injected; an explicit flag still wins, and a resumed thread re-asserts what it recorded rather than what the file says now. `sandbox_mode` is deliberately not one of them. See [CLI Reference](docs/wiki/CLI-Reference.md).
 - **A filtered live event log** — four verbosity levels (`compact` by default, `normal`, `full`, `raw`), with the default chosen from real measurements rather than a guess. See [Context Discipline & Event Log Levels](docs/wiki/Context-Discipline.md).
 - **Stop, then redirect** — interrupt a run mid-task and continue it on the same thread with new instructions. `stop` always targets a run's own process group, never a process by name, so concurrent runs never interfere with each other.
 - **Resume any thread** — including ones started outside this plugin, directly in the Codex TUI.
@@ -137,7 +137,7 @@ See [Getting Started](docs/wiki/Getting-Started.md) for a fuller walkthrough, an
 
 `status`, `result` and `stop` also take `--group <name>` to address a whole batch at once.
 
-Defaults: background execution, `workspace-write` sandbox, isolated from your own Codex config (`--ignore-user-config`), no fixed model or reasoning effort, no hard timeout.
+Defaults: background execution, `workspace-write` sandbox, isolated from your own Codex config (`--ignore-user-config`) apart from the three keys above, no hard timeout.
 
 By default, a command's actual output never reaches Claude's context — only its size does:
 

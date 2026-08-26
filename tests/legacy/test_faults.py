@@ -148,10 +148,10 @@ class ABatchKilledWhileSpawning(FaultTestCase):
 
 
 def doctor_rc(case):
-    """`doctor` exits 2 when it has blockers and 0 when it does not; a test that
-    cares about the report body should not also have to predict which."""
-    p = case.bridge_raw("doctor")
-    return p.returncode
+    """Kept as a function because this module's call sites read that way; the
+    implementation is `BridgeTestCase.doctor_rc`, because two of them would
+    drift (R20)."""
+    return case.doctor_rc()
 
 
 class WhenOnlyOneHalfOfARunDies(FaultTestCase):

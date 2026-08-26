@@ -26,7 +26,8 @@ class ArgvComposition(BridgeTestCase):
         self.assertIn("--json", argv)
         self.assertIn("--ignore-user-config", argv, "isolated is the default (D2)")
         self.assertIn('sandbox_mode="workspace-write"', argv, "D3 default sandbox")
-        self.assertIn('service_tier="priority"', argv, "D18: re-injected under isolation")
+        self.assertFalse([a for a in argv if a.startswith("service_tier=")],
+                         "B41: no tier of the skill's own — see UserDefaultsSurviveIsolation")
         self.assertNoFlag(argv, "-s", "--sandbox", "-C", "--cd")
 
     def test_no_model_or_effort_pinned_by_default(self):
@@ -378,6 +379,7 @@ class FlagsNothingElseCovers(BridgeTestCase):
         """`--isolate` used to state this explicitly. It is the default, so the
         flag only ever agreed with what was already happening — and on a resume
         it re-asserted a recorded choice with no way back."""
+        self.write_codex_config('service_tier = "priority"\n')
         out = self.bridge("start", "x")
         self.wait_for_state(out["run_id"])
         self.assertTrue(out["isolated"])
@@ -439,6 +441,137 @@ class FlagsNothingElseCovers(BridgeTestCase):
         self.assertEqual(row["run_id"], out["run_id"])
 
 
+class UserDefaultsSurviveIsolation(BridgeTestCase):
+    """C10 — isolation drops the user's `config.toml`, and three of its keys go
+    back in.
+
+    `--ignore-user-config` is the default and it takes the whole file, so an
+    unnamed run took Codex's *server* default rather than the model the user
+    configured. Twenty-one benchmark sessions were measured that way: not one
+    argv carried a model or an effort, which is this spec's own long-standing
+    open item — "the model a run actually uses when none is named" — with an
+    answer at last.
+
+    Exactly three keys, and `sandbox_mode` is deliberately not among them: that
+    one is the invariant this skill owns, and reading it from a file the caller
+    can edit is R24 arriving by a different road. Precedence has four steps —
+    an explicit flag, then whatever a resumed thread recorded, then the config
+    file, then whatever the server does with silence.
+    """
+
+    CONFIG = ('model = "fake-big"\n'
+              'model_reasoning_effort = "high"\n'
+              'service_tier = "fast"\n')
+
+    def test_the_three_keys_reach_a_fresh_isolated_run(self):
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertFlagPair(argv, "-m", "fake-big")
+        self.assertIn('model_reasoning_effort="high"', argv)
+        self.assertIn('service_tier="fast"', argv)
+
+    def test_the_tier_goes_over_the_wire_as_the_config_spells_it(self):
+        """Measured against codex-cli 0.149.1 by V-02's own method: `fast` and
+        `priority` both run clean, while `bogus_tier_xyz` produces an explicit
+        "not advertised as supported" error event. Both names are advertised,
+        so the config's own spelling is passed through rather than translated —
+        a translation nobody measured is a second thing that can be wrong."""
+        self.write_codex_config('service_tier = "fast"\n')
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        self.assertIn('service_tier="fast"', self.last_argv())
+
+    def test_an_explicit_flag_beats_the_config(self):
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "--model", "fake-small", "--effort", "medium",
+                        "--no-priority", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertFlagPair(argv, "-m", "fake-small")
+        self.assertIn('model_reasoning_effort="medium"', argv)
+        self.assertNotIn("service_tier", " ".join(argv))
+
+    def test_a_resume_reasserts_the_thread_not_the_config_as_it_is_now(self):
+        """B3's rule, applied to one more setting. A thread's settings are
+        stable across turns because the registry re-asserts what it recorded —
+        so editing `config.toml` mid-thread must not move a running
+        conversation onto another model."""
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        self.write_codex_config('model = "fake-small"\n'
+                                'model_reasoning_effort = "low"\n')
+        r2 = self.bridge("resume", r["run_id"], "second turn")
+        self.wait_for_state(r2["run_id"])
+        argv = self.argv_records()[-1]["argv"]
+        self.assertFlagPair(argv, "-m", "fake-big")
+        self.assertIn('model_reasoning_effort="high"', argv)
+
+    def test_sandbox_mode_is_never_taken_from_the_config(self):
+        """The fourth key this wrapper owns, and the one it will not read. A
+        config the caller can edit deciding the sandbox is R24 by another
+        road — `--config` is gone precisely so that cannot happen."""
+        self.write_codex_config('sandbox_mode = "danger-full-access"\n'
+                                'model = "fake-big"\n')
+        r = self.bridge("start", "--sandbox", "read-only", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertIn('sandbox_mode="read-only"', argv)
+        self.assertNotIn("danger-full-access", " ".join(argv))
+        self.assertEqual(
+            [t for t in argv if t.startswith("sandbox_mode=")],
+            ['sandbox_mode="read-only"'],
+            "exactly one sandbox_mode reaches codex, and it is the run's own")
+
+    def test_inheriting_the_config_does_not_re_inject_it(self):
+        """Under `--inherit-config` Codex reads the file itself, so putting the
+        same three keys back would be this wrapper restating what it just chose
+        not to suppress."""
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "--inherit-config", "x")
+        self.wait_for_state(r["run_id"])
+        argv = " ".join(self.last_argv())
+        self.assertNotIn("--ignore-user-config", argv)
+        self.assertNotIn("model_reasoning_effort", argv)
+        self.assertNotIn("service_tier", argv)
+        self.assertNotIn("-m", self.last_argv())
+
+    def test_no_config_means_nothing_is_pinned(self):
+        """D40 unchanged: the skill has no defaults of its own. With nothing to
+        respect, it asserts nothing and the server decides."""
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertNotIn("-m", argv)
+        self.assertNotIn("model_reasoning_effort", " ".join(argv))
+        self.assertNotIn("service_tier", " ".join(argv))
+
+    def test_a_model_the_install_does_not_offer_is_refused_before_spawning(self):
+        """D38's catalog check follows the value rather than the flag. A model
+        retired upstream sits in `config.toml` until someone edits it, and
+        without this the first thing that notices is a wasted run coming back
+        `turn.failed`."""
+        self.write_codex_config('model = "retired-last-year"\n')
+        out = self.bridge("start", "x", expect_rc=1)
+        self.assertIn("retired-last-year", out["error"])
+        self.assertIn("config.toml", out["error"])
+        runs = self.project / ".codex-runs"
+        self.assertEqual([p for p in runs.iterdir() if p.is_dir()] if runs.is_dir() else [],
+                         [], "a refused run must not claim a directory first")
+
+    def test_doctor_says_what_a_run_would_actually_use(self):
+        """The report is where a caller checks a premise before acting on it,
+        and "which model does an unnamed run take" was answerable only by
+        starting one and reading its argv."""
+        self.write_codex_config(self.CONFIG)
+        rep = self.bridge("doctor", expect_rc=self.doctor_rc())
+        self.assertEqual(rep["effective_defaults"],
+                         {"model": "fake-big", "effort": "high",
+                          "service_tier": "fast"})
+
+
 class RetiredFlags(BridgeTestCase):
     """Five flags left in the 260826 round, and a flag that is gone has to be
     gone from the parser rather than merely undocumented.
@@ -494,4 +627,4 @@ class RetiredFlags(BridgeTestCase):
         self.wait_for_state(out["run_id"])
         argv = self.last_argv()
         keys = [argv[i + 1].split("=", 1)[0] for i, t in enumerate(argv) if t == "-c"]
-        self.assertEqual(sorted(keys), ["sandbox_mode", "service_tier"])
+        self.assertEqual(sorted(keys), ["sandbox_mode"])

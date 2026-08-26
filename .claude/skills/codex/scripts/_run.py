@@ -26,7 +26,7 @@ from pathlib import Path
 
 from _codex import (
     SANDBOX_MODES, THREAD_ID_WAIT, apply_preamble, build_argv,
-    check_model_effort, model_catalog, spawn_supervised, supervise,
+    check_model_effort, model_catalog, spawn_supervised, supervise, user_defaults,
 )
 from _events import first_thread_id, scan_progress
 from _registry import (
@@ -296,20 +296,6 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     if kind != "review" and not prompt.strip():
         fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
 
-    # Before anything is claimed on disk, which is the same placement every
-    # refusal in this stage has. Two things about this call are deliberate. It reads
-    # `args` rather than the resolved values computed below, so a model or
-    # effort inherited from the thread being resumed is never re-checked —
-    # otherwise a model retired upstream would turn every resume of that thread
-    # into a refusal. And it is guarded rather than left to
-    # `check_model_effort`'s own early return, because the catalog argument is
-    # evaluated first: calling it unconditionally spawns a `codex debug models`
-    # subprocess on the critical path of every run, including the overwhelming
-    # majority that name neither and have nothing to check.
-    if getattr(args, "model", None) or getattr(args, "effort", None):
-        check_model_effort(args.model, args.effort,
-                           catalog=model_catalog(), fail=fail)
-
     if kind == "resume" and not thread_ref:
         # `build_argv` omits the ref when there is none, producing a bare
         # `codex exec resume` that fails asynchronously — after this command
@@ -329,20 +315,57 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
         isolated = False
 
     sandbox = args.sandbox or (base["sandbox"] if base else "workspace-write")
-    if getattr(args, "priority", None) is not None:
-        priority = args.priority
-    elif base and isolated == base["isolated"]:
-        # Isolation state unchanged from the parent: inherit its priority like
-        # every other recorded setting.
-        priority = base.get("priority")
+
+    # Model, effort and service tier, in four steps: an explicit flag, then
+    # whatever the thread recorded if its isolation has not changed, then the
+    # user's `config.toml`, then whatever the server does with silence.
+    #
+    # Step two is the one worth naming. An empty record is a record: a thread
+    # that ran on the server's default keeps running on it, whatever
+    # `config.toml` says by the time it is resumed. That is B3's stability
+    # rule, and it is why this is not an `or` chain — `or` cannot tell
+    # "recorded nothing" from "has nothing recorded yet".
+    #
+    # `user_defaults` is consulted only under isolation, exactly as the tier
+    # always has been: `--ignore-user-config` is what removed those values, and
+    # under `--inherit-config` Codex reads the same file itself, so putting
+    # them back would be this wrapper restating what it chose not to suppress.
+    inherits = bool(base) and isolated == base["isolated"]
+    user = {} if inherits or not isolated else user_defaults()
+    model = args.model or (base.get("model") if inherits else user.get("model"))
+    effort = args.effort or (base.get("effort") if inherits else user.get("effort"))
+    if getattr(args, "priority", None) is True:
+        tier = "priority"
+    elif getattr(args, "priority", None) is False:
+        tier = None
+    elif inherits:
+        tier = base.get("service_tier")
     else:
-        # No base, or --inherit-config just flipped isolation: priority is only
-        # re-injected to undo what isolation removed, so it follows the new
-        # isolation state rather than carrying over the parent's value.
-        priority = isolated
+        tier = user.get("service_tier")
+
+    # D38's catalog check, and it follows the *value* rather than the flag.
+    # What must never be re-checked is a value inherited from the thread being
+    # resumed — a model retired upstream would otherwise turn every resume of
+    # that thread into a refusal, breaking the continuity `resume` exists for.
+    # Everything else is being adopted here for the first time, and a
+    # `config.toml` nobody has edited in a year is exactly where a retired
+    # model sits waiting.
+    #
+    # Guarded rather than left to `check_model_effort`'s own early return,
+    # because the catalog argument is evaluated first: calling it
+    # unconditionally spawns a `codex debug models` subprocess on the critical
+    # path of every run, including the ones that pin nothing.
+    fresh_model = args.model or user.get("model")
+    fresh_effort = args.effort or user.get("effort")
+    if fresh_model or fresh_effort:
+        check_model_effort(
+            fresh_model, fresh_effort, catalog=model_catalog(), fail=fail,
+            model_source=None if args.model else "config.toml",
+            effort_source=None if args.effort else "config.toml")
 
     return {"cwd": cwd, "prompt": prompt, "isolated": isolated,
-            "sandbox": sandbox, "priority": priority}
+            "sandbox": sandbox, "model": model, "effort": effort,
+            "service_tier": tier}
 
 
 def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group,
@@ -403,10 +426,10 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group,
             "cwd": str(s["cwd"]),
             "project": str(project),
             "sandbox": s["sandbox"],
-            "model": args.model or (base.get("model") if base else None),
-            "effort": args.effort or (base.get("effort") if base else None),
+            "model": s["model"],
+            "effort": s["effort"],
             "isolated": s["isolated"],
-            "priority": s["priority"],
+            "service_tier": s["service_tier"],
             "schema_path": (str(Path(args.schema).expanduser().resolve())
                             if getattr(args, "schema", None)
                             else (base.get("schema_path") if base else None)),
@@ -666,7 +689,12 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         "exit_code": meta.get("exit_code"), "sandbox": meta.get("sandbox"),
         "model": meta.get("model"), "effort": meta.get("effort"),
         "isolated": meta.get("isolated"),
-        "priority": meta.get("priority"),
+        # The one recorded setting that costs money, so it is read back rather
+        # than only written. Its value is the tier's own name — the config
+        # file's spelling, passed through — not a boolean, so `fast` and
+        # `priority` show as what they are: two advertised names, both measured
+        # to run clean over `-c`.
+        "service_tier": meta.get("service_tier"),
         "cwd": meta.get("cwd"),
         "usage": None if review_zero else usage,
         "turns_completed": info["turns_completed"], "commands": info["commands"],

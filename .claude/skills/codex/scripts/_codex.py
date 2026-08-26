@@ -48,6 +48,69 @@ def toml_cfg(key: str, value: str):
     return ["-c", f'{key}="{value}"']
 
 
+# -- the user's own defaults ------------------------------------------------
+# Isolation is the default and `--ignore-user-config` takes the whole file, so
+# for a year an unnamed run took Codex's *server* default rather than the model
+# the user had configured. Measured across 21 benchmark sessions: not one argv
+# carried a model or an effort.
+#
+# These three keys go back in. `sandbox_mode` is deliberately not among them —
+# it is the invariant this skill owns and re-asserts on every turn, and reading
+# it from a file the caller can edit is R24 arriving by another road. The
+# principle is not "the skill has defaults" but "the skill has none of its own
+# and respects the user's": policy lives in the user's file, and the edit path
+# is Codex's own `/model` and `/fast`.
+USER_DEFAULT_KEYS = ("model", "model_reasoning_effort", "service_tier")
+
+# `key = value` at the top level. A regex and not a TOML parser because
+# `tomllib` is 3.11 and this skill's floor is 3.10.
+_SCALAR_RE = re.compile(
+    r"""^([A-Za-z_][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s#]+))""")
+
+
+def config_scalars(keys, path=None):
+    """Named top-level scalars from `config.toml`, as strings.
+
+    The scan stops at the first `[table]` header, and that is the load-bearing
+    part rather than an optimisation: `model` under `[profiles.work]` is a
+    different setting from the top-level one, and Codex applies the top-level
+    value unless a profile is selected — which this wrapper never does. A
+    pattern that matched anywhere in the file would silently adopt a profile's
+    model for every run.
+
+    Every failure answers `{}`: an unreadable or absent config means there is
+    nothing to respect, not that a run should be refused.
+    """
+    path = Path(path) if path else codex_home() / "config.toml"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            break
+        m = _SCALAR_RE.match(s)
+        if not m or m.group(1) not in keys:
+            continue
+        out[m.group(1)] = next(g for g in m.groups()[1:] if g is not None)
+    return out
+
+
+def user_defaults():
+    """`{model, effort, service_tier}` from the user's `config.toml`.
+
+    Read fresh rather than cached: a `batch start` reads it once per member and
+    the file is a few hundred bytes, while a cache would mean the value a run
+    records depends on how long the process had been alive.
+    """
+    raw = config_scalars(USER_DEFAULT_KEYS)
+    return {"model": raw.get("model"),
+            "effort": raw.get("model_reasoning_effort"),
+            "service_tier": raw.get("service_tier")}
+
+
 # -- the model catalog ------------------------------------------------------
 # Nothing about models or efforts is written down in this skill. It is asked of
 # Codex, because both lists move: `--model` is not pinned for the reason D19
@@ -146,7 +209,8 @@ def model_catalog():
     return _CATALOG_CACHE[0]
 
 
-def check_model_effort(model, effort, *, catalog, fail):
+def check_model_effort(model, effort, *, catalog, fail, model_source=None,
+                       effort_source=None):
     """Refuse a model or effort this Codex install does not offer.
 
     Only values the caller just passed reach here — never one inherited from
@@ -162,12 +226,19 @@ def check_model_effort(model, effort, *, catalog, fail):
 
     `fail` is passed in for the same reason `review_argv` takes it: the CLI
     exits, a batch member raises inside `failures_raise`.
+
+    The two `*_source` strings name where a value came from when it was not
+    typed on the command line, and they are per value rather than shared: with
+    a `--model` flag and an effort taken from `config.toml`, blaming both on
+    the config would send the caller to edit a file that is not the problem.
     """
     if not catalog or (not model and not effort):
         return
+    ms = f" (from {model_source})" if model_source else ""
+    es = f" (from {effort_source})" if effort_source else ""
     by_slug = {m["slug"]: m for m in catalog}
     if model and model not in by_slug:
-        fail(f"unknown model {model!r}: this Codex install does not offer it. "
+        fail(f"unknown model {model!r}{ms}: this Codex install does not offer it. "
              f"The catalog refreshes on any Codex run, so if this name is newer "
              f"than your last run, start one and retry.",
              known_models=sorted(by_slug),
@@ -177,7 +248,7 @@ def check_model_effort(model, effort, *, catalog, fail):
     if model:
         allowed = by_slug[model]["efforts"]
         if allowed and effort not in allowed:
-            fail(f"model {model!r} does not accept effort {effort!r} — valid "
+            fail(f"model {model!r} does not accept effort {effort!r}{es} — valid "
                  f"efforts differ per model.", model=model, valid_efforts=allowed,
                  default_effort=by_slug[model].get("default_effort"))
         return
@@ -186,7 +257,8 @@ def check_model_effort(model, effort, *, catalog, fail):
     # API exactly as it is today. No new hole, one fewer.
     union = sorted({e for m in catalog for e in m["efforts"]})
     if union and effort not in union:
-        fail(f"unknown effort {effort!r}: no model in this Codex install accepts it.",
+        fail(f"unknown effort {effort!r}{es}: no model in this Codex install "
+             f"accepts it.",
              valid_efforts=union,
              hint="efforts are per-model; `models` shows which model takes which")
 
@@ -267,8 +339,8 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
     # Invariant 1.
     argv += toml_cfg("sandbox_mode", meta["sandbox"])
 
-    if meta.get("priority"):
-        argv += toml_cfg("service_tier", "priority")
+    if meta.get("service_tier"):
+        argv += toml_cfg("service_tier", meta["service_tier"])
     if meta.get("effort"):
         argv += toml_cfg("model_reasoning_effort", meta["effort"])
 

@@ -72,7 +72,7 @@ FACTS = {
     # to one of them: a shared "Fast mode" would keep passing after the name was
     # dropped from one flag, which is what a trial deletion actually showed.
     "both priority flags name the tier Codex calls Fast mode": (
-        "start", ['labels "Fast mode"', "re-adding Fast mode", "service_tier"]),
+        "start", ['labels "Fast mode"', "re-add Fast mode", "service_tier"]),
     "the output contract and both of its exceptions": (
         "", ["one line of JSON", "log", "status --group --follow"]),
 }

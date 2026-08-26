@@ -34,6 +34,12 @@ Twenty-one headless sessions were run before a line of this was written, each on
 
 - **`batch start --worktree` names what the checkouts do not have.** A worktree is `git worktree add` output — tracked files at the base commit and nothing else — so `.venv`, provider caches and fixture directories are all absent. Reproduced directly: `.venv/bin/python` planted in a fixture, two worktree members asked to `ls .venv/bin`, both `No such file or directory`. The reply now carries `missing_ignored` listing what this tree actually has, at the moment the checkouts are cut, since that is the last point where the caller could still act on it. The tool's own run registry is left out — it gitignores itself, and a checkout not having it is neither news nor actionable.
 
+- **SKILL.md now sets Codex beside Claude's own delegation instruments.** Twenty-one sessions were graded against `Agent`, `Workflow` and agent teams as a control rather than as a norm, and what a caller could not get from any `--help` was the comparison itself. A three-row table says, per instrument, what the close equivalent here is, what extra premise it carries, and what has no equivalent at all — `Agent`'s harness holding your turn, a workflow computing round two from all of round one, a team's members addressing each other. The batch/workflow analogy it replaces led with the correspondence and put the limits after it; this leads with the limit.
+
+- **Choosing a shape is now two axes rather than four comparisons.** How many runs and how you address them, and whether anything has to be computed between rounds. A read-only fan-out is a batch for the first reason, and a round whose prompts come from the previous round's results leaves the tool entirely for the second.
+
+- **The one-turn waiting rule covers every way of arming.** It named the follower, so a session that armed a Monitor instead read the exception, did parallel work, and still ended the turn on a promise — as did one that armed a follower. The rule is now the property rather than the instrument: if you cannot name the thing that would wake you, do the parallel work first and make the turn's last call a blocking foreground `--follow`. Choosing between one notification and one per event is stated as a criterion in the same section instead of as an exception.
+
 ### Fixed
 
 Four defects found by adversarial review of this release's own commits, each reproduced before it was fixed.

@@ -41,18 +41,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
-    codex_version, model_catalog, review_argv,
+    codex_version, config_scalars, model_catalog, review_argv,
     SANDBOX_MODES, THREAD_ID_WAIT, query_threads, state_db_path, supervise,
+    user_defaults,
 )
 from _events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
-    FULL_ITEM_BYTES, LEVELS, find_item, format_events, read_events,
-    scan_progress, strip_wrapper,
+    FOLLOW_INTERVAL, FULL_ITEM_BYTES, LEVELS, find_item, format_events,
+    read_events, scan_progress, strip_wrapper,
 )
 from _batch import (  # noqa: E402
     TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
-    group_snapshot, list_groups, resolve_group, unstarted_members,
-    vanished_members,
+    follow_group_log, group_snapshot, heartbeat_due, list_groups, resolve_group,
+    unstarted_members, vanished_members,
 )
 from _worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
@@ -265,18 +266,15 @@ def cmd_status(args):
         fail("--follow needs --group; a group is what has an end to wait for. "
              "To watch one run, use `log --run <id> --follow`, which streams its "
              "events and ends on the run's terminal line.",
-             run=args.run, interval=args.interval)
-    # Same failure one step further out: these two only shape a follow, so
-    # passing either without `--follow` is an instruction that quietly does
-    # nothing. `--interval` compares against its default rather than None
-    # because argparse fills it in whether or not the caller typed it.
-    unused = [n for n, v in (("--interval", args.interval != 1.0),
-                             ("--follow-timeout", args.follow_timeout is not None))
-              if v]
-    if unused and not args.follow:
-        fail(f"{' and '.join(unused)} only shape a --follow, and there is no "
-             f"--follow here, so nothing would use them.",
+             run=args.run)
+    # Same failure one step further out: `--follow-timeout` only shapes a
+    # follow, so passing it without `--follow` is an instruction that quietly
+    # does nothing.
+    if args.follow_timeout is not None and not args.follow:
+        fail("--follow-timeout only shapes a --follow, and there is no --follow "
+             "here, so nothing would use it.",
              follow=args.follow, group=args.group)
+    refuse_unusable_heartbeat(args)
     rows = []
     if args.run:
         rd, m = find_run(runs_dir, args.run)
@@ -364,9 +362,43 @@ def cmd_status(args):
 # log / show
 # --------------------------------------------------------------------------
 
+def refuse_unusable_heartbeat(args):
+    """A beat only a follower can emit, at an interval only a positive number
+    can name.
+
+    Both are refusals rather than silent no-ops for C4's reason: a flag that
+    parses and decides nothing reads as having been obeyed. `--heartbeat 0`
+    especially — it looks like "off", and off is what omitting it already does.
+    """
+    beat = getattr(args, "heartbeat", None)
+    if beat is None:
+        return
+    if not args.follow:
+        fail("--heartbeat is a line a follower prints while it follows, and "
+             "there is no --follow here, so nothing would print it.")
+    if beat <= 0:
+        fail("--heartbeat is an interval in seconds and has to be positive; "
+             "omitting it is how a follower stays quiet.", heartbeat=beat)
+
+
 def cmd_log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    refuse_unusable_heartbeat(args)
+    if args.group:
+        if args.since is not None:
+            # Refused rather than given some collapsed meaning: every member has
+            # its own byte offset into its own file, and one integer applied to
+            # all of them answers with some member's events silently dropped —
+            # which is the failure `--since`'s own out-of-range guard exists to
+            # prevent, arriving by another road.
+            fail("--since is one cursor and a group has one per member, each a "
+                 "byte offset into its own file. `log --run <id> --since` is "
+                 "where a cursor belongs; a group follower re-reads from the "
+                 "start of each stream instead.",
+                 group=args.group)
+        follow_group_log(args, project, runs_dir)
+        return
     if args.run:
         rd, meta = find_run(runs_dir, args.run)
         refuse_unresolved_run(args.run, rd, meta, runs_dir)
@@ -383,7 +415,11 @@ def cmd_log(args):
     events_path = rd / "events.jsonl"
     rel_to = Path(meta.get("cwd") or project)
     run_id = meta.get("run_id")
-    cursor = args.since
+    # `None` rather than `0` as the default, so that "not passed" and "passed
+    # zero" are two answers: a group refuses the flag, and refusing it only
+    # when the value was truthy accepted `--since 0` into a command that has no
+    # single cursor to apply it to.
+    cursor = args.since or 0
 
     def dump(cur):
         try:
@@ -403,7 +439,9 @@ def cmd_log(args):
     # --follow must emit terminal states, not only progress. A monitor that
     # prints happy-path lines only is silent through a crash, and silence is
     # indistinguishable from "still working".
-    deadline = time.time() + args.follow_timeout if args.follow_timeout else None
+    started = time.time()
+    beat_at = started
+    deadline = started + args.follow_timeout if args.follow_timeout else None
     while True:
         cursor = dump(cursor)
         sys.stdout.flush()
@@ -419,12 +457,18 @@ def cmd_log(args):
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
-        if deadline and time.time() > deadline:
+        now = time.time()
+        if deadline and now > deadline:
             sys.stdout.write(f"run.still-running run={m.get('run_id')} state={st}\n")
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
-        time.sleep(args.interval)
+        beat, beat_at = heartbeat_due(beat_at, args.heartbeat, now)
+        if beat:
+            sys.stdout.write(f"still-running elapsed={int(now - started)} "
+                             f"running=1\n")
+            sys.stdout.flush()
+        time.sleep(FOLLOW_INTERVAL)
 
 
 def cmd_show(args):
@@ -698,18 +742,21 @@ def cmd_doctor(args):
 
     cfg = home / "config.toml"
     report["config_toml"] = str(cfg) if cfg.exists() else None
-    cfg_sandbox = cfg_approval = None
-    if cfg.exists():
-        try:
-            txt = cfg.read_text(encoding="utf-8", errors="replace")
-            m = re.search(r'(?m)^\s*sandbox_mode\s*=\s*"?([\w-]+)"?', txt)
-            cfg_sandbox = m.group(1) if m else None
-            m = re.search(r'(?m)^\s*approval_policy\s*=\s*"?([\w-]+)"?', txt)
-            cfg_approval = m.group(1) if m else None
-        except Exception as e:
-            warnings.append(f"could not read config.toml: {e}")
-    report["config_sandbox_mode"] = cfg_sandbox
-    report["config_approval_policy"] = cfg_approval
+    # One reader for config.toml, here and in `create_run` — two would drift,
+    # and this file's own history has that happening twice (R20, R28). It also
+    # fixes what the hand-rolled regex here got wrong: `(?m)^\s*sandbox_mode`
+    # matched a key nested under a `[profiles.…]` table and reported a profile's
+    # value as the top-level one.
+    scalars = config_scalars(("sandbox_mode", "approval_policy"), cfg)
+    report["config_sandbox_mode"] = scalars.get("sandbox_mode")
+    report["config_approval_policy"] = scalars.get("approval_policy")
+    cfg_sandbox = report["config_sandbox_mode"]
+    # What a run with no --model/--effort/--priority would actually be handed.
+    # It was answerable only by starting one and reading its argv, and the spec
+    # carried "the model a run actually uses when none is named" as an open
+    # item for three weeks because of that. `sandbox_mode` is absent on purpose:
+    # this wrapper never reads it from here.
+    report["effective_defaults"] = user_defaults()
     if cfg_sandbox == "danger-full-access":
         warnings.append(
             'config.toml sets sandbox_mode = "danger-full-access". `codex exec resume` '
@@ -926,6 +973,14 @@ silence.
 
 Collecting it is a separate call. `result --run <id>` is what hands back the
 work, and a run that finished is not a run you have read.
+
+What Codex is actually sent. Your prompt, with one paragraph in front of it
+stating what this turn's situation is: that nobody is watching, so a clarifying
+question ends the turn with the work not done, and that the final message is
+what reaches the caller. It is not optional. Measured, a run without it asserted
+something about its own situation that was simply false, so the paragraph
+corrects a fabrication rather than merely adding facts, and it costs about 113
+input tokens.
 """ % {"wait": THREAD_ID_WAIT}
 
 
@@ -948,16 +1003,34 @@ the list is never shorter than the tasks you handed over. Those slots appear as
 `unstarted` and make the group `partial`. One member failing never takes the
 others down, whatever the cause.
 
-Worktrees. A member gets its own git checkout at .codex-runs/<run_id>/wt when
-all of this holds: it is a kind=start task, its sandbox can write, it names no
-cwd of its own, two or more members qualify, the project is a git repository,
-and --base resolves. --worktree lifts the "two or more" condition and nothing
-else — a resume, a review, a read-only member and one with an explicit cwd are
-never isolated, by any flag. The checkout is cut from --base (default HEAD), so
-it holds none of your uncommitted work: that is also why a reviewer never gets
-one, since the diff it was started to look at lives only in your tree. Members'
-results stay inside those checkouts until you collect them with `result
---group`, and `batch clean --group` is what removes them.
+Worktrees. Off unless --worktree is passed, in which case a member is eligible
+for its own git checkout at <run_dir>/wt when all of this holds: it is a
+kind=start task, its sandbox can write, it names no cwd of its own, the project
+is a git repository, and --base resolves. Eligible, not guaranteed — if git
+cannot cut the checkout, that member's spawn fails and the others carry on. A
+resume, a review, a read-only member and one with an explicit cwd are never
+isolated, by any flag. The checkout is cut from --base (default HEAD), so it
+holds none of your uncommitted work — which is also why a reviewer never gets
+one, since an uncommitted diff it was started to look at lives only in your
+tree — and none of what git does not track either, so a canonical interpreter,
+a provider cache or a fixture directory kept out of git is absent from it.
+`missing_ignored` in the reply names up to 20 of the ones this tree actually
+has, with `missing_ignored_truncated` counting any beyond that. Members' results
+stay inside those checkouts: `result --group` reports what each member did and
+which paths more than one wrote, and moving the changes into your tree is yours
+to do. `batch clean --group` removes the checkouts once they are clean, or
+discards their contents under --force.
+
+Without it, every member works in your tree, which is what a fan-out of Claude's
+own subagents does: the changes are in front of you as they are made and there
+is nothing to collect. What you give up is that no member can tell another
+member's edit from its own, so `result --group`'s `overlaps` is a report of what
+already happened rather than of a merge still ahead.
+
+What a member is told on top of that. The group's size and name, so a run knows
+other runs may be editing other paths alongside it — and, where it was given a
+worktree, that its tree is not the caller's, which commit it was cut from, and
+how many uncommitted files the caller's tree has that its own does not.
 
 Tasks. --task is a bare prompt, kind=start unless --resume-from turns it into
 the resume of the member it pairs with. --tasks-file takes one JSON object per
@@ -988,6 +1061,19 @@ class HidesSuppressedCommands(argparse.RawDescriptionHelpFormatter):
                 yield sub
 
 
+def add_heartbeat(p):
+    p.add_argument("--heartbeat", type=float, metavar="SEC",
+                   help="print `still-running elapsed=<s> running=<n>` on the "
+                        "first poll at or after each SEC of following — a poll "
+                        "period, not a timer. Off by default, and refused "
+                        "without --follow or at zero or less. What it adds is "
+                        "the half nothing else covers: a run that has gone "
+                        "quiet shows up as `stalled` in `status --group "
+                        "--follow` after 300 idle seconds, while a follower "
+                        "that is alive with nothing to say and one that died "
+                        "look the same in either follower.")
+
+
 def add_common(p):
     p.add_argument("--runs-dir",
                    help="where run state lives (default: <project>/.codex-runs)")
@@ -1012,42 +1098,41 @@ def add_run_options(p, *, kind, foreground=True):
                    help="model slug. Checked against this install's catalog "
                         "before the run spawns when that catalog can be read, "
                         "and not at all when it cannot — never fail-closed; "
-                        "`models` prints it. Unset on a fresh thread nothing is "
-                        "pinned and Codex picks; on a resumed one the recorded "
-                        "model is re-asserted.")
+                        "`models` prints it. Four steps decide it when this is "
+                        "unset: what a resumed thread recorded, then your "
+                        "config.toml's `model`, then nothing at all and the "
+                        "server picks. `doctor` prints which of those applies "
+                        "here as effective_defaults.")
     p.add_argument("--effort",
                    help="reasoning effort. Valid values differ per model — "
                         "`models` prints each model's, with its default, and "
                         "omitting this is not the same as passing `medium`. "
-                        "Unset on a fresh isolated thread nothing at all is "
-                        "sent and the server applies that model's own default; "
-                        "unset under --inherit-config the user's config.toml "
-                        "may supply one. On a resume the recorded effort is "
-                        "re-asserted.")
+                        "Unset it follows the same four steps as --model, "
+                        "reading `model_reasoning_effort` from your "
+                        "config.toml; with nothing to read, nothing is sent "
+                        "and the server applies that model's own default.")
     p.add_argument("--inherit-config", action="store_true",
                    help="load the user's config.toml: their MCP servers, "
-                        "plugins, agent roles and hooks. Off by default. Auth "
-                        "is unaffected either way, coming from auth.json. "
-                        "Given together with --isolate, --isolate wins.")
-    p.add_argument("--isolate", action="store_true",
-                   help="ignore the user's config.toml. Already the default for "
-                        "a fresh run; pass it to override the setting a resumed "
-                        "thread recorded. Wins over --inherit-config when both "
-                        "are given.")
+                        "plugins, agent roles and hooks. Off by default — a "
+                        "fresh run is isolated, and a resumed one keeps "
+                        "whatever its thread recorded. Auth is unaffected "
+                        "either way, coming from auth.json.")
     p.add_argument("--priority", dest="priority", action="store_true", default=None,
-                   help="inject service_tier=\"priority\" — the tier Codex "
+                   help="force service_tier=\"priority\" — the tier Codex "
                         "labels \"Fast mode\" and its config.toml spells "
-                        "\"fast\". Ignoring the user's config would otherwise "
-                        "silently drop it. Unset, it follows isolation on a "
-                        "fresh thread or a flipped one, and otherwise carries "
-                        "forward what was recorded.")
+                        "\"fast\"; both names are advertised and both were "
+                        "measured to run clean. Only needed to override: "
+                        "unset, an isolated run already takes whatever "
+                        "service_tier your config.toml sets, and a resumed one "
+                        "carries forward what its thread recorded.")
     p.add_argument("--no-priority", dest="priority", action="store_false",
-                   help="omit service_tier rather than injecting it, and "
-                        "record that choice. That stops this wrapper "
-                        "re-adding Fast mode; a config the run inherited can "
-                        "still set it, because omitting the key is not the "
-                        "same as forcing the standard tier — which is the "
-                        "server's default anyway. Refused alongside "
+                   help="send no service_tier at all, and record that choice "
+                        "so later turns on the thread do not re-add Fast "
+                        "mode. That "
+                        "is not the same as forcing the standard tier — "
+                        "omitting the key leaves the server's own default, and "
+                        "a run under --inherit-config can still pick the tier "
+                        "up from your config.toml. Refused alongside "
                         "--priority.")
     p.add_argument("--schema",
                    help="path to a JSON Schema file handed to Codex. "
@@ -1055,14 +1140,6 @@ def add_run_options(p, *, kind, foreground=True):
                         "`json` and fails loudly if the final message is not "
                         "valid JSON; `result --group` does not parse, so "
                         "collect a schema batch member by member.")
-    p.add_argument("--config", action="append", metavar="k=v",
-                   help="extra `-c k=v` passed through to Codex. Repeatable. "
-                        "The four keys this wrapper records and re-asserts — "
-                        "model, model_reasoning_effort, sandbox_mode, "
-                        "service_tier — are refused here; use their own flags. "
-                        "On a resume this replaces the thread's recorded set "
-                        "rather than adding to it, so repeat any entry you "
-                        "still want.")
     if foreground:
         # Not offered on `batch start`. It was, and was then refused by the
         # command — so its help string had to read "Refused on `batch start`",
@@ -1081,14 +1158,6 @@ def add_run_options(p, *, kind, foreground=True):
                         "before the deadline; without one there is no "
                         "conversation to continue. If Codex does not exit on "
                         "the SIGINT the signal ladder escalates.")
-    p.add_argument("--no-preamble", action="store_true",
-                   help="drop everything this wrapper prepends to the prompt: "
-                        "that nobody is watching the turn, so a clarifying "
-                        "question ends it with the work not done; that the "
-                        "final message is what the caller receives; and, for a "
-                        "batch member, the group size and its worktree's path "
-                        "and base. It is all or nothing — reach for it only "
-                        "when you are supplying those facts yourself.")
     if kind in ("start", "resume"):
         p.add_argument("--image", action="append",
                        help="attach an image file to the prompt. Repeatable.")
@@ -1214,34 +1283,55 @@ def build_parser():
                         "and alongside --run or --thread it would label threads "
                         "outside that filter as external.")
     p.add_argument("--follow", action="store_true",
-                   help="requires --group: print each member state change, "
-                        "then a terminal group line, then exit. A pure view — "
-                        "it holds no state, so a follower that dies loses "
+                   help="requires --group: plain text rather than the one "
+                        "JSON object `status --group` returns — a "
+                        "`run <id> <prev> -> <state>` line per member state "
+                        "change, with ` exit=N` appended when the state is not "
+                        "`completed` and an exit code was recorded, then one "
+                        "terminal `group.<state> group=<name> done=N failed=N` "
+                        "line, then exit. A group with no resolvable member is "
+                        "one `group.empty group=<name>` line instead, carrying "
+                        "neither tally. Both closing lines append ` unstarted=N` "
+                        "and ` unreadable=N` when either is non-zero. A pure "
+                        "view — it holds no state, so a follower that dies loses "
                         "nothing and `status --group` answers the same question "
                         "at any time.")
-    p.add_argument("--interval", type=float, default=1.0,
-                   help="seconds between polls while following (default: "
-                        "1.0). Refused without --follow, which is the only "
-                        "thing it shapes.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
                         "group.still-running instead of a terminal group line. "
                         "No default: the follow ends only when the group does. "
                         "Refused without --follow.")
+    add_heartbeat(p)
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser(
         "log", formatter_class=HidesSuppressedCommands,
         help="filtered events from a byte cursor — the whole log, or only what is new")
     add_common(p)
-    p.add_argument("--run", metavar="REF",
-                   help="a run id, a thread id, or a run-id prefix (newest "
-                        "wins). Omitted, the project's single live run is used; "
-                        "with none live the newest terminal one, and with two "
-                        "or more live it is refused rather than guessed.")
-    p.add_argument("--since", type=int, default=0,
+    target = p.add_mutually_exclusive_group()
+    target.add_argument("--run", metavar="REF",
+                        help="a run id, a thread id, or a run-id prefix (newest "
+                             "wins). Omitted, the project's single live run is "
+                             "used; with none live the newest terminal one, and "
+                             "with two or more live it is refused rather than "
+                             "guessed.")
+    target.add_argument("--group", metavar="NAME",
+                        help="every member of one batch group, interleaved as "
+                             "each writes. A first line maps index to run id "
+                             "(`group.members group=<name> 0=<run_id>[:label] "
+                             "…`), and every event line is prefixed "
+                             "`[<index>:<label>]`, or `[<index>]` for a member "
+                             "with no label. Under --follow the stream ends on "
+                             "the group's own terminal line, the same one "
+                             "`status --group --follow` ends on; without it, one "
+                             "pass over every member's whole log ending on the "
+                             "group's line as it stands, which for a live group "
+                             "is `group.running`. --since is refused here: a "
+                             "cursor is a byte offset into one file and every "
+                             "member has its own.")
+    p.add_argument("--since", type=int, default=None,
                    help="resume from the byte offset a previous call printed as "
-                        "`# cursor=<n>` (default: 0, the whole log). Only "
+                        "`# cursor=<n>`. Omitted, the whole log. Only "
                         "complete lines are consumed, so nothing is duplicated "
                         "or skipped however often you poll.")
     p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL,
@@ -1269,14 +1359,12 @@ def build_parser():
                         "state on purpose: a follower that only printed "
                         "progress would go silent through a crash, and silence "
                         "is indistinguishable from still working.")
-    p.add_argument("--interval", type=float, default=1.0,
-                   help="seconds between polls while following (default: 1.0). "
-                        "Shapes nothing without --follow.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
                         "run.still-running instead of a terminal line, so a "
                         "watcher cannot hang on a wedged run. Shapes nothing "
                         "without --follow.")
+    add_heartbeat(p)
     p.set_defaults(func=cmd_log)
 
     p = sub.add_parser(
@@ -1390,22 +1478,22 @@ def build_parser():
                    help="allow a resume task to start a second turn on a thread "
                         "that already has a live one")
     b.add_argument("--worktree", action="store_true",
-                   help="isolate a single writing member, which the two-or-more "
-                        "condition would otherwise skip. It lifts that "
-                        "condition and no other: a resume, a review, a "
-                        "read-only member and one with its own cwd stay in the "
-                        "caller's tree whatever this says.")
-    b.add_argument("--no-worktree", action="store_true",
-                   help="plan no new worktrees. Members with their own cwd, and "
-                        "resumed members already living in one, are unaffected "
-                        "— this stops worktrees being cut, not worktrees that "
-                        "exist.")
+                   help="give each writing member its own git checkout instead "
+                        "of the caller's tree. Off by default: members share "
+                        "the tree, so their work is in it as they do it. Reach "
+                        "for this when two or more members can touch the same "
+                        "files — the cost is that results stay in the "
+                        "checkouts until you collect them, and that a checkout "
+                        "holds only what git tracks. Per member, not per "
+                        "batch: a resume, a review, a read-only member and one "
+                        "with its own cwd stay in the caller's tree whatever "
+                        "this says.")
     b.add_argument("--base",
-                   help="commit or ref new worktrees are cut from (default "
-                        "HEAD); ignored when none are being cut. A base older "
-                        "than HEAD can be missing the project's AGENTS.md, "
-                        "which reaches a worktree run only from a base where "
-                        "the file exists.")
+                   help="commit or ref the worktrees are cut from (default "
+                        "HEAD). Refused without --worktree, which is the only "
+                        "thing it shapes. A base older than HEAD can be "
+                        "missing the project's AGENTS.md, which reaches a "
+                        "worktree run only from a base where the file exists.")
     b.add_argument("--resume-from", metavar="GROUP",
                    help="continue an earlier group: task i resumes member i of "
                         "that group, in its start order, keeping its thread and "

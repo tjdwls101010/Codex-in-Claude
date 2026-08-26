@@ -59,8 +59,24 @@ class WorktreeTestCase(BridgeTestCase):
 
 class Assignment(WorktreeTestCase):
 
-    def test_two_writing_members_each_get_their_own_checkout(self):
+    def test_writing_members_share_the_callers_tree_by_default(self):
+        """C-A. Isolation is opt-in, as it is for a native subagent: a fan-out
+        that costs a collection step is a fan-out sessions decline to do.
+        Measured both ways — one session collected three worktrees by hand with
+        `git apply`, and another refused to fan out at all rather than pay
+        that."""
         out = self.start_group()
+        for r in out["runs"]:
+            self.assertIsNone(r.get("worktree"))
+            self.assertEqual(r["cwd"], str(self.project),
+                             "results have to land where the caller can see them")
+            self.wait_for_state(r["run_id"])
+        self.assertEqual(out["worktrees"]["count"], 0)
+        self.assertIn("--worktree", out["worktrees"]["note"],
+                      "the flag that changes this must be named where it is read")
+
+    def test_worktree_gives_every_eligible_member_its_own_checkout(self):
+        out = self.start_group("--worktree")
         paths = [r["worktree"] for r in out["runs"]]
         self.assertEqual(len(set(paths)), 2, "isolation means a checkout each")
         for r, p in zip(out["runs"], paths):
@@ -72,7 +88,7 @@ class Assignment(WorktreeTestCase):
         """V-13. `.codex-runs/.gitignore` is `*`, so the isolation costs the
         caller nothing in their own `git status`."""
         self.dirty_the_caller_tree()
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
             (Path(r["worktree"]) / "made-by-codex.txt").write_text("x\n")
@@ -80,32 +96,38 @@ class Assignment(WorktreeTestCase):
         self.assertEqual(status.strip(), "M tracked.txt",
                          "only the caller's own edit may appear")
 
-    def test_a_lone_writer_is_not_isolated(self):
+    def test_a_lone_writer_is_told_nothing_about_sharing(self):
+        """One writer collides with nobody, so the shared-tree note would be a
+        line about a hazard that does not exist. Reported only where two or
+        more members can reach the same files."""
         out = self.start_group(n=1)
         self.assertIsNone(out["runs"][0].get("worktree"))
-        self.assertEqual(out["worktrees"]["count"], 0)
-        self.assertIn("nobody to collide with", out["worktrees"]["note"])
+        self.assertNotIn("worktrees", out)
         self.wait_for_state(out["runs"][0]["run_id"])
 
-    def test_worktree_forces_isolation_for_a_lone_writer(self):
+    def test_worktree_isolates_a_lone_writer_too(self):
         out = self.start_group("--worktree", n=1)
         self.assertIsNotNone(out["runs"][0]["worktree"])
         self.wait_for_state(out["runs"][0]["run_id"])
 
-    def test_no_worktree_turns_it_off(self):
-        out = self.start_group("--no-worktree")
-        for r in out["runs"]:
-            self.assertIsNone(r.get("worktree"))
-            self.assertEqual(r["cwd"], str(self.project))
-            self.wait_for_state(r["run_id"])
-        self.assertIn("--no-worktree", out["worktrees"]["note"])
+    def test_no_worktree_is_gone(self):
+        """It negated a default that no longer exists. Left in the parser it
+        would accept and decide nothing, which is worse than absent: a caller
+        typing it reads the success as isolation having been turned off."""
+        p = self.bridge_raw("batch", "start", "--group", "p1", "--task", "a",
+                            "--no-worktree")
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("unrecognized arguments", p.stderr)
+        self.assertFalse((self.project / ".codex-runs" / ".groups").exists(),
+                         "argparse refuses before the name is claimed")
 
     def test_read_only_members_are_not_counted_and_not_isolated(self):
         """D35 is per member, not per batch: a read-only member has nothing to
         isolate, and two of them are not two writers."""
         tf = self.tasks_file({"prompt": "a", "sandbox": "read-only"},
                              {"prompt": "b", "sandbox": "read-only"})
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--tasks-file", tf)
         for r in out["runs"]:
             self.assertIsNone(r.get("worktree"))
             self.wait_for_state(r["run_id"])
@@ -118,7 +140,8 @@ class Assignment(WorktreeTestCase):
         self.dirty_the_caller_tree()
         tf = self.tasks_file({"prompt": "w1"}, {"prompt": "w2"},
                              {"kind": "review", "review": {"uncommitted": True}})
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--tasks-file", tf)
         writers, review = out["runs"][:2], out["runs"][2]
         for r in writers:
             self.assertIsNotNone(r["worktree"])
@@ -132,9 +155,12 @@ class Assignment(WorktreeTestCase):
         other = self.tmp / "elsewhere"
         other.mkdir()
         tf = self.tasks_file({"prompt": "a", "cwd": str(other)}, {"prompt": "b"})
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--tasks-file", tf)
         self.assertIsNone(out["runs"][0].get("worktree"))
         self.assertEqual(out["runs"][0]["cwd"], str(other))
+        self.assertIsNotNone(out["runs"][1]["worktree"],
+                             "the exclusion is per member, not per batch")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
@@ -143,7 +169,7 @@ class Assignment(WorktreeTestCase):
         (self.project / "later.txt").write_text("later\n")
         self.git("add", "-A")
         self.git("commit", "-qm", "second")
-        out = self.start_group("--base", first)
+        out = self.start_group("--worktree", "--base", first)
         self.assertEqual(out["worktrees"]["base"], first)
         wt = Path(out["runs"][0]["worktree"])
         self.assertFalse((wt / "later.txt").exists(),
@@ -159,7 +185,8 @@ class Assignment(WorktreeTestCase):
         while `batch clean` reported the group fully cleaned."""
         tf = self.tasks_file({"prompt": "a", "image": ["/nonexistent/x.png"]},
                              {"prompt": "b"}, {"prompt": "c"})
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--tasks-file", tf)
         self.assertIn("image not found", out["runs"][0]["error"])
         self.assertEqual(out["spawned"], 2)
         for r in out["runs"][1:]:
@@ -176,12 +203,23 @@ class Assignment(WorktreeTestCase):
     def test_an_unresolvable_base_fails_instead_of_silently_sharing_the_tree(self):
         """A typo'd --base answered with a degrade note would produce the one
         outcome the flag was used to avoid, and blame an empty repository."""
-        out = self.bridge("batch", "start", "--group", "p1", "--base", "no-such-ref",
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--base", "no-such-ref",
                           "--task", "a", "--task", "b", expect_rc=1)
         self.assertIn("does not resolve", out["error"])
         self.assertIn("no-such-ref", out["error"])
         self.assertFalse((self.project / ".codex-runs").exists()
                          and any((self.project / ".codex-runs").glob("2*")))
+
+    def test_base_without_worktree_is_refused(self):
+        """`--base` names the commit a checkout is cut from, and after C-A no
+        checkout is cut unless it was asked for. Accepting it silently is the
+        R19 shape: the caller reads the success as "cut from that commit"."""
+        out = self.bridge("batch", "start", "--group", "p1", "--base", "HEAD",
+                          "--task", "a", "--task", "b", expect_rc=1)
+        self.assertIn("--worktree", out["error"])
+        self.assertEqual(self.bridge("status")["groups"], [],
+                         "the name must not be burned by a refusal")
 
     def test_instructions_missing_at_an_older_base_are_reported(self):
         """V-14: project instructions do reach a worktree run, but only from a
@@ -190,7 +228,7 @@ class Assignment(WorktreeTestCase):
         (self.project / "AGENTS.md").write_text("# project rules\n")
         self.git("add", "-A")
         self.git("commit", "-qm", "add agents")
-        out = self.start_group("--base", first)
+        out = self.start_group("--worktree", "--base", first)
         self.assertEqual(out["worktrees"]["missing_at_base"], ["AGENTS.md"])
         self.assertIn("without the project instructions",
                       out["worktrees"]["missing_note"])
@@ -202,7 +240,7 @@ class Assignment(WorktreeTestCase):
         (self.project / "AGENTS.md").write_text("# project rules\n")
         self.git("add", "-A")
         self.git("commit", "-qm", "add agents")
-        out = self.start_group()
+        out = self.start_group("--worktree")
         self.assertNotIn("missing_at_base", out["worktrees"])
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -210,7 +248,8 @@ class Assignment(WorktreeTestCase):
     def test_a_non_git_project_degrades_instead_of_failing(self):
         plain = self.tmp / "plain"
         plain.mkdir()
-        out = self.bridge("batch", "start", "--group", "p1", "--project", str(plain),
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--project", str(plain),
                           "--task", "a", "--task", "b")
         self.assertEqual(out["spawned"], 2)
         self.assertIn("not a git repository", out["worktrees"]["note"])
@@ -225,6 +264,135 @@ class Assignment(WorktreeTestCase):
                 time.sleep(0.1)
 
 
+class WhatAWorktreeDoesNotHave(WorktreeTestCase):
+    """C8 — a checkout is `git worktree add` output, so it holds tracked files
+    at the base commit and nothing else.
+
+    Reproduced before this was written (V-27): `.venv/bin/python` planted in the
+    fixture, two worktree members asked to `ls .venv/bin`, both `No such file or
+    directory`. Two field reports of the same thing, and the worse half is not
+    the missing file — a run that rebuilds its own cache gets live data and
+    reports every comparison against the recorded baseline as a regression.
+
+    The tool knows this at the moment it cuts the checkout, which is R14's rule:
+    where the tool knows a fact the caller cannot see, the tool says it then.
+    """
+
+    def ignore(self, *entries):
+        (self.project / ".gitignore").write_text("\n".join(entries) + "\n")
+        for e in entries:
+            d = self.project / e.rstrip("/")
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "marker").write_text("x")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "ignore")
+
+    def test_the_response_names_what_the_checkouts_do_not_have(self):
+        self.ignore(".venv/", ".state/cache/")
+        out = self.start_group("--worktree")
+        missing = out["worktrees"]["missing_ignored"]
+        self.assertEqual(sorted(missing), [".state/cache/", ".venv/"])
+        for r in out["runs"]:
+            self.assertFalse((Path(r["worktree"]) / ".venv").exists(),
+                             "the claim is checked against the checkout itself")
+            self.wait_for_state(r["run_id"])
+
+    def test_a_path_the_base_still_tracks_is_not_reported_missing(self):
+        """The field is a claim about what a checkout does not have, and a
+        `--base` older than the commit that stopped tracking something puts
+        that something back in every worktree."""
+        (self.project / "cache").mkdir()
+        (self.project / "cache" / "marker").write_text("x")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "cache tracked here")
+        old = self.git("rev-parse", "HEAD").stdout.strip()
+        (self.project / ".gitignore").write_text("cache/\n")
+        self.git("rm", "-r", "--cached", "-q", "cache")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "stop tracking it")
+        out = self.start_group("--worktree", "--base", old)
+        self.assertNotIn("missing_ignored", out["worktrees"])
+        for r in out["runs"]:
+            self.assertTrue((Path(r["worktree"]) / "cache" / "marker").exists())
+            self.wait_for_state(r["run_id"])
+
+    def test_a_directory_the_base_only_partly_tracked_is_still_reported(self):
+        """`--ignored=matching` collapses a wholly-ignored directory to one
+        entry, so asking git whether the base "knows that path" answers yes for
+        the whole collapsed tree when it tracked a single file under it — and
+        the ninety-nine that really are absent go unreported. A false positive
+        names something the checkouts do have; this is the other direction."""
+        d = self.project / ".venv"
+        d.mkdir()
+        (d / "keep").write_text("tracked then")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "one file under it")
+        old = self.git("rev-parse", "HEAD").stdout.strip()
+        (self.project / ".gitignore").write_text(".venv/\n")
+        self.git("rm", "-r", "--cached", "-q", ".venv")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "ignore it")
+        (d / "python").write_text("never tracked")
+        out = self.start_group("--worktree", "--base", old)
+        self.assertEqual(out["worktrees"]["missing_ignored"], [".venv/"])
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_a_path_git_would_c_quote_arrives_as_a_path(self):
+        """Plain porcelain C-quotes anything non-ASCII, so the field would hand
+        back an encoded token where the caller expects a path — and this
+        repository keeps Korean paths in its own fixtures."""
+        self.ignore("빌드/")
+        out = self.start_group("--worktree")
+        self.assertEqual(out["worktrees"]["missing_ignored"], ["빌드/"])
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_a_tree_with_nothing_ignored_says_nothing(self):
+        """A field reporting an empty list on every batch is a field that stops
+        being read."""
+        out = self.start_group("--worktree")
+        self.assertNotIn("missing_ignored", out["worktrees"])
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_a_shared_tree_batch_has_nothing_to_report(self):
+        """Nothing is cut, so nothing is missing — and after C-A this is the
+        default, which is why the fact belongs to `--worktree` rather than to
+        `batch start`."""
+        self.ignore(".venv/")
+        out = self.start_group()
+        self.assertNotIn("missing_ignored", out.get("worktrees") or {})
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+
+class TheNoteNamesTheRealExclusion(WorktreeTestCase):
+    """`--worktree` passes a member over for four different reasons, and the
+    sharing note read the boolean as "these must be resumes" — so two fresh
+    tasks pointed at one `cwd` were told they were resumed threads whose
+    isolation had been decided in an earlier phase."""
+
+    def test_an_explicit_cwd_is_not_described_as_a_resume(self):
+        out = self.start_group("--cwd", str(self.project))
+        note = out["worktrees"]["note"]
+        self.assertIn("cwd of its own", note)
+        self.assertNotIn("resumed", note)
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_worktree_over_a_review_only_batch_says_what_a_review_needs(self):
+        tf = self.tasks_file({"kind": "review", "review": {"uncommitted": True}},
+                             {"kind": "review", "review": {"uncommitted": True}})
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
+                          "--tasks-file", tf)
+        note = out["worktrees"]["note"]
+        self.assertIn("uncommitted work in your tree", note)
+        self.assertNotIn("resumed", note)
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+
 class OverlapsUnderIsolation(WorktreeTestCase):
     """Codex reports ABSOLUTE paths, and under worktree isolation every member
     has a different absolute prefix.
@@ -236,7 +404,7 @@ class OverlapsUnderIsolation(WorktreeTestCase):
     `overlaps: {}`. The cleaner the isolation, the more reliably it lied."""
 
     def test_the_same_repo_path_in_two_worktrees_is_an_overlap(self):
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         for r in out["runs"]:
@@ -249,7 +417,7 @@ class OverlapsUnderIsolation(WorktreeTestCase):
                          sorted(r["run_id"] for r in out["runs"]))
 
     def test_different_paths_in_two_worktrees_are_not_an_overlap(self):
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         for r, name in zip(out["runs"], ("alpha.py", "bravo.py")):
@@ -300,7 +468,7 @@ class OverlapsUnderIsolation(WorktreeTestCase):
     def test_a_path_outside_the_run_root_keeps_its_absolute_form(self):
         """`../../elsewhere` compares no better than the absolute path and reads
         worse, so a path that escapes the root is left alone."""
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         outside = str(self.tmp / "outside.py")
@@ -329,7 +497,7 @@ class OverlapsAdversarial(WorktreeTestCase):
     the field that exists to catch two members writing one file."""
 
     def test_one_file_named_two_ways_is_one_overlap(self):
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         for r, form in zip(out["runs"], (NFD, NFC)):
@@ -422,7 +590,7 @@ class OverlapsAdversarial(WorktreeTestCase):
         """D30's reason for keying by run rather than by worktree: a resumed
         member lands in the same tree its predecessor used, so a worktree key
         would make every phase-2 member overlap the run it continues."""
-        first = self.start_group(n=2)
+        first = self.start_group("--worktree", n=2)
         for r in first["runs"]:
             self.wait_for_state(r["run_id"])
             self.plant(r["run_id"], [str(Path(r["worktree"]) / "src" / "shared.py")])
@@ -445,7 +613,7 @@ class OverlapsAdversarial(WorktreeTestCase):
     def test_a_newline_in_a_path_is_carried_intact(self):
         """`log` writes bare text lines for Monitor to read, so a path is one
         place a newline could split a record in two."""
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         for r in out["runs"]:
@@ -482,7 +650,7 @@ class Preamble(WorktreeTestCase):
 
     def test_an_isolated_member_is_told_its_tree_is_not_the_callers(self):
         self.dirty_the_caller_tree()
-        out = self.start_group()
+        out = self.start_group("--worktree")
         prompt = self.sent_prompt(out["runs"][0]["run_id"])
         self.assertIn("isolated git worktree", prompt)
         self.assertIn("1 uncommitted file(s)", prompt)
@@ -491,20 +659,27 @@ class Preamble(WorktreeTestCase):
             self.wait_for_state(r["run_id"])
 
     def test_a_member_without_a_worktree_gets_no_worktree_paragraph(self):
-        out = self.start_group("--no-worktree")
+        out = self.start_group()
         prompt = self.sent_prompt(out["runs"][0]["run_id"])
         self.assertIn("batch of 2 tasks", prompt)
         self.assertNotIn("isolated git worktree", prompt)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
-    def test_no_preamble_turns_off_the_batch_paragraphs_too(self):
-        """Half a briefing is worse than none: a caller switching the preamble
-        off is saying it will brief Codex itself."""
-        out = self.start_group("--no-preamble")
+    def test_the_batch_paragraphs_cannot_be_turned_off(self):
+        """`--no-preamble` is gone. V-18 measured the batch paragraph correcting
+        a confident falsehood — without it a run asserted it shared the caller's
+        tree — so switching it off buys 113 tokens and risks fabrication. A
+        caller who wants to state those facts itself can write them into the
+        prompt."""
+        p = self.bridge_raw("batch", "start", "--group", "p1", "--task", "a",
+                            "--no-preamble")
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("unrecognized arguments", p.stderr)
+        out = self.start_group()
         prompt = self.sent_prompt(out["runs"][0]["run_id"])
-        self.assertNotIn("Batch context", prompt)
-        self.assertNotIn("Run context", prompt)
+        self.assertIn("Run context", prompt)
+        self.assertIn("Batch context", prompt)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
@@ -518,8 +693,8 @@ class Preamble(WorktreeTestCase):
 
 class Clean(WorktreeTestCase):
 
-    def finished_group(self, **kw):
-        out = self.start_group(**kw)
+    def finished_group(self, *extra, **kw):
+        out = self.start_group("--worktree", *extra, **kw)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         return out
@@ -660,8 +835,8 @@ class ResumeFrom(WorktreeTestCase):
     """M4c. Phase 2 continues phase 1 member for member, keeping each thread
     and the worktree that thread already lives in."""
 
-    def phase_one(self, n=2):
-        out = self.start_group(n=n)
+    def phase_one(self, *extra, n=2):
+        out = self.start_group(*extra, n=n)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         return out
@@ -681,7 +856,7 @@ class ResumeFrom(WorktreeTestCase):
             self.wait_for_state(now["run_id"])
 
     def test_phase_two_inherits_the_worktree_rather_than_getting_a_new_one(self):
-        one = self.phase_one()
+        one = self.phase_one("--worktree")
         two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
                           "--task", "a", "--task", "b")
         for prev, now in zip(one["runs"], two["runs"]):
@@ -691,6 +866,48 @@ class ResumeFrom(WorktreeTestCase):
             self.wait_for_state(now["run_id"])
         self.assertEqual(self.bridge("doctor")["worktrees"], 2,
                          "resuming must not cut a second checkout per member")
+
+    def test_a_resume_phase_sharing_the_tree_says_how_many_share_it(self):
+        """C-A made this the ordinary shape and left it unwarned. The note was
+        keyed off worktree *eligibility*, and `wants_worktree` excludes every
+        resume — so the batch that most needs the warning, N writers continuing
+        into the one directory phase 1 shared, was the only one that could not
+        produce it."""
+        self.phase_one()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from",
+                          "p1", "--task", "a", "--task", "b")
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+        note = (two.get("worktrees") or {}).get("note") or ""
+        self.assertIn("2 members", note)
+        self.assertIn(str(self.project), note)
+
+    def test_worktree_on_a_resume_phase_says_why_it_cuts_nothing(self):
+        """`--worktree` here answered "no member writes to the tree", which is
+        false of two workspace-write members — and it is the answer a caller
+        acts on. What is true is narrower: a resumed thread keeps the directory
+        it already lives in, so isolation is a decision phase 1 makes and phase
+        2 inherits."""
+        self.phase_one("--worktree")
+        two = self.bridge("batch", "start", "--group", "p2", "--worktree",
+                          "--resume-from", "p1", "--task", "a", "--task", "b")
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
+        note = two["worktrees"]["note"]
+        self.assertNotIn("nothing to isolate", note)
+        self.assertIn("resume", note)
+
+    def test_read_only_members_resumed_are_not_reported_as_sharing(self):
+        """A resume inherits its sandbox from its thread, so a phase continuing
+        read-only members has no writers in it. Counting them as
+        `workspace-write` — the group's default, which they never take —
+        warned about a collision that cannot happen."""
+        self.phase_one("--sandbox", "read-only")
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from",
+                          "p1", "--task", "a", "--task", "b")
+        self.assertNotIn("worktrees", two)
+        for r in two["runs"]:
+            self.wait_for_state(r["run_id"])
 
     def test_a_count_mismatch_fails_before_anything_starts(self):
         """Pairing a short list lands a phase-2 task on the wrong phase-1
@@ -839,6 +1056,16 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
     three edits landed in three different files. `resume` has no worktree
     option, so nothing but this could have told it."""
 
+    def assertNoFalseRemedy(self, note):
+        """The note used to prescribe `batch start --worktree --resume-from`.
+        Measured: that phase cuts nothing — `wants_worktree` excludes every
+        resume, so the command reports success and leaves the writers exactly
+        where they were. A remedy that does not work is worse than none, since
+        the caller stops looking."""
+        self.assertNotIn("--resume-from", note)
+        self.assertIn("--worktree", note)
+        self.assertIn("resumed thread", note)
+
     def hanging_writer(self, label):
         r = self.bridge("start", "keep going", "--label", label,
                         "--sandbox", "workspace-write",
@@ -852,7 +1079,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
                              env_extra={"FAKE_CODEX_HANG": "60"})
         self.assertEqual([w["run_id"] for w in second["concurrent_writers"]],
                          [first["run_id"]])
-        self.assertIn("--resume-from", second["concurrent_writers_note"])
+        self.assertNoFalseRemedy(second["concurrent_writers_note"])
         self.bridge("stop", "--all")
 
     def test_resuming_into_an_occupied_directory_is_named_too(self):
@@ -868,7 +1095,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
                           env_extra={"FAKE_CODEX_HANG": "60"})
         named = {w["run_id"] for w in out["concurrent_writers"]}
         self.assertIn(second["run_id"], named)
-        self.assertIn("--resume-from", out["concurrent_writers_note"])
+        self.assertNoFalseRemedy(out["concurrent_writers_note"])
         self.bridge("stop", "--all")
 
     def test_a_read_only_run_is_not_a_writer_and_is_not_warned_about(self):
@@ -881,7 +1108,7 @@ class ConcurrentWritersAreNamedWhereTheMistakeHappens(WorktreeTestCase):
 
     def test_members_in_their_own_worktrees_are_exempt(self):
         """The warning must not fire on the arrangement that makes it safe."""
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.assertIsNotNone(r["worktree"])
             self.assertNotIn("concurrent_writers", r)
@@ -926,7 +1153,7 @@ class DoctorReportsTheCost(WorktreeTestCase):
     def test_doctor_counts_residual_worktrees_and_says_what_removes_them(self):
         """§13. The place that creates the cost is the place that reports it —
         facts only, no policy and no automatic cleanup (D06, D23)."""
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         rep = self.bridge("doctor")
@@ -938,7 +1165,7 @@ class DoctorReportsTheCost(WorktreeTestCase):
         self.assertTrue(rep["ok"], "a residual worktree is not a blocker")
 
     def test_no_warning_once_they_are_gone(self):
-        out = self.start_group()
+        out = self.start_group("--worktree")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
         self.bridge("batch", "clean", "--group", "p1")

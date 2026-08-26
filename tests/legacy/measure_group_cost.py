@@ -87,7 +87,7 @@ for n in SIZES:
         print(json.dumps(rows[-1])[:400], flush=True)
         continue
     ids = [r["run_id"] for r in out["runs"] if r.get("run_id")]
-    run("status", "--group", group, "--follow", "--interval", "5",
+    run("status", "--group", group, "--follow",
         "--follow-timeout", "2400")
 
     p_group = run("result", "--group", group)

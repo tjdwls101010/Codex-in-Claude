@@ -32,13 +32,13 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 - **Background by default** — `start` returns a `run_id`/`thread_id` immediately instead of blocking; check back in whenever it's convenient.
 - **Sandbox stability across turns** — every `resume` re-asserts the sandbox, model, and reasoning effort its thread was created with. See [Sandbox Stability](docs/wiki/Sandbox-Stability.md).
-- **Fast mode survives isolation** — Codex's Fast mode is a `service_tier` setting that lives in the user's config, so an isolated run would drop it. Isolated runs re-inject it by default, and `--no-priority` stops the re-injection. See [CLI Reference](docs/wiki/CLI-Reference.md).
+- **Your Codex defaults survive isolation** — `--ignore-user-config` drops `config.toml` whole, so an isolated run would lose the model, reasoning effort and Fast mode you configured and take the server's defaults instead. Three keys are read back out of the file and re-injected; an explicit flag still wins, and a resumed thread re-asserts what it recorded rather than what the file says now. `sandbox_mode` is deliberately not one of them. See [CLI Reference](docs/wiki/CLI-Reference.md).
 - **A filtered live event log** — four verbosity levels (`compact` by default, `normal`, `full`, `raw`), with the default chosen from real measurements rather than a guess. See [Context Discipline & Event Log Levels](docs/wiki/Context-Discipline.md).
 - **Stop, then redirect** — interrupt a run mid-task and continue it on the same thread with new instructions. `stop` always targets a run's own process group, never a process by name, so concurrent runs never interfere with each other.
 - **Resume any thread** — including ones started outside this plugin, directly in the Codex TUI.
 - **Schema-validated results** — pass `--schema` and get back parsed, validated JSON instead of a message you have to eyeball.
 - **A deadline you choose** — `--timeout` works in the background and records a state of its own, so "it ran out of the time I gave it" never reads as "Codex failed". The thread stays resumable across it.
-- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Two or more members that can write get a git worktree each, so they can't edit each other's files mid-edit. Chain a next phase onto a group with `--resume-from`, and add `--as-ready` to start each member as soon as the one it continues is done rather than waiting for the slowest. See [Orchestration](docs/wiki/Orchestration.md).
+- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Members share your tree by default, the way a fan-out of Claude's own subagents does; `--worktree` gives each writing member its own git checkout when they would edit the same files. Chain a next phase onto a group with `--resume-from`, and add `--as-ready` to start each member as soon as the one it continues is done rather than waiting for the slowest. See [Orchestration](docs/wiki/Orchestration.md).
 - **Built-in diagnostics** — `doctor` checks your PATH, Codex auth, config, and the run registry in a single call.
 
 ## 3. Quick Start
@@ -131,13 +131,13 @@ See [Getting Started](docs/wiki/Getting-Started.md) for a fuller walkthrough, an
 | `show` | One item's full output, fetched on request |
 | `stop` | Interrupt by process group — never by matching a process name |
 | `result` | Final message, usage, and parsed JSON when `--schema` was used |
-| `batch start` | N runs as one named group, with a git worktree per writing member |
+| `batch start` | N runs as one named group, sharing your tree unless `--worktree` gives each writing member a checkout |
 | `batch clean` | Remove a finished group's worktrees, once you've collected them |
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config sandbox, registry health, worktrees |
 
 `status`, `result` and `stop` also take `--group <name>` to address a whole batch at once.
 
-Defaults: background execution, `workspace-write` sandbox, isolated from your own Codex config (`--ignore-user-config`), no fixed model or reasoning effort, no hard timeout.
+Defaults: background execution, `workspace-write` sandbox, isolated from your own Codex config (`--ignore-user-config`) apart from the three keys above, no hard timeout.
 
 By default, a command's actual output never reaches Claude's context — only its size does:
 
@@ -160,10 +160,10 @@ To hand three independent pieces of work to three Codex runs at once and collect
 $CODEX batch start --group audit --task "audit the parser" --task "audit the lexer" --task "audit the cache"
 $CODEX status --group audit --follow      # ends on a terminal line, never in silence
 $CODEX result --group audit               # each message, plus which paths more than one wrote
-$CODEX batch clean --group audit          # once you've collected
+$CODEX batch clean --group audit          # only if you asked for worktrees
 ```
 
-Two or more members that can write get a git worktree each, so they can't edit each other's files mid-edit — and your own tree stays clean while they work. See [Orchestration](docs/wiki/Orchestration.md).
+Members work in your tree, the way a fan-out of your own subagents does: their changes are there as they make them, with nothing to collect. Add `--worktree` when they would edit the same files, and each writing member gets its own checkout instead. See [Orchestration](docs/wiki/Orchestration.md).
 
 Full command and flag reference: [CLI Reference](docs/wiki/CLI-Reference.md).
 
@@ -184,7 +184,7 @@ This README gets you running. Everything else lives in [`docs/wiki/`](docs/wiki/
 
 ## 6. Project Status
 
-Codex in Claude is at **v0.4.0** — an early, actively developed release, verified against `codex-cli 0.147.0` and Claude Code `2.1.220+`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
+Codex in Claude is at **v0.6.0** — an early, actively developed release, verified against `codex-cli 0.149.1` and Claude Code `2.1.246`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
 
 **Upgrading from v0.1.0?** Two removals are breaking: the `SessionEnd` cleanup hook (and `--detach` with it) and `stop --all-mine`. Background runs are no longer stopped when a session ends — `status --all` finds them and `stop --run <id>`/`stop --all` ends them, and `doctor` now reports what the registry is holding. See the [changelog](CHANGELOG.md#020--2026-08-02).
 

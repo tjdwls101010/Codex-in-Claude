@@ -166,8 +166,13 @@ class AStatedDefaultIsTheRealDefault(unittest.TestCase):
         return out
 
     def test_the_scan_found_defaults_it_can_check(self):
+        # The floor is a guard against the scan silently finding nothing, not
+        # a target. It came down from 4 when `log --since` took a `None`
+        # default so that "not passed" and "passed zero" stop being the same
+        # answer — its help no longer states a number, which is the honest
+        # outcome rather than a loss.
         self.assertGreater(
-            len(self.comparable_defaults()), 3,
+            len(self.comparable_defaults()), 2,
             "no help string states a default argparse also holds, so this "
             "check is passing without looking at anything")
 

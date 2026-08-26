@@ -22,11 +22,12 @@ from helpers import BridgeCase
 class UncommittedCount(BridgeCase):
 
     def start_batch(self):
-        # Two members, because a lone writer is given no worktree — it has
-        # nobody to collide with — and the preamble under test is the worktree
-        # one.
+        # `--worktree`, because the preamble under test is the worktree one and
+        # isolation is opt-in (C-A). Two members for the same reason as before:
+        # the paragraph is about sharing a repository with other runs.
         tasks = self.tasks_file("do the thing", "do the other thing")
-        return self.bridge("batch", "start", "--group", "g", "--tasks-file", tasks)
+        return self.bridge("batch", "start", "--group", "g", "--worktree",
+                           "--tasks-file", tasks)
 
     def preamble(self):
         """The prompt the bridge actually handed to `codex`."""

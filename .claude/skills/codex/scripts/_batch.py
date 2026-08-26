@@ -32,13 +32,15 @@ import time
 import uuid
 from pathlib import Path
 
-from _events import read_events, scan_progress
+from _events import (FOLLOW_INTERVAL, format_events, read_events,
+                     scan_progress)
 from _registry import (
     ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,
     meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
     still_writing, unreadable_runs,
 )
-from _codex import check_model_effort, model_catalog, review_argv
+from _codex import (check_model_effort, model_catalog, review_argv,
+                    user_defaults)
 from _run import (
     WRITING_SANDBOXES, create_run, run_row,
 )
@@ -47,8 +49,9 @@ from _util import (
     now_iso,
 )
 from _worktree import (
-    is_dirty as worktree_dirty, missing_at_base as worktree_missing_at_base,
-    prune as worktree_prune, remove as worktree_remove, repo_identity,
+    ignored_entries as worktree_ignored_entries, is_dirty as worktree_dirty,
+    missing_at_base as worktree_missing_at_base, prune as worktree_prune,
+    remove as worktree_remove, repo_identity,
     resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
 )
 
@@ -254,7 +257,7 @@ TASK_FIELD_TYPES = {"prompt": str, "kind": str, "label": str, "model": str,
                     "resume": str, "image": list, "review": dict}
 
 
-def load_tasks(args):
+def load_tasks(args, runs_dir=None):
     """Build the ordered task list from `--task` and `--tasks-file`.
 
     Both may be given; `--task` entries come first, because that is the order
@@ -319,12 +322,50 @@ def load_tasks(args):
     # cost this function exists to avoid. One catalog lookup covers every task.
     group_model = getattr(args, "model", None)
     group_effort = getattr(args, "effort", None)
+    # C10 put a third source under those two, and it was reaching validation
+    # one member at a time inside `resolve_settings` — after the group name was
+    # claimed and earlier members had already spawned. Measured: config effort
+    # `ultra` with a task naming `fake-small` produced `spawned: 1` of 2, which
+    # is the half-started batch this whole block exists to prevent.
+    #
+    # Not for a phase that continues threads: those members take their model
+    # from what each thread recorded, so holding them to a `config.toml` that
+    # has gone stale since would refuse the continuation `resume` exists for —
+    # the rule `resolve_settings` states for one run, at group scale.
+    # `--resume-from` is decided here rather than per item because this runs
+    # before `pair_with_previous`: every task is still `kind: start` at this
+    # point and will be rewritten into a resume, so asking each one would get
+    # the wrong answer for all of them.
+    user = ({} if getattr(args, "resume_from", None)
+            or getattr(args, "inherit_config", False) else user_defaults())
+
+    def inherits(item):
+        """Whether this member will take its model from a thread rather than
+        from the config. `resolve_settings` decides it by whether the run being
+        resumed is in this registry — a task naming an external Codex thread
+        resolves to nothing, so the config's values do reach it, and skipping
+        them here found a stale `config.toml` only after `claim_group`."""
+        if item["kind"] != "resume":
+            return False
+        if not runs_dir or not item.get("resume"):
+            return True
+        _rd, meta = find_run(runs_dir, item["resume"])
+        return bool(meta)
+
+    def defaults_for(item):
+        if inherits(item):
+            return group_model, group_effort
+        return (group_model or user.get("model"),
+                group_effort or user.get("effort"))
+
     named = [t for t in tasks if t.get("model") or t.get("effort")]
-    catalog = (model_catalog() if group_model or group_effort or named else None)
+    fresh_defaults = any(defaults_for(t) != (None, None) for t in tasks)
+    catalog = model_catalog() if named or fresh_defaults else None
     if catalog:
-        check_model_effort(group_model, group_effort, catalog=catalog, fail=fail)
         for n, item in enumerate(tasks, 1):
-            if not (item.get("model") or item.get("effort")):
+            dm, de = defaults_for(item)
+            model, effort = item.get("model") or dm, item.get("effort") or de
+            if not (model or effort):
                 continue
 
             def fail_at(msg, _n=n, **extra):
@@ -332,9 +373,15 @@ def load_tasks(args):
 
             # The task's own fields over the group's, matching `task_args` —
             # checking the pair that will actually be used is the whole point.
-            check_model_effort(item.get("model") or group_model,
-                               item.get("effort") or group_effort,
-                               catalog=catalog, fail=fail_at)
+            # A value the caller did not type is named as such, because "your
+            # config.toml says ultra" and "you passed --effort ultra" send the
+            # reader to two different files.
+            check_model_effort(
+                model, effort, catalog=catalog, fail=fail_at,
+                model_source=None if (item.get("model") or group_model)
+                else "config.toml",
+                effort_source=None if (item.get("effort") or group_effort)
+                else "config.toml")
     return tasks
 
 
@@ -403,7 +450,7 @@ def projected_cost(runs_dir: Path, n_runs: int):
 
 
 def wants_worktree(item, args):
-    """Whether this member would be isolated if the batch turns isolation on.
+    """Whether this member is one `--worktree` would isolate.
 
     D35 assigns per member, not per batch, and each exclusion has its own
     reason rather than a shared one:
@@ -428,24 +475,130 @@ def wants_worktree(item, args):
     return sandbox in WRITING_SANDBOXES
 
 
-def plan_worktrees(tasks, args, project):
+def writers_by_directory(tasks, args, project, runs_dir):
+    """Which members will write, grouped by the directory they will write in.
+
+    Resolved the way `create_run` will resolve it, which for a resume means the
+    parent run's own `cwd` — a resumed thread keeps the directory it already
+    lives in. Counting worktree *eligibility* instead answered "nobody writes
+    here" for an entire `--resume-from` phase, because `wants_worktree` excludes
+    every resume; and after C-A that phase is N writers continuing into the one
+    tree phase 1 shared, which is the case the warning exists for.
+    """
+    dirs = {}
+    for i, item in enumerate(tasks):
+        parent = {}
+        if item["kind"] == "resume" and item.get("resume"):
+            _rd, parent = find_run(runs_dir, item["resume"])
+            parent = parent or {}
+        # A resume inherits both of these from its thread when the task names
+        # neither, exactly as `resolve_settings` will. Defaulting them to the
+        # group's instead reported a phase of read-only resumes as writers
+        # sharing a tree — a warning about a hazard that cannot occur, which is
+        # how a field stops being read.
+        sandbox = (item.get("sandbox") or parent.get("sandbox")
+                   or args.sandbox or "workspace-write")
+        if sandbox not in WRITING_SANDBOXES:
+            continue
+        where = item.get("cwd") or getattr(args, "cwd", None) or parent.get("cwd")
+        dirs.setdefault(str(where or project), []).append(i)
+    return dirs
+
+
+def why_not_isolated(item, args):
+    """Why `--worktree` would pass this member over, in the caller's words, or
+    None if it would not.
+
+    `wants_worktree` answers the same question in booleans, and a note that
+    read its answer as "these must be resumes" told two fresh tasks sharing an
+    explicit `cwd` that they were resumed threads.
+    """
+    if item["kind"] == "resume":
+        return "a resumed thread keeps the directory it already lives in"
+    if item["kind"] == "review":
+        return "a review has to see the uncommitted work in your tree"
+    if item.get("cwd") or getattr(args, "cwd", None):
+        return "a member with a cwd of its own was told where to go"
+    return None
+
+
+def sharing_note(shared, reasons):
+    """Who is about to write into one directory, and what can be done about it.
+
+    The remedy is conditional because `--worktree` reaches only some of these.
+    Naming the flag at a member it would pass over is R19's shape — the caller
+    acts on the remedy, the tool reports success, and nothing has moved.
+    `reasons` is why it would pass them over, empty when it would not.
+    """
+    parts = "; ".join(f"{len(idx)} members write to {d} and share it"
+                      for d, idx in shared.items())
+    tail = (" `--worktree` gives each its own checkout instead; `result --group` "
+            "then reports which paths more than one wrote."
+            if not reasons else
+            " `--worktree` does not separate all of them: " + "; ".join(reasons)
+            + ".")
+    return (parts + ", so each one's changes are in that tree as it makes them "
+            "— and none of them can tell another's edit from its own." + tail)
+
+
+def plan_worktrees(tasks, args, project, runs_dir):
     """Decide isolation for the batch, then report why in the same breath.
 
-    Returns `(eligible_indices, base_sha, note)`. The threshold is two writing
-    members because one writer has nobody to collide with, and isolating it
-    would only put its results somewhere the caller has to go and fetch.
+    Returns `(eligible_indices, base_sha, note)`.
+
+    **Isolation is opt-in (C-A).** It was the default for two or more writing
+    members, on the reasoning that concurrent writers in one directory edit each
+    other's files mid-edit — which is true, and is a risk Claude's own
+    subagents take by default too. What the default cost was measured three
+    ways. A session that got it collected three checkouts by hand (`git apply`
+    per member, then `batch clean --force`) — steps a native fan-out does not
+    have, because a native subagent's work lands in the caller's tree. A second
+    session, knowing that, declined to fan out at all and did three files in one
+    run: the default suppressed the parallelism the command exists for. And a
+    checkout holds only what git tracks, so `.venv`, provider caches and
+    fixtures are absent — two field reports of runs that could not execute the
+    verification they were asked for, or rebuilt a cache against live data and
+    reported every comparison as a regression.
+
+    Against that, sessions judge overlap correctly on their own: asked to
+    fan out across three named modules, three separate sessions each reasoned
+    that the files do not overlap. So the judgement stays with the caller and
+    `--worktree` is how they act on it — one flag, whose existence is the whole
+    of what has to be taught.
     """
     eligible = {i for i, t in enumerate(tasks) if wants_worktree(t, args)}
-    if getattr(args, "no_worktree", False):
-        return set(), None, "worktrees disabled by --no-worktree"
-    forced = getattr(args, "worktree", False)
+    # Stated, not silent, and only where it means something: two or more members
+    # that can reach the same files. With one writer there is nobody to collide
+    # with, and a note about a hazard that cannot occur is how a field stops
+    # being read.
+    shared = {d: idx for d, idx in
+              writers_by_directory(tasks, args, project, runs_dir).items()
+              if len(idx) > 1}
+    def reasons_for(indices):
+        out = []
+        for i in indices:
+            r = why_not_isolated(tasks[i], args)
+            if r and r not in out:
+                out.append(r)
+        return out
+
+    if not getattr(args, "worktree", False):
+        if not shared:
+            return set(), None, None
+        return set(), None, sharing_note(
+            shared, reasons_for(i for idx in shared.values() for i in idx))
     if not eligible:
-        return set(), None, ("no member writes to the tree, so there is nothing "
-                             "to isolate" if forced else None)
-    if len(eligible) < 2 and not forced:
-        return set(), None, ("only one member writes to the tree; a lone writer "
-                             "has nobody to collide with. Pass --worktree to "
-                             "isolate it anyway.")
+        why = reasons_for(range(len(tasks)))
+        if not why:
+            return set(), None, ("no member writes to the tree, so there is "
+                                 "nothing to isolate")
+        # The answer this used to give — "no member writes to the tree" — is
+        # false of a phase of workspace-write resumes, and it is the answer a
+        # caller acts on. What is true is narrower, and it is not always about
+        # resumes.
+        note = "no worktree is cut: " + "; ".join(why) + "."
+        return set(), None, note + (" " + sharing_note(shared, why)
+                                    if shared else "")
     if git_toplevel(project) is None:
         return set(), None, (f"{project} is not a git repository, so worktrees "
                              "are unavailable; members share the caller's tree")
@@ -625,13 +778,18 @@ def cmd_batch_start(args):
     if not valid_name(args.group):
         fail("group name must be alphanumeric with . _ - and no path separators",
              got=args.group)
-    if getattr(args, "worktree", False) and getattr(args, "no_worktree", False):
-        # Checked here, above `claim_group`, and not where the flags are used.
-        # Silently letting one win would hand isolation — or its absence — to a
-        # caller who asked for both and cannot tell which they got; refusing
-        # after the name was claimed would burn that name on a typo, against
-        # the whole point of claiming before anything is spawned.
-        fail("--worktree and --no-worktree contradict each other; pass one")
+    if getattr(args, "base", None) and not getattr(args, "worktree", False):
+        # `--base` names the commit a checkout is cut from, and after C-A no
+        # checkout is cut unless it was asked for. Accepting it silently is the
+        # R19 shape: the caller reads the success as "cut from that commit" and
+        # then reasons correctly from a premise the tool handed them. Checked
+        # here, above `claim_group`, for the reason the refusals below it are —
+        # a combination that quietly means nothing is worse than an error, and
+        # refusing after the claim would burn a single-use group name on a typo.
+        fail("--base only shapes the worktrees --worktree cuts, and there is no "
+             "--worktree here, so nothing would use it. Members share the "
+             "caller's tree, which is whatever is checked out in it now.",
+             base=args.base)
     # `--foreground` used to be accepted here and refused below. The parser no
     # longer offers it, so argparse refuses it first and this command never sees
     # it. Why it can never work is unchanged: `task_args` copies the caller's
@@ -652,7 +810,7 @@ def cmd_batch_start(args):
              "running; --as-ready waits for that turn to end. Pass one.")
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
-    tasks = load_tasks(args)
+    tasks = load_tasks(args, runs_dir)
 
     previous = getattr(args, "resume_from", None)
     if previous:
@@ -678,7 +836,8 @@ def cmd_batch_start(args):
              created_at=existing.get("created_at"),
              members=len(existing.get("members") or []))
 
-    isolated_idx, wt_base, wt_note = plan_worktrees(tasks, args, project)
+    isolated_idx, wt_base, wt_note = plan_worktrees(
+        tasks, args, project, runs_dir)
     batch_ctx = {"n": len(tasks), "group": args.group}
 
     members, results = [], []
@@ -751,6 +910,21 @@ def cmd_batch_start(args):
                     "<run_dir>/wt. Their changes are not in your tree; "
                     "`result --group` reports which paths more than one wrote. "
                     "`batch clean --group` removes them once you have collected."}
+        try:
+            own = runs_dir.relative_to(project).as_posix() + "/"
+        except ValueError:
+            own = None
+        ignored, ignored_more = worktree_ignored_entries(
+            project, base=wt_base, skip=[own] if own else [])
+        if ignored:
+            # R14 — the tool knows this at the moment it cuts the checkout, and
+            # the caller cannot see it from anywhere. Named rather than
+            # summarised, because the decision it feeds is per entry: a cache
+            # is a rebuild, a `.venv` is a run that cannot execute the command
+            # it was asked to verify with.
+            out["worktrees"]["missing_ignored"] = ignored
+            if ignored_more:
+                out["worktrees"]["missing_ignored_truncated"] = ignored_more
         missing = worktree_missing_at_base(project, wt_base)
         if missing:
             # V-14: project instructions reach a worktree run, but only from a
@@ -806,9 +980,12 @@ def cmd_batch_clean(args):
     only copy of what a run produced, and nothing should delete that on a
     schedule the caller did not choose.
 
-    Four things stop a clean without `--force`, and only the first two are
-    checks this code performs. The other two are git's own refusal, and a fact
-    about groups that outlive each other.
+    Five things stop a clean without `--force`. Three are group-level checks,
+    listed in `guards` below in the order they run. The other two are per
+    worktree and land in `kept` rather than failing the call: git's own refusal
+    of a dirty tree, which is not reimplemented here, and a live run occupying
+    the checkout — R10's fallback, which catches what the `derived_groups`
+    guard cannot once an intermediate manifest has been cleaned.
     """
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -817,18 +994,6 @@ def cmd_batch_clean(args):
     if manifest is None and not lost_manifest:
         fail(f"no such group in this project: {args.group}",
              known_groups=list_groups(runs_dir)[:20])
-    if lost_manifest and not args.force:
-        # The fourth thing that stops a clean, and the only one that used to be
-        # unliftable. `--force` already overrides a member's corrupt meta.json;
-        # a corrupt manifest left the group unaddressable by anything, with its
-        # worktrees — the only copy of what its runs produced — stranded.
-        fail(f"group {args.group!r} has a manifest that will not parse, so what "
-             f"it was and what order it ran in cannot be read. Its members are "
-             f"still recoverable from the registry; pass --force to remove their "
-             f"worktrees and release the name",
-             manifest=str(group_path(runs_dir, args.group)),
-             members_recorded_by_runs=owned_run_ids(runs_dir, args.group))
-
     live, removed, kept = [], [], []
     for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
@@ -853,30 +1018,55 @@ def cmd_batch_clean(args):
             live.append({"run_id": rid, "state": meta.get("state"),
                          **({"codex_still_running": True} if still_writing(meta) else {})})
 
-    # 1. A live member is still writing into the very directory being removed.
-    if live and not args.force:
-        fail(f"group {args.group!r} still has running members; stop them first "
-             f"or pass --force", running=live)
-    # One flag lifts all three protections, and a caller usually reaches for it
-    # to get past one of them. What it actually overrode therefore has to be in
-    # the result, not only in --help: the caller who forced past a dependent
-    # group needs to see that a running member's directory went with it.
-    overrode = {}
-    if args.force and live:
-        overrode["running_members"] = live
-    if lost_manifest:
-        overrode["unreadable_manifest"] = str(group_path(runs_dir, args.group))
-
-    # 2. A group that another group resumed into. `--resume-from` puts phase 2
-    #    in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
-    #    under runs that are still using it. Free to detect thanks to the
-    #    manifest's `derived_from`.
     children = derived_groups(runs_dir, args.group)
-    if children and not args.force:
-        fail(f"group {args.group!r} was resumed by another group, whose members "
-             f"are working in these worktrees", derived_groups=children)
-    if args.force and children:
-        overrode["derived_groups"] = children
+    # The three refusals in one list, in check order, because one flag lifts all
+    # three and a caller reaches for it to get past exactly one. What `--force`
+    # actually overrode therefore has to be in the result and not only in
+    # `--help`: whoever forced past a dependent group needs to see that a
+    # running member's directory went with it.
+    #
+    # `(key, tripped, message, detail, forced_value)` — `detail` is what the
+    # refusal reports, `forced_value` what `forced_past` records instead.
+    # `detail` is a thunk because one of them walks the whole registry:
+    # building it eagerly added an unconditional O(runs) scan to every clean,
+    # for a diagnostic almost no clean prints.
+    guards = [
+        # R35 — the one that used to be unliftable, because it was checked
+        # before `--force` was consulted. `--force` already overrides a
+        # member's corrupt meta.json; a corrupt manifest left the group
+        # addressable by nothing, with its worktrees — the only copy of what
+        # its runs produced — stranded.
+        ("unreadable_manifest", lost_manifest,
+         f"group {args.group!r} has a manifest that will not parse, so what it "
+         f"was and what order it ran in cannot be read. Its members are still "
+         f"recoverable from the registry; pass --force to remove their "
+         f"worktrees and release the name",
+         lambda: {"manifest": str(group_path(runs_dir, args.group)),
+                  "members_recorded_by_runs": owned_run_ids(runs_dir, args.group)},
+         str(group_path(runs_dir, args.group))),
+        # The reason the loop above bothers with `still_writing` as well as the
+        # state: a live member is writing into the very directory being removed.
+        ("running_members", bool(live),
+         f"group {args.group!r} still has running members; stop them first or "
+         f"pass --force",
+         lambda: {"running": live}, live),
+        # R10's better error message, and only that: `--resume-from` puts phase
+        # 2 in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
+        # under runs still using it. Free to detect thanks to the manifest's
+        # `derived_from` — but one hop deep, which is why the removal loop asks
+        # the registry the same question again.
+        ("derived_groups", bool(children),
+         f"group {args.group!r} was resumed by another group, whose members are "
+         f"working in these worktrees",
+         lambda: {"derived_groups": children}, children),
+    ]
+    overrode = {}
+    for key, tripped, message, detail, forced_value in guards:
+        if not tripped:
+            continue
+        if not args.force:
+            fail(message, **detail())
+        overrode[key] = forced_value
 
     worktree_prune(project)
     for rid in owned_run_ids(runs_dir, args.group) or []:
@@ -893,16 +1083,17 @@ def cmd_batch_clean(args):
         path = Path(wt["path"]) if wt else rd / "wt"
         if not path.exists():
             continue
-        # 3. Uncommitted changes in the worktree, i.e. results nobody collected.
-        #    Not implemented here: `git worktree remove` refuses a dirty tree by
-        #    itself (measured, V-13), and git's definition of dirty is the
-        #    correct one. Its refusal is reported as the reason.
-        # Who is actually living here, asked of the registry rather than of the
-        # group graph. The `derived_from` check above is a better error message
-        # when the chain is intact, but it is only one hop and it evaporates the
-        # moment an intermediate manifest is cleaned: p1 -> p2 -> p3, clean p2,
-        # and p1 looks unreferenced while p3 is still running in p1's worktree.
-        # A run's own recorded cwd cannot go stale that way.
+        # The fourth refusal, and the one this code does not perform: `git
+        # worktree remove` declines a dirty tree by itself (measured, V-13) and
+        # git's definition of dirty is the correct one, so its refusal is
+        # reported as the reason rather than pre-empted.
+        #
+        # R10 — who is actually living here, asked of the registry rather than
+        # of the group graph. The `derived_from` guard above is a better error
+        # message when the chain is intact, but it is one hop and it evaporates
+        # the moment an intermediate manifest is cleaned: p1 -> p2 -> p3, clean
+        # p2, and p1 looks unreferenced while p3 is still running in p1's
+        # worktree. A run's own recorded cwd cannot go stale that way.
         occupants = [m for _rd, m in iter_runs(runs_dir)
                      if (m.get("state") not in TERMINAL_STATES
                          or still_writing(m))
@@ -1115,7 +1306,9 @@ def follow_group(args, project, runs_dir):
         sys.stdout.flush()
         return
     seen = {}
-    deadline = time.time() + args.follow_timeout if args.follow_timeout else None
+    started = time.time()
+    beat_at = started
+    deadline = started + args.follow_timeout if args.follow_timeout else None
     while True:
         rows = []
         for rd, m in members:
@@ -1136,13 +1329,127 @@ def follow_group(args, project, runs_dir):
                              f"done={len(done)} failed={len(failed)}" + tail + "\n")
             sys.stdout.flush()
             return
-        if deadline and time.time() >= deadline:
+        now = time.time()
+        if deadline and now >= deadline:
             sys.stdout.write(f"group.still-running group={args.group} "
                              f"running={len(running)} done={len(done)} "
                              f"failed={len(failed)}\n")
             sys.stdout.flush()
             return
-        time.sleep(args.interval)
+        beat, beat_at = heartbeat_due(beat_at, getattr(args, "heartbeat", None), now)
+        if beat:
+            sys.stdout.write(f"still-running elapsed={int(now - started)} "
+                             f"running={len(running)}\n")
+            sys.stdout.flush()
+        time.sleep(FOLLOW_INTERVAL)
+
+
+def heartbeat_due(last, every, now):
+    """Whether a follower owes a beat, and when the next one is measured from.
+
+    Opt-in on both followers, because the line separates a *busy* run from a
+    *dead follower* and only a watcher woken per event can tell the difference
+    in the first place. A run that is genuinely wedged already announces itself:
+    `run_row` derives `stalled` after 300 idle seconds, so `status --group
+    --follow` prints `running -> stalled` on its own.
+    """
+    if not every or now - last < every:
+        return False, last
+    return True, now
+
+
+def follow_group_log(args, project, runs_dir):
+    """What `log --run --follow` gives one run, for every member of a group.
+
+    A group had no equivalent, so wanting mid-run signal from three members
+    meant arming three followers — and a field report wrote its own polling
+    loop instead, got the format wrong, and came within one step of reporting a
+    false completion. The single-run follower's contract is kept exactly: every
+    line prefixed with the member it came from, the group's own terminal line
+    at the end, and nothing held in memory that `status --group` could not
+    re-derive after the follower dies.
+
+    Cursors are per member because the files are: each has its own byte offset
+    into its own stream, which is why `--since` is refused rather than given
+    some collapsed meaning.
+    """
+    members = resolve_group(runs_dir, args.group)
+    never = (unstarted_members(runs_dir, args.group)
+             + vanished_members(runs_dir, args.group))
+    bad = len(unreadable_runs(runs_dir))
+    tail = ((f" unstarted={len(never)}" if never else "")
+            + (f" unreadable={bad}" if bad else ""))
+    if not members:
+        sys.stdout.write(f"group.empty group={args.group}" + tail + "\n")
+        sys.stdout.flush()
+        return
+
+    labels = {m.get("run_id"): m.get("label")
+              for m in (read_group(runs_dir, args.group) or {}).get("members", [])}
+    prefixes, cursors = [], []
+    header = []
+    for i, (_rd, m) in enumerate(members):
+        rid = m.get("run_id")
+        label = labels.get(rid) or m.get("label")
+        # Short enough to read down the left margin at a glance, and the header
+        # is what leads back from an index to a `stop --run`. Putting the run id
+        # in every line instead cost 24 characters of every line to answer a
+        # question asked once.
+        # Flattened, because this is a line-oriented protocol and the label is
+        # caller text. A label holding a newline splits both the header and
+        # every prefix into extra physical lines, and one shaped like
+        # `x\ngroup.completed group=g done=2 failed=0` puts a forged terminal
+        # line into the stream a watcher is armed on.
+        label = " ".join(label.split()) if label else label
+        prefixes.append(f"[{i}:{label}] " if label else f"[{i}] ")
+        header.append(f"{i}={rid}" + (f":{label}" if label else ""))
+        cursors.append(0)
+    sys.stdout.write(f"group.members group={args.group} " + " ".join(header) + "\n")
+    sys.stdout.flush()
+
+    def drain():
+        for i, (rd, m) in enumerate(members):
+            events, cursors[i] = read_events(rd / "events.jsonl", cursors[i])
+            rel_to = Path(m.get("cwd") or project)
+            for entry in format_events(events, args.level, rel_to):
+                # Every physical line, not only the first of a multi-line
+                # entry. Two members' messages can land adjacent in an
+                # interleaved stream, so a continuation line without a prefix
+                # belongs to whichever member the reader last saw — which is
+                # not always the one that wrote it.
+                for line in entry.split("\n"):
+                    sys.stdout.write(prefixes[i] + line + "\n")
+        sys.stdout.flush()
+
+    started = time.time()
+    beat_at = started
+    deadline = started + args.follow_timeout if args.follow_timeout else None
+    while True:
+        drain()
+        rows = [run_row(rd, read_meta(rd) or m, project) for rd, m in members]
+        running, done, failed, gstate = group_snapshot(rows, len(never))
+        if not running or not args.follow:
+            # Drained once more after the state was read, not before: an event
+            # written between the last read and the terminal check would
+            # otherwise be lost on exactly the runs that just finished.
+            drain()
+            sys.stdout.write(f"group.{gstate} group={args.group} "
+                             f"done={len(done)} failed={len(failed)}" + tail + "\n")
+            sys.stdout.flush()
+            return
+        now = time.time()
+        if deadline and now >= deadline:
+            sys.stdout.write(f"group.still-running group={args.group} "
+                             f"running={len(running)} done={len(done)} "
+                             f"failed={len(failed)}\n")
+            sys.stdout.flush()
+            return
+        beat, beat_at = heartbeat_due(beat_at, args.heartbeat, now)
+        if beat:
+            sys.stdout.write(f"still-running elapsed={int(now - started)} "
+                             f"running={len(running)}\n")
+            sys.stdout.flush()
+        time.sleep(FOLLOW_INTERVAL)
 
 
 GROUP_MESSAGE_CAP = 4000

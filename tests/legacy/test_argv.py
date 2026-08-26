@@ -26,7 +26,8 @@ class ArgvComposition(BridgeTestCase):
         self.assertIn("--json", argv)
         self.assertIn("--ignore-user-config", argv, "isolated is the default (D2)")
         self.assertIn('sandbox_mode="workspace-write"', argv, "D3 default sandbox")
-        self.assertIn('service_tier="priority"', argv, "D18: re-injected under isolation")
+        self.assertFalse([a for a in argv if a.startswith("service_tier=")],
+                         "B41: no tier of the skill's own — see UserDefaultsSurviveIsolation")
         self.assertNoFlag(argv, "-s", "--sandbox", "-C", "--cd")
 
     def test_no_model_or_effort_pinned_by_default(self):
@@ -72,7 +73,7 @@ class ArgvComposition(BridgeTestCase):
         extra.mkdir()
         r = self.start("x", "--model", "fake-big", "--effort", "high",
                        "--schema", str(schema), "--image", str(img),
-                       "--add-dir", str(extra), "--config", "foo.bar=1")
+                       "--add-dir", str(extra))
         self.wait_for_state(r["run_id"])
         argv = self.last_argv()
         self.assertFlagPair(argv, "-m", "fake-big")
@@ -80,7 +81,6 @@ class ArgvComposition(BridgeTestCase):
         self.assertFlagPair(argv, "--output-schema", str(schema))
         self.assertFlagPair(argv, "-i", str(img))
         self.assertFlagPair(argv, "--add-dir", str(extra))
-        self.assertIn("foo.bar=1", argv, "raw --config passthrough must not be re-quoted")
 
     def test_cwd_is_set_on_the_child_never_via_dash_C(self):
         """Invariant 2: -C does not exist on resume or review, so it is never used."""
@@ -134,18 +134,12 @@ class ArgvComposition(BridgeTestCase):
         self.assertTrue(self.last_argv()[-1].endswith("compare them"))
 
     def test_a_prompt_starting_with_a_dash_survives(self):
-        # --no-preamble so the prompt genuinely begins with a dash; with the
-        # preamble prepended it would not exercise the case at all.
-        r = self.start("--- please summarise this diff ---", "--no-preamble")
+        r = self.start("--- please summarise this diff ---")
         row = self.wait_for_state(r["run_id"])
         self.assertEqual(row["state"], "completed",
                          "a dash-leading prompt must not be parsed as a flag")
-        self.assertEqual(self.last_argv()[-1], "--- please summarise this diff ---")
-
-    def test_no_preamble_disables_it(self):
-        r = self.start("bare prompt", "--no-preamble")
-        self.wait_for_state(r["run_id"])
-        self.assertEqual(self.last_argv()[-1], "bare prompt")
+        self.assertTrue(self.last_argv()[-1].endswith(
+            "--- please summarise this diff ---"))
 
     def test_stdin_is_devnull(self):
         """Codex reads stdin when it is not a TTY; a live stdin risks a block."""
@@ -204,14 +198,13 @@ class SandboxDriftRegression(BridgeTestCase):
         self.assertNotEqual(r["run_id"], r2["run_id"])
 
     def test_resume_reasserts_every_setting_not_only_sandbox(self):
-        # start_args deliberately use NON-default values for priority and
-        # extra_config: with defaults (isolated=True -> priority=True,
-        # extra_config=[]) this test would pass even if inheritance were
-        # broken, because start's own derivation happens to match.
+        # start_args deliberately use a NON-default priority: with the default
+        # (isolated=True -> priority=True) this test would pass even if
+        # inheritance were broken, because start's own derivation happens to
+        # match.
         r, r2 = self._start_and_resume(
             start_args=("--sandbox", "read-only", "--model", "fake-big",
-                        "--effort", "low", "--no-priority",
-                        "--config", "tools.web_search=true"))
+                        "--effort", "low", "--no-priority"))
         argv = self.argv_records()[1]["argv"]
         self.assertIn('sandbox_mode="read-only"', argv)
         self.assertIn('model_reasoning_effort="low"', argv,
@@ -220,7 +213,6 @@ class SandboxDriftRegression(BridgeTestCase):
         self.assertIn("--ignore-user-config", argv)
         self.assertFalse([a for a in argv if a.startswith("service_tier=")],
                          "priority must not be re-derived from isolation on resume")
-        self.assertFlagPair(argv, "-c", "tools.web_search=true")
 
     def test_resume_keeps_the_parents_cwd(self):
         sub = self.project / "worktree"
@@ -329,8 +321,7 @@ class PureArgvUnits(unittest.TestCase):
     def base(self, **kw):
         meta = {"run_dir": "/tmp/x", "sandbox": "workspace-write", "isolated": True,
                 "priority": True, "model": None, "effort": None, "schema_path": None,
-                "images": [], "add_dirs": [], "extra_config": [],
-                "skip_git_repo_check": False}
+                "images": [], "add_dirs": [], "skip_git_repo_check": False}
         meta.update(kw)
         return meta
 
@@ -340,12 +331,15 @@ class PureArgvUnits(unittest.TestCase):
         argv = _codex.build_argv(self.base(), kind="start", prompt="p")
         self.assertIn('sandbox_mode="workspace-write"', argv)
 
-    def test_raw_config_passthrough_is_verbatim(self):
-        argv = _codex.build_argv(
-            self.base(extra_config=["tools.web_search=true", "num=3"]),
-            kind="start", prompt="p")
-        self.assertIn("tools.web_search=true", argv)
-        self.assertIn("num=3", argv)
+    def test_a_dash_leading_prompt_is_terminated(self):
+        """`--` before the prompt, and it is required rather than tidy: `codex
+        exec`'s `-i` takes multiple values and swallows the next positional, and
+        a prompt beginning with `-` is rejected as an unknown flag. End to end
+        the preamble now always sits in front of the caller's text, so this is
+        the case that reaches the bare form."""
+        argv = _codex.build_argv(self.base(), kind="start",
+                                 prompt="--- summarise ---")
+        self.assertEqual(argv[-2:], ["--", "--- summarise ---"])
 
     def test_output_last_message_always_present(self):
         for kind in ("start", "resume", "review"):
@@ -381,11 +375,12 @@ class FlagsNothingElseCovers(BridgeTestCase):
     to be broken; they are pinned so the next edit nearby cannot break them
     quietly either."""
 
-    def test_isolate_overrides_inherit_config(self):
-        """The two can be passed together, and `--isolate` is the one that
-        wins — it also drives whether `service_tier=priority` is re-injected,
-        so getting the precedence wrong changes two things, not one."""
-        out = self.bridge("start", "x", "--inherit-config", "--isolate")
+    def test_isolation_is_the_default_and_carries_the_tier_with_it(self):
+        """`--isolate` used to state this explicitly. It is the default, so the
+        flag only ever agreed with what was already happening — and on a resume
+        it re-asserted a recorded choice with no way back."""
+        self.write_codex_config('service_tier = "priority"\n')
+        out = self.bridge("start", "x")
         self.wait_for_state(out["run_id"])
         self.assertTrue(out["isolated"])
         argv = " ".join(self.last_argv())
@@ -446,65 +441,218 @@ class FlagsNothingElseCovers(BridgeTestCase):
         self.assertEqual(row["run_id"], out["run_id"])
 
 
-class RawConfigCannotOutrankTheInvariant(BridgeTestCase):
-    """`--config` takes a raw `-c key=value` straight through to Codex, and four
-    of those keys are ones this wrapper sets itself.
+class UserDefaultsSurviveIsolation(BridgeTestCase):
+    """C10 — isolation drops the user's `config.toml`, and three of its keys go
+    back in.
 
-    `codex`'s `-c` is last-value-wins for a repeated key, and the wrapper's own
-    `-c sandbox_mode=` used to be emitted *before* the caller's raw entries — so
-    `--config 'sandbox_mode="danger-full-access"'` won. Measured against the real
-    binary: the same file write is refused with the enforced `-c` alone and
-    succeeds with the raw one appended after it. `status` went on reporting
-    `read-only` throughout, and because `extra_config` is inherited by every
-    resume that does not pass `--config` itself, the drift rode along for the
-    rest of the thread.
+    `--ignore-user-config` is the default and it takes the whole file, so an
+    unnamed run took Codex's *server* default rather than the model the user
+    configured. Twenty-one benchmark sessions were measured that way: not one
+    argv carried a model or an effort, which is this spec's own long-standing
+    open item — "the model a run actually uses when none is named" — with an
+    answer at last.
 
-    That is the one thing this wrapper exists to prevent, reached through a
-    documented flag. Two guards now: the collision is refused outright, and the
-    argv order is inverted so a key nobody thought to reserve still cannot
-    outrank an invariant.
+    Exactly three keys, and `sandbox_mode` is deliberately not among them: that
+    one is the invariant this skill owns, and reading it from a file the caller
+    can edit is R24 arriving by a different road. Precedence has four steps —
+    an explicit flag, then whatever a resumed thread recorded, then the config
+    file, then whatever the server does with silence.
     """
 
-    def test_a_reserved_key_is_refused_and_names_its_flag(self):
-        for raw, flag in ((' sandbox_mode="danger-full-access"', "--sandbox"),
-                          ('service_tier="priority"', "--priority"),
-                          ("model_reasoning_effort=low", "--effort"),
-                          ("model=gpt-5.6-sol", "--model")):
-            with self.subTest(raw=raw):
-                out = self.bridge("start", "--config", raw, "x", expect_rc=1)
-                self.assertIn("--config may not set", out["error"])
-                self.assertIn(flag, out["error"])
+    CONFIG = ('model = "fake-big"\n'
+              'model_reasoning_effort = "high"\n'
+              'service_tier = "fast"\n')
+
+    def test_the_three_keys_reach_a_fresh_isolated_run(self):
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertFlagPair(argv, "-m", "fake-big")
+        self.assertIn('model_reasoning_effort="high"', argv)
+        self.assertIn('service_tier="fast"', argv)
+
+    def test_the_tier_goes_over_the_wire_as_the_config_spells_it(self):
+        """Measured against codex-cli 0.149.1 by V-02's own method: `fast` and
+        `priority` both run clean, while `bogus_tier_xyz` produces an explicit
+        "not advertised as supported" error event. Both names are advertised,
+        so the config's own spelling is passed through rather than translated —
+        a translation nobody measured is a second thing that can be wrong."""
+        self.write_codex_config('service_tier = "fast"\n')
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        self.assertIn('service_tier="fast"', self.last_argv())
+
+    def test_an_explicit_flag_beats_the_config(self):
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "--model", "fake-small", "--effort", "medium",
+                        "--no-priority", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertFlagPair(argv, "-m", "fake-small")
+        self.assertIn('model_reasoning_effort="medium"', argv)
+        self.assertNotIn("service_tier", " ".join(argv))
+
+    def test_a_resume_reasserts_the_thread_not_the_config_as_it_is_now(self):
+        """B3's rule, applied to one more setting. A thread's settings are
+        stable across turns because the registry re-asserts what it recorded —
+        so editing `config.toml` mid-thread must not move a running
+        conversation onto another model."""
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        self.write_codex_config('model = "fake-small"\n'
+                                'model_reasoning_effort = "low"\n')
+        r2 = self.bridge("resume", r["run_id"], "second turn")
+        self.wait_for_state(r2["run_id"])
+        argv = self.argv_records()[-1]["argv"]
+        self.assertFlagPair(argv, "-m", "fake-big")
+        self.assertIn('model_reasoning_effort="high"', argv)
+
+    def test_sandbox_mode_is_never_taken_from_the_config(self):
+        """The fourth key this wrapper owns, and the one it will not read. A
+        config the caller can edit deciding the sandbox is R24 by another
+        road — `--config` is gone precisely so that cannot happen."""
+        self.write_codex_config('sandbox_mode = "danger-full-access"\n'
+                                'model = "fake-big"\n')
+        r = self.bridge("start", "--sandbox", "read-only", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertIn('sandbox_mode="read-only"', argv)
+        self.assertNotIn("danger-full-access", " ".join(argv))
+        self.assertEqual(
+            [t for t in argv if t.startswith("sandbox_mode=")],
+            ['sandbox_mode="read-only"'],
+            "exactly one sandbox_mode reaches codex, and it is the run's own")
+
+    def test_inheriting_the_config_does_not_re_inject_it(self):
+        """Under `--inherit-config` Codex reads the file itself, so putting the
+        same three keys back would be this wrapper restating what it just chose
+        not to suppress."""
+        self.write_codex_config(self.CONFIG)
+        r = self.bridge("start", "--inherit-config", "x")
+        self.wait_for_state(r["run_id"])
+        argv = " ".join(self.last_argv())
+        self.assertNotIn("--ignore-user-config", argv)
+        self.assertNotIn("model_reasoning_effort", argv)
+        self.assertNotIn("service_tier", argv)
+        self.assertNotIn("-m", self.last_argv())
+
+    def test_no_config_means_nothing_is_pinned(self):
+        """D40 unchanged: the skill has no defaults of its own. With nothing to
+        respect, it asserts nothing and the server decides."""
+        r = self.bridge("start", "x")
+        self.wait_for_state(r["run_id"])
+        argv = self.last_argv()
+        self.assertNotIn("-m", argv)
+        self.assertNotIn("model_reasoning_effort", " ".join(argv))
+        self.assertNotIn("service_tier", " ".join(argv))
+
+    def test_a_run_recorded_before_this_version_keeps_its_tier(self):
+        """The field changed name and type in the same commit, and a resume
+        reads whatever the registry already holds. A thread started under the
+        old release records `priority: true` and no `service_tier`, so reading
+        only the new key drops Fast mode from every remaining turn of it —
+        silently, and on exactly the threads that asked for it."""
+        r = self.bridge("start", "x", "--priority")
+        self.wait_for_state(r["run_id"])
+        meta_path = (self.project / ".codex-runs" / r["run_id"] / "meta.json")
+        meta = json.loads(meta_path.read_text())
+        del meta["service_tier"]
+        meta["priority"] = True
+        meta_path.write_text(json.dumps(meta))
+        r2 = self.bridge("resume", r["run_id"], "second turn")
+        self.wait_for_state(r2["run_id"])
+        self.assertIn('service_tier="priority"', self.argv_records()[-1]["argv"])
+
+    def test_a_recorded_no_tier_stays_no_tier(self):
+        """The reason the record is read rather than defaulted: `--no-priority`
+        is a choice, and a resume that could not tell it from "nothing recorded"
+        would re-add the tier the caller turned off."""
+        r = self.bridge("start", "x", "--no-priority")
+        self.wait_for_state(r["run_id"])
+        r2 = self.bridge("resume", r["run_id"], "second turn")
+        self.wait_for_state(r2["run_id"])
+        self.assertNotIn("service_tier",
+                         " ".join(self.argv_records()[-1]["argv"]))
+
+    def test_a_model_the_install_does_not_offer_is_refused_before_spawning(self):
+        """D38's catalog check follows the value rather than the flag. A model
+        retired upstream sits in `config.toml` until someone edits it, and
+        without this the first thing that notices is a wasted run coming back
+        `turn.failed`."""
+        self.write_codex_config('model = "retired-last-year"\n')
+        out = self.bridge("start", "x", expect_rc=1)
+        self.assertIn("retired-last-year", out["error"])
+        self.assertIn("config.toml", out["error"])
+        runs = self.project / ".codex-runs"
+        self.assertEqual([p for p in runs.iterdir() if p.is_dir()] if runs.is_dir() else [],
+                         [], "a refused run must not claim a directory first")
+
+    def test_doctor_says_what_a_run_would_actually_use(self):
+        """The report is where a caller checks a premise before acting on it,
+        and "which model does an unnamed run take" was answerable only by
+        starting one and reading its argv."""
+        self.write_codex_config(self.CONFIG)
+        rep = self.bridge("doctor", expect_rc=self.doctor_rc())
+        self.assertEqual(rep["effective_defaults"],
+                         {"model": "fake-big", "effort": "high",
+                          "service_tier": "fast"})
+
+
+class RetiredFlags(BridgeTestCase):
+    """Five flags left in the 260826 round, and a flag that is gone has to be
+    gone from the parser rather than merely undocumented.
+
+    `--config` is the one with a history. It handed a raw `-c key=value`
+    straight to Codex, and `codex`'s `-c` is last-value-wins for a repeated key
+    — so `--config 'sandbox_mode="danger-full-access"'` beat the wrapper's own
+    enforced entry. Measured against the real binary: the same file write is
+    refused with the enforced `-c` alone and succeeds with the raw one appended.
+    `status` reported `read-only` throughout, and because `extra_config` was
+    inherited by every resume that did not pass `--config` itself, the drift rode
+    along for the rest of the thread (R24). Two guards were added; neither is
+    needed once the flag cannot be typed, and a pass-through that can reach an
+    invariant is a thing to remove rather than to guard twice.
+
+    The other four went for a plainer reason — 51 real delegations used none of
+    them — plus, in each case, something beyond disuse. The preamble is measured
+    to prevent fabrication rather than merely add facts (V-18), so there is no
+    good reason to switch it off. `--isolate` is a no-op on a fresh run and an
+    irreversible re-assertion on a resume. `--no-worktree` (removed with C-A)
+    negated a default that no longer exists. And nothing has ever wanted a poll
+    interval other than 1.0s.
+    """
+
+    RETIRED = (("start", "--config", "k=v"), ("start", "--no-preamble", None),
+               ("start", "--isolate", None), ("log", "--interval", "2"),
+               ("status", "--interval", "2"))
+
+    def test_each_one_is_refused_by_the_parser(self):
+        for command, flag, value in self.RETIRED:
+            with self.subTest(command=command, flag=flag):
+                args = [command, flag] + ([value] if value else [])
+                if command == "start":
+                    args.append("x")
+                p = self.bridge_raw(*args)
+                self.assertEqual(p.returncode, 2, p.stdout)
+                self.assertIn("unrecognized arguments", p.stderr)
 
     def test_the_refusal_costs_nothing(self):
-        self.bridge("start", "--config", 'sandbox_mode="danger-full-access"', "x",
-                    expect_rc=1)
+        """argparse refuses before anything is claimed, which is what makes a
+        retirement safe to discover by typing."""
+        self.bridge_raw("start", "--config", 'sandbox_mode="danger-full-access"', "x")
         runs = self.project / ".codex-runs"
         started = [p for p in runs.iterdir() if p.is_dir()] if runs.is_dir() else []
         self.assertEqual(started, [],
                          "a refused run must not claim a directory first")
 
-    def test_an_unreserved_key_still_works(self):
-        out = self.bridge("start", "--config", "hide_agent_reasoning=false", "x")
+    def test_no_raw_config_reaches_codex_at_all(self):
+        """The invariant's second guard was argv ordering. With no way to supply
+        a raw `-c`, the only `-c` entries in an argv are the ones this wrapper
+        chose — which is what the ordering was protecting."""
+        out = self.bridge("start", "--sandbox", "read-only", "x")
         self.wait_for_state(out["run_id"])
-        self.assertIn("hide_agent_reasoning=false", self.last_argv())
-
-    def test_the_enforced_settings_are_emitted_last(self):
-        """The second guard, on its own. A registry written before the refusal
-        existed can still hold a poisoned `extra_config`, and so can a key the
-        reserved list does not name — ordering is what covers both."""
-        from _codex import build_argv
-        argv = build_argv(
-            {"sandbox": "read-only", "isolated": True, "run_dir": "/tmp/r",
-             "effort": "low", "priority": True,
-             "extra_config": ['sandbox_mode="danger-full-access"',
-                              'model_reasoning_effort="high"']},
-            kind="start", prompt="x")
-        for key, wins in (("sandbox_mode", 'sandbox_mode="read-only"'),
-                          ("model_reasoning_effort",
-                           'model_reasoning_effort="low"')):
-            with self.subTest(key=key):
-                hits = [i for i, t in enumerate(argv) if t.startswith(key + "=")]
-                self.assertEqual(len(hits), 2, argv)
-                self.assertEqual(argv[hits[-1]], wins,
-                                 "the last -c wins, so the enforced value must "
-                                 "be the last one")
+        argv = self.last_argv()
+        keys = [argv[i + 1].split("=", 1)[0] for i, t in enumerate(argv) if t == "-c"]
+        self.assertEqual(sorted(keys), ["sandbox_mode"])

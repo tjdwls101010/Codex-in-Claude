@@ -42,37 +42,73 @@ THREAD_ID_WAIT = 15.0
 
 # -- argv -------------------------------------------------------------------
 
-RESERVED_CONFIG_KEYS = {
-    "sandbox_mode": "--sandbox",
-    "service_tier": "--priority / --no-priority",
-    "model_reasoning_effort": "--effort",
-    "model": "--model",
-}
-
-
-def reserved_config_key(raw: str):
-    """The key in a raw `--config k=v`, if this wrapper is the one that sets it.
-
-    These four are not configuration this skill passes through — they are what
-    it records in the registry and re-asserts on every turn, which is the only
-    reason a resumed run cannot silently change its sandbox. A raw `-c` naming
-    one of them makes the registry's copy a lie: `status` keeps reporting what
-    was asked for while the run does something else, and because `extra_config`
-    is inherited by every later resume, it does so for the rest of the thread.
-
-    Refused rather than reordered around. Reordering (see `build_argv`) stops
-    the override from taking effect, but silently ignoring what a caller
-    explicitly typed is its own D27 failure — the caller has to be told that
-    `--sandbox` is where that decision lives.
-    """
-    key = str(raw).split("=", 1)[0].strip()
-    return key if key in RESERVED_CONFIG_KEYS else None
-
-
 def toml_cfg(key: str, value: str):
     """`-c` values are parsed as TOML, falling back to a raw string only if that
     fails — so a string value is emitted quoted. This is the canonical form."""
     return ["-c", f'{key}="{value}"']
+
+
+# -- the user's own defaults ------------------------------------------------
+# Isolation is the default and `--ignore-user-config` takes the whole file, so
+# for a year an unnamed run took Codex's *server* default rather than the model
+# the user had configured. Measured across 21 benchmark sessions: not one argv
+# carried a model or an effort.
+#
+# These three keys go back in. `sandbox_mode` is deliberately not among them —
+# it is the invariant this skill owns and re-asserts on every turn, and reading
+# it from a file the caller can edit is R24 arriving by another road. The
+# principle is not "the skill has defaults" but "the skill has none of its own
+# and respects the user's": policy lives in the user's file, and the edit path
+# is Codex's own `/model` and `/fast`.
+USER_DEFAULT_KEYS = ("model", "model_reasoning_effort", "service_tier")
+
+# `key = value` at the top level. A regex and not a TOML parser because
+# `tomllib` is 3.11 and this skill's floor is 3.10.
+_SCALAR_RE = re.compile(
+    r"""^([A-Za-z_][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s#]+))""")
+
+
+def config_scalars(keys, path=None):
+    """Named top-level scalars from `config.toml`, as strings.
+
+    The scan stops at the first `[table]` header, and that is the load-bearing
+    part rather than an optimisation: `model` under `[profiles.work]` is a
+    different setting from the top-level one, and Codex applies the top-level
+    value unless a profile is selected — which this wrapper never does. A
+    pattern that matched anywhere in the file would silently adopt a profile's
+    model for every run.
+
+    Every failure answers `{}`: an unreadable or absent config means there is
+    nothing to respect, not that a run should be refused.
+    """
+    path = Path(path) if path else codex_home() / "config.toml"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            break
+        m = _SCALAR_RE.match(s)
+        if not m or m.group(1) not in keys:
+            continue
+        out[m.group(1)] = next(g for g in m.groups()[1:] if g is not None)
+    return out
+
+
+def user_defaults():
+    """`{model, effort, service_tier}` from the user's `config.toml`.
+
+    Read fresh rather than cached: a `batch start` reads it once per member and
+    the file is a few hundred bytes, while a cache would mean the value a run
+    records depends on how long the process had been alive.
+    """
+    raw = config_scalars(USER_DEFAULT_KEYS)
+    return {"model": raw.get("model"),
+            "effort": raw.get("model_reasoning_effort"),
+            "service_tier": raw.get("service_tier")}
 
 
 # -- the model catalog ------------------------------------------------------
@@ -173,7 +209,8 @@ def model_catalog():
     return _CATALOG_CACHE[0]
 
 
-def check_model_effort(model, effort, *, catalog, fail):
+def check_model_effort(model, effort, *, catalog, fail, model_source=None,
+                       effort_source=None):
     """Refuse a model or effort this Codex install does not offer.
 
     Only values the caller just passed reach here — never one inherited from
@@ -189,12 +226,19 @@ def check_model_effort(model, effort, *, catalog, fail):
 
     `fail` is passed in for the same reason `review_argv` takes it: the CLI
     exits, a batch member raises inside `failures_raise`.
+
+    The two `*_source` strings name where a value came from when it was not
+    typed on the command line, and they are per value rather than shared: with
+    a `--model` flag and an effort taken from `config.toml`, blaming both on
+    the config would send the caller to edit a file that is not the problem.
     """
     if not catalog or (not model and not effort):
         return
+    ms = f" (from {model_source})" if model_source else ""
+    es = f" (from {effort_source})" if effort_source else ""
     by_slug = {m["slug"]: m for m in catalog}
     if model and model not in by_slug:
-        fail(f"unknown model {model!r}: this Codex install does not offer it. "
+        fail(f"unknown model {model!r}{ms}: this Codex install does not offer it. "
              f"The catalog refreshes on any Codex run, so if this name is newer "
              f"than your last run, start one and retry.",
              known_models=sorted(by_slug),
@@ -204,7 +248,7 @@ def check_model_effort(model, effort, *, catalog, fail):
     if model:
         allowed = by_slug[model]["efforts"]
         if allowed and effort not in allowed:
-            fail(f"model {model!r} does not accept effort {effort!r} — valid "
+            fail(f"model {model!r} does not accept effort {effort!r}{es} — valid "
                  f"efforts differ per model.", model=model, valid_efforts=allowed,
                  default_effort=by_slug[model].get("default_effort"))
         return
@@ -213,7 +257,8 @@ def check_model_effort(model, effort, *, catalog, fail):
     # API exactly as it is today. No new hole, one fewer.
     union = sorted({e for m in catalog for e in m["efforts"]})
     if union and effort not in union:
-        fail(f"unknown effort {effort!r}: no model in this Codex install accepts it.",
+        fail(f"unknown effort {effort!r}{es}: no model in this Codex install "
+             f"accepts it.",
              valid_efforts=union,
              hint="efforts are per-model; `models` shows which model takes which")
 
@@ -282,26 +327,20 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
     if meta.get("skip_git_repo_check"):
         argv.append("--skip-git-repo-check")
 
-    # The caller's raw `-c` entries go FIRST, and the order is the point.
-    # `codex`'s `-c` is last-value-wins for a repeated key, so while these were
-    # emitted last, `--config 'sandbox_mode="danger-full-access"'` beat the line
-    # below it — the run executed fully privileged while the registry, and
-    # therefore `status`, went on reporting `read-only`. Measured against the
-    # real binary: the same file write is refused with one `-c` and succeeds
-    # with both. That is the single thing this wrapper exists to prevent,
-    # reachable through a documented flag.
-    #
-    # `RESERVED_CONFIG_KEYS` refuses that collision at the point a run is built,
-    # which is the honest fix. This ordering is the second line: a key nobody
-    # thought to reserve still cannot outrank an invariant.
-    for raw in meta.get("extra_config") or []:
-        argv += ["-c", raw]
+    # `codex`'s `-c` is last-value-wins for a repeated key, so anything this
+    # wrapper considers its own has to be emitted after anything it does not.
+    # `--config` used to put the caller's raw entries here and was emitted
+    # *after* the line below, so `--config 'sandbox_mode="danger-full-access"'`
+    # simply won: the run executed fully privileged while the registry, and
+    # therefore `status`, went on reporting `read-only` (R24). The flag is gone,
+    # so there is nothing above this line today — the ordering is stated because
+    # it is the rule anything added here has to obey.
 
     # Invariant 1.
     argv += toml_cfg("sandbox_mode", meta["sandbox"])
 
-    if meta.get("priority"):
-        argv += toml_cfg("service_tier", "priority")
+    if meta.get("service_tier"):
+        argv += toml_cfg("service_tier", meta["service_tier"])
     if meta.get("effort"):
         argv += toml_cfg("model_reasoning_effort", meta["effort"])
 
@@ -400,12 +439,15 @@ def uncommitted_clause(n) -> str:
     return f"it does not contain the {n} uncommitted file(s) that exist in theirs."
 
 
-def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
-    """Prepend the run-context paragraphs. `--no-preamble` turns off all of them
-    together — a caller switching it off is saying it will brief Codex itself,
-    and half a briefing is worse than none."""
-    if not enabled:
-        return prompt
+def apply_preamble(prompt: str, batch=None) -> str:
+    """Prepend the run-context paragraphs.
+
+    Not optional. `--no-preamble` switched all of them off together and was
+    never used in 51 real delegations, which on its own would only argue for
+    leaving it alone — what argues for removing it is V-18: these paragraphs
+    were measured *correcting a confident falsehood* rather than merely adding
+    facts, and they cost 113 input tokens. A caller who wants to state the same
+    things itself can write them into the prompt, which is the same channel."""
     parts = [PREAMBLE]
     if batch:
         parts.append(BATCH_PREAMBLE.format(n=batch["n"], group=batch["group"]))

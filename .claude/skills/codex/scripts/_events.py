@@ -58,6 +58,14 @@ FULL_ITEM_BYTES = 4000
 # characters, so they are capped independently of any output.
 CMD_MAX_CHARS = 300
 
+# How often a follower asks whether anything has changed — `log --follow` and
+# `status --group --follow` alike. It was a `--interval` flag on both, and the
+# flag went in the 260826 round: 51 real delegations never passed it, and a
+# poll period is not a decision the caller has to make. One second is the
+# latency floor a follower's notification inherits, and it is cheap because a
+# tick reads a byte offset forward rather than re-reading a stream.
+FOLLOW_INTERVAL = 1.0
+
 
 # -- reading ----------------------------------------------------------------
 

@@ -22,17 +22,14 @@ Every subcommand accepts:
 | `--model <str>` | Override the model for this run |
 | `--effort <str>` | Reasoning effort, passed through as `model_reasoning_effort` |
 | `--inherit-config` | Load the user's own `$CODEX_HOME/config.toml` instead of isolating |
-| `--isolate` | Force isolation even if something else would disable it |
-| `--priority` / `--no-priority` | Force `service_tier="priority"` — the tier Codex labels "Fast mode" — re-injection on or off. Unset, it is derived per run; see `start --help` |
+| `--priority` / `--no-priority` | Force `service_tier="priority"` — the tier Codex labels "Fast mode" — on or off. Unset, an isolated run takes whatever `service_tier` your `config.toml` sets; see `start --help` |
 | `--schema <path>` | Path to a JSON schema file; the run's final message must validate against it |
-| `--config k=v` | Append a raw `-c k="v"` passthrough (repeatable) |
 | `--foreground` | Block until the run finishes instead of returning immediately |
 | `--timeout <seconds>` | Give the run this long, then SIGINT its process group and record `timed_out`. Works in the background too |
-| `--no-preamble` | Disable the short situational preamble normally prepended to the prompt |
 
 A `start` or `resume` that can write to a directory another live writing run already occupies returns `concurrent_writers` naming them. Reported, never refused — sharing a directory is sometimes what you meant, but it is not something you can otherwise see. Runs in their own worktrees never appear there.
 
-Defaults across all of them: **background**, `workspace-write`, isolated from the user's own Codex config, `service_tier=priority` re-injected under isolation, no model or reasoning effort pinned, no hard timeout.
+Defaults across all of them: **background**, `workspace-write`, isolated from the user's own Codex config except for the three keys it re-injects (`model`, `model_reasoning_effort`, `service_tier` — `doctor` prints them as `effective_defaults`), no hard timeout.
 
 ## 2. `start`
 
@@ -84,7 +81,7 @@ Drives `codex exec review`'s own distinct flag surface. Exactly one of `--uncomm
 
 ```bash
 $CODEX status [--run <ref>] [--thread <thread_id>] [--group <name>]
-              [--follow [--interval <sec>] [--follow-timeout <sec>]]
+              [--follow [--follow-timeout <sec>]]
               [--all] [--include-external]
 ```
 
@@ -95,23 +92,26 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 | `--run <ref>` | Show just one run (by id, prefix, or thread id) |
 | `--thread <thread_id>` | Filter to runs on one thread |
 | `--group <name>` | Show one batch group's members, with a `group_state` of `running`, `completed`, or `partial` |
-| `--follow` | With `--group`: print one line per tick until the group ends, then a terminal `group.completed` / `group.partial` / `group.still-running` line. Arm it in a background Bash call — see Orchestration §7 |
+| `--follow` | With `--group`: print one line per member state change until the group ends, then a terminal group line. Arm it in a background Bash call — see Orchestration §7. For the members' events rather than their states, use `log --group` |
+| `--heartbeat <sec>` | Add a periodic `still-running` line while following |
 | `--all` | Include terminal runs too |
 | `--include-external` | Also list threads Codex knows about for this directory that have no registry entry (e.g. started in the TUI) |
 
-**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `priority`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
+**Per-run fields:** `run_id`, `thread_id`, `parent_run_id`, `kind`, `label`, `state` (recomputed to `stalled` if idle time exceeds 300 seconds while still `running`), `codex_pid`, `pgid`, `started_at`, `ended_at`, `elapsed_seconds`, `idle_seconds`, `exit_code`, `sandbox`, `model`, `effort`, `isolated`, `service_tier`, `cwd`, `usage` (`null` with a `usage_note` for review runs), `turns_completed`, `commands`, `files_changed`, `config_error_events`, `in_progress_item`, `last_agent_message` (clipped to 400 characters), `events`; conditionally `sandbox_changed_from`, `stderr_tail`, `error`.
 
 **Top level:** `project`, `runs_dir`, `runs`, `threads` (thread id → run ids), `groups` (every batch group in this project), `running` (currently `running`/`stalled` run ids); with `--include-external`: `external_threads` and an explanatory `external_note`. A run that belongs to a group carries `group`, and one with a worktree carries `worktree` — together these are what let a session find and address a batch it did not start.
 
 ## 6. `log`
 
 ```bash
-$CODEX log --run <ref> [--since <n>] [--level {compact,normal,full,raw}] [--follow] [--interval <sec>] [--follow-timeout <sec>]
+$CODEX log (--run <ref> [--since <n>] | --group <name>) [--level {compact,normal,full,raw}] [--follow] [--follow-timeout <sec>] [--heartbeat <sec>]
 ```
 
 Prints a run's event log, filtered to `--level` (default `compact` — see [Context Discipline & Event Log Levels](Context-Discipline.md)), starting from byte offset `--since` (default `0`). Ends with `# cursor=<n>` — pass that number back as `--since` on the next call to get only new events.
 
-`--follow` polls every `--interval` seconds (default `1.0`) and streams new events as they arrive, printing a terminal line (`run.completed`, `run.failed`, `run.interrupted`, or `run.orphaned`, each with the exit code) once the run reaches a terminal state, or `run.still-running` if `--follow-timeout` elapses first.
+`--follow` polls once a second and streams new events as they arrive, printing a terminal line (`run.completed`, `run.failed`, `run.interrupted`, or `run.orphaned`, each with the exit code) once the run reaches a terminal state, or `run.still-running` if `--follow-timeout` elapses first.
+
+`--group <name>` follows every member of a batch group at once, which is what a session watching a fan-out wants instead of one follower per member. `--heartbeat <sec>` adds a periodic `still-running` line to either follower; it is off by default and only means anything to a watcher woken per event, since a run that has actually gone quiet already shows up as `stalled`. Both flags' exact output shapes are in `log --help`.
 
 ## 7. `show`
 
@@ -143,8 +143,8 @@ Returns a run's final message and usage. With `--group`, returns every member's 
 
 ```bash
 $CODEX batch start --group <name> (--task "<prompt>"... | --tasks-file <jsonl>)
-                   [--resume-from <group> [--as-ready]] [--worktree | --no-worktree]
-                   [--base <ref>] [--force]
+                   [--resume-from <group> [--as-ready]] [--worktree [--base <ref>]]
+                   [--force]
                    [any start/resume/review flag as a group-wide default]
 ```
 
@@ -157,13 +157,13 @@ Starts N runs as one addressable group and returns every handle at once.
 | `--tasks-file <path>` | JSONL, one task object per line. Fields: `prompt`, `kind`, `label`, `model`, `effort`, `sandbox`, `schema`, `image`, `cwd`, `resume`, `review` |
 | `--resume-from <group>` | Task *i* continues member *i* of that group, in its recorded start order. Refuses while any member of that group is still live |
 | `--as-ready` | With `--resume-from`: start each member the moment the member it continues reaches a terminal state, instead of waiting for the slowest of them. Any terminal state releases, a failure included; `--timeout` bounds only the Codex turn and never the wait, and `stop --group` is what ends a wait |
-| `--worktree` / `--no-worktree` | Force worktree isolation on for a lone writer, or off entirely |
-| `--base <ref>` | Commit the worktrees are cut from (default `HEAD`) |
+| `--worktree` | Give each writing member its own git checkout instead of your tree. **Off by default** — members share the tree, so their work lands where you can see it |
+| `--base <ref>` | Commit the worktrees are cut from (default `HEAD`). Refused without `--worktree`, the only thing it shapes |
 | `--force` | Let a resume task start a second turn on a thread that already has one live. Not combinable with `--as-ready`, which is the opposite instruction |
 
 Group-level flags are **defaults**, not constraints; a per-item field overrides them. An unknown field name or a wrongly-typed value fails the command before anything starts. One member failing to spawn does not take the batch with it — the failure is recorded in that member's slot.
 
-**Worktrees** are assigned when two or more members can write (`workspace-write` or `danger-full-access`), one per member at `.codex-runs/<run_id>/wt`, detached. `read-only` members, `kind: review` members, `kind: resume` members, and any member with an explicit `cwd` never get one. See [Orchestration](Orchestration.md) for why each exclusion exists.
+**Worktrees** are cut only under `--worktree`, one per writing member at `.codex-runs/<run_id>/wt`, detached. `read-only` members, `kind: review` members, `kind: resume` members, and any member with an explicit `cwd` never get one whatever the flag says. A checkout also holds only what git tracks, so anything gitignored — a canonical interpreter, a cache, a fixture directory — is absent from it. See [Orchestration](Orchestration.md) for why each exclusion exists.
 
 **Output:** `group`, `runs` (one entry per task, in order, each with `run_id`/`thread_id`/`cwd`/`sandbox` or an `error`), `spawned`, `requested`, `projected_cost`, `manifest`; plus `worktrees` when any were cut (or a `note` saying why none were), and `resumed_from` under `--resume-from`.
 
@@ -187,7 +187,7 @@ Refuses without `--force` when the group still has running members, when another
 $CODEX doctor
 ```
 
-Diagnoses the environment in one call, including what batches leave behind — registry size and run count, the project's groups, residual worktrees, and any set of live runs sharing one directory where at least one can write. It also covers: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, and whether Codex's thread database is readable.
+Diagnoses the environment in one call, including what batches leave behind — registry size and run count, the project's groups, residual worktrees, and any set of live runs sharing one directory where at least one can write. It also covers: Python version, whether `codex` is on `PATH` and its version, `CODEX_HOME` resolution, login status, the config file's sandbox/approval settings, `effective_defaults` (the `model`, `model_reasoning_effort` and `service_tier` an unnamed run would actually use), the resolved skill and bridge paths, whether the project has an `AGENTS.md`, whether the runs directory is writable, and whether Codex's thread database is readable.
 
 Exits `0` when healthy, `2` when there's a **blocker** (missing `codex`, failed auth, missing `CODEX_HOME`, unwritable runs dir, Python below 3.10) — which makes it usable directly in a shell conditional. Non-fatal issues are reported separately as **warnings** (e.g. `config.toml` set to `danger-full-access`, a project `AGENTS.md` present, an unreadable thread database).
 

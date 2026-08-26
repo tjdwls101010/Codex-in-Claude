@@ -55,6 +55,13 @@ class BridgeCase(unittest.TestCase):
         self.env["PATH"] = f"{FAKE_CODEX_DIR}{os.pathsep}{self.env.get('PATH', '')}"
         self.env["FAKE_CODEX_ARGV_LOG"] = str(self.argv_log)
         self.env["CLAUDE_CODE_SESSION_ID"] = "test-260813"
+        # Pinned, and empty: the bridge reads `config.toml` for the user's
+        # model, effort and service tier, so a suite that inherited the
+        # developer's CODEX_HOME would assert against whatever that person
+        # happens to have configured.
+        self.codex_home = self.tmp / "codex-home"
+        self.codex_home.mkdir(exist_ok=True)
+        self.env["CODEX_HOME"] = str(self.codex_home)
 
     def _cleanup(self):
         # A supervisor left running keeps writing into a temp dir the next test

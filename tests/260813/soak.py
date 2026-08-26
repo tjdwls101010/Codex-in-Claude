@@ -90,6 +90,13 @@ class Soak:
                     if not k.startswith("FAKE_CODEX_")}
         self.env["PATH"] = f"{FAKE_CODEX_DIR}{os.pathsep}{self.env.get('PATH', '')}"
         self.env["CLAUDE_CODE_SESSION_ID"] = f"soak-{seed}"
+        # Pinned, and empty: the bridge reads `config.toml` for the user's
+        # model, effort and service tier, so a suite that inherited the
+        # developer's CODEX_HOME would assert against whatever that person
+        # happens to have configured.
+        self.codex_home = self.project.parent / "codex-home"
+        self.codex_home.mkdir(exist_ok=True)
+        self.env["CODEX_HOME"] = str(self.codex_home)
         # Long enough that runs overlap and short enough that the suite stays
         # cheap: with this the workers are contending, not queueing.
         self.env["FAKE_CODEX_HANG"] = "1"

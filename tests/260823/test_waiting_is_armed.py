@@ -79,6 +79,41 @@ class MonitorIsNeverAdvisedAtItsDefaultLifetime(unittest.TestCase):
                         f"will not")
 
 
+class TheOneTurnRuleCoversEveryWayOfArming(unittest.TestCase):
+    """C7 — the exception said "run the follow in the foreground" and named
+    only the follower.
+
+    Two measured sessions found the two holes it left. One armed a background
+    follower, then filled the wait with parallel work and ended the turn on a
+    promise; the other armed a Monitor and did the same. Both had read the
+    exception and neither was covered by it: it addressed the instrument rather
+    than the property that makes arming useless, which is that this turn is the
+    last one.
+    """
+
+    def section(self):
+        for heading, body in sections(SKILL_MD.read_text()):
+            if "wait" in heading.lower():
+                return body
+        self.fail("no waiting section in SKILL.md")
+
+    def test_the_exception_covers_monitor_as_well_as_the_follower(self):
+        body = self.section()
+        para = [b for b in body.split("\n\n") if "only turn" in b]
+        self.assertEqual(len(para), 1, "the one-turn rule is not one paragraph")
+        self.assertRegex(para[0], _MONITOR,
+                         "a session that armed a Monitor read this paragraph "
+                         "and ended the turn on a promise; naming only the "
+                         "follower is what left it uncovered")
+
+    def test_it_says_what_to_do_with_the_turn_that_is_left(self):
+        """The other hole: knowing to block does not say *when*, and a session
+        that blocked first had nothing to fill the turn with afterwards."""
+        para = [b for b in self.section().split("\n\n") if "only turn" in b][0]
+        self.assertRegex(para, r"parallel work")
+        self.assertRegex(para, r"\blast\b")
+
+
 class TheWaitingDoctrineIsNotScopedToBatch(unittest.TestCase):
     """Waiting guidance filed under a batch heading is guidance a single run
     never reads.

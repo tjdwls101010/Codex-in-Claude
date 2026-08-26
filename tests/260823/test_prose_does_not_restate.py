@@ -60,6 +60,12 @@ RESTATEMENTS = {
         re.compile(r"returns? (as soon as|immediately|right away|the moment)"
                    r"|does not wait for the turn", re.I),
         "when a run hands back its handle is `start --help`'s to state"),
+    # C6's addition. The format is now in `--follow`'s own help, and a
+    # document that spells the template again is the copy that survives a
+    # change to `follow_group`'s f-string.
+    "the group follower's line format": (
+        re.compile(r"run <id> <prev>|group\.<state>|`group\.\w+ group=", re.I),
+        "what `status --group --follow` prints is that flag's help"),
     "the thread_id: null gotcha": (
         re.compile(r"thread[_ ]id\b[^.\n]{0,40}\bnull\b", re.I),
         "that a null thread id is a normal return is the same epilog's"),

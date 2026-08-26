@@ -328,7 +328,7 @@ class AMemberThatNeverStartedIsStillAMember(BridgeTestCase):
     def test_follow_says_so_on_its_terminal_line(self):
         self.half_started()
         p = self.bridge_raw("status", "--group", "p1", "--follow",
-                            "--follow-timeout", "10", "--interval", "0.2")
+                            "--follow-timeout", "10")
         self.assertEqual(p.returncode, 0, p.stderr)
         last = p.stdout.strip().splitlines()[-1]
         self.assertTrue(last.startswith("group.partial"), last)
@@ -379,12 +379,13 @@ class AGroupIsDiscoverableFromStatus(BridgeTestCase):
 
 class ContradictionsAndGaps(BridgeTestCase):
 
-    def test_worktree_and_no_worktree_together_are_refused(self):
-        """Letting one win silently hands isolation, or its absence, to a
-        caller who asked for both and cannot tell which they got."""
+    def test_base_without_worktree_is_refused(self):
+        """`--base` shapes only the checkouts `--worktree` cuts. Accepting it
+        with no checkout to shape hands the caller a success they read as
+        "cut from that commit"."""
         out = self.bridge("batch", "start", "--group", "p1", "--task", "a",
-                          "--worktree", "--no-worktree", expect_rc=1)
-        self.assertIn("contradict", out["error"])
+                          "--base", "HEAD", expect_rc=1)
+        self.assertIn("--worktree", out["error"])
         # Refused above `claim_group`, not where the flags are read. Refusing
         # afterwards left an empty manifest behind and burned the name on a
         # typo, against the whole point of claiming before anything spawns.
@@ -514,7 +515,7 @@ class GroupSelectors(BridgeTestCase):
         rid = grp["runs"][0]["run_id"]
         self.wait_for_state(rid, ("running",), timeout=30)
         p = self.bridge_raw("status", "--group", "p1", "--follow",
-                            "--follow-timeout", "2", "--interval", "0.2")
+                            "--follow-timeout", "2")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("group.still-running", p.stdout)
         self.bridge("stop", "--group", "p1")

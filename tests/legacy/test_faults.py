@@ -148,10 +148,10 @@ class ABatchKilledWhileSpawning(FaultTestCase):
 
 
 def doctor_rc(case):
-    """`doctor` exits 2 when it has blockers and 0 when it does not; a test that
-    cares about the report body should not also have to predict which."""
-    p = case.bridge_raw("doctor")
-    return p.returncode
+    """Kept as a function because this module's call sites read that way; the
+    implementation is `BridgeTestCase.doctor_rc`, because two of them would
+    drift (R20)."""
+    return case.doctor_rc()
 
 
 class WhenOnlyOneHalfOfARunDies(FaultTestCase):
@@ -326,7 +326,7 @@ class WhenAMembersMetaCannotBeParsed(FaultTestCase):
     `--force` ever passed. Unknown is not terminal."""
 
     def test_clean_refuses_rather_than_guessing_the_run_is_dead(self):
-        out = self.bridge("batch", "start", "--group", "p1",
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--task", "a", "--task", "b")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -420,7 +420,7 @@ class WhenGitHasLockedAWorktree(FaultTestCase):
     says in its own output that `--force` "lifted every protection at once"."""
 
     def test_force_lifts_a_git_lock_too(self):
-        out = self.bridge("batch", "start", "--group", "p1",
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--task", "a", "--task", "b")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -440,7 +440,7 @@ class WhenGitHasLockedAWorktree(FaultTestCase):
 class WhenAWorktreeIsRemovedFromUnderALiveRun(FaultTestCase):
 
     def test_clean_does_not_claim_to_have_removed_what_is_gone(self):
-        out = self.bridge("batch", "start", "--group", "p1",
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--task", "a", "--task", "b")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])

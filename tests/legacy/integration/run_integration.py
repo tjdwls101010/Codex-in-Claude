@@ -385,7 +385,7 @@ def I10(project):
     before = subprocess.run(["git", "-C", str(project), "status", "--porcelain"],
                             capture_output=True, text=True).stdout
     g = bridge(project, "batch", "start", "--group", "i10",
-               "--sandbox", "workspace-write",
+               "--sandbox", "workspace-write", "--worktree",
                "--task", "Create a file named shared.txt containing exactly the word ONE. "
                          "Then reply with exactly: DONE",
                "--task", "Create a file named shared.txt containing exactly the word TWO. "
@@ -480,7 +480,7 @@ def I13(project):
                "--task", "Reply with exactly: FOLLOWED")
     del g
     out = bridge_text(project, "status", "--group", "i13", "--follow",
-                      "--follow-timeout", "600", "--interval", "2")
+                      "--follow-timeout", "600")
     lines = [ln for ln in out.strip().splitlines() if ln.strip()]
     assert lines, "follow printed nothing at all"
     last = lines[-1]
@@ -526,7 +526,7 @@ def I15(project):
     and the point of the case is that the wrapper surfaces it rather than
     working around it."""
     g = bridge(project, "batch", "start", "--group", "i15",
-               "--sandbox", "workspace-write",
+               "--sandbox", "workspace-write", "--worktree",
                "--task", "Create a file named note.txt containing the word KEEP. "
                          "Reply with exactly: DONE",
                "--task", "Create a file named note.txt containing the word KEEP. "
@@ -556,6 +556,32 @@ def I15(project):
     still = [str(p) for p in paths if f"worktree {p}" in listed]
     assert not still, f"i15's worktrees are still registered with git: {still}"
     return "refused while dirty, --force removed both, git no longer lists them"
+
+
+@case
+def I16(project):
+    """`log --group --follow` against real members, which is the whole point of
+    the command: `status --group --follow` prints only state *changes*, and a
+    member that is `running` for twenty minutes gives a watcher nothing.
+
+    Checked against real Codex output rather than the fake shim, because the
+    fake's event stream is a recording and the interleave has to hold for two
+    live processes writing at once."""
+    bridge(project, "batch", "start", "--group", "i16", "--sandbox", "read-only",
+           "--label", "twin",
+           "--task", "Reply with exactly: ONE",
+           "--task", "Reply with exactly: TWO")
+    out = bridge_text(project, "log", "--group", "i16", "--follow",
+                      "--follow-timeout", "600")
+    lines = [ln for ln in out.strip().splitlines() if ln.strip()]
+    assert lines[0].startswith("group.members group=i16 "), lines[:1]
+    body = [ln for ln in lines[1:] if not ln.startswith("group.")]
+    assert body, "no member events reached the stream"
+    for ln in body:
+        assert ln.startswith("[0:twin] ") or ln.startswith("[1:twin] "), ln
+    assert {ln[1] for ln in body} == {"0", "1"}, "one member's stream is missing"
+    assert lines[-1].startswith("group.completed group=i16"), lines[-1]
+    return f"{len(body)} prefixed event lines from both members, terminal: {lines[-1][:44]!r}"
 
 
 CASES = {name: fn for name, fn in sorted(globals().items())

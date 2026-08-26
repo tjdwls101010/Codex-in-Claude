@@ -4,6 +4,10 @@ Every argument a caller can pass, and what the 260823 audit did with its help te
 
 What it cannot check is whether a `keep` was right. That is what Codex run `20260823-145243-plan-review2-b855` was for: it read all 143 strings against the code and named the ones that were false, overstated, or ambiguous. Every `change` below traces to one of its findings or to one of the six behaviour changes; every `keep` is a string it read and did not object to.
 
+**2026-08-26.** The 260826 round retires arguments rather than rewording them, so its rows are marked `remove` here rather than getting a manifest of their own — the finish line this table draws is "every argument a caller can pass has been read", and an argument that no longer exists is read by nobody. `test_the_removals_actually_left` turns each of those rows into a claim about the tree.
+
+The same round adds three — `log --group`, `log --heartbeat`, `status --heartbeat` — and rewords `status --follow`. They are marked `change` on the same reasoning read the other way: the finish line is that every string a caller can reach has been read, and these were written and read in this round rather than carried over unexamined.
+
 `(top level)` is the bridge itself. Arguments repeated across `start`, `resume`, `review` and `batch start` come from one shared block, so a `change` on one of them is the same edit four times — they are listed separately because that is how a caller meets them.
 
 | command | argument | verdict |
@@ -17,14 +21,14 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `start` | `--model` | change |
 | `start` | `--effort` | change |
 | `start` | `--inherit-config` | keep |
-| `start` | `--isolate` | keep |
+| `start` | `--isolate` | remove |
 | `start` | `--priority` | change |
 | `start` | `--no-priority` | change |
 | `start` | `--schema` | change |
-| `start` | `--config` | change |
+| `start` | `--config` | remove |
 | `start` | `--foreground` | keep |
 | `start` | `--timeout` | change |
-| `start` | `--no-preamble` | change |
+| `start` | `--no-preamble` | remove |
 | `start` | `--image` | keep |
 | `start` | `--prompt-file` | keep |
 | `start` | `--cwd` | keep |
@@ -38,14 +42,14 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `resume` | `--model` | change |
 | `resume` | `--effort` | change |
 | `resume` | `--inherit-config` | keep |
-| `resume` | `--isolate` | keep |
+| `resume` | `--isolate` | remove |
 | `resume` | `--priority` | change |
 | `resume` | `--no-priority` | change |
 | `resume` | `--schema` | change |
-| `resume` | `--config` | change |
+| `resume` | `--config` | remove |
 | `resume` | `--foreground` | keep |
 | `resume` | `--timeout` | change |
-| `resume` | `--no-preamble` | change |
+| `resume` | `--no-preamble` | remove |
 | `resume` | `--image` | keep |
 | `resume` | `--prompt-file` | keep |
 | `resume` | `--last` | change |
@@ -59,14 +63,14 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `review` | `--model` | change |
 | `review` | `--effort` | change |
 | `review` | `--inherit-config` | keep |
-| `review` | `--isolate` | keep |
+| `review` | `--isolate` | remove |
 | `review` | `--priority` | change |
 | `review` | `--no-priority` | change |
 | `review` | `--schema` | change |
-| `review` | `--config` | change |
+| `review` | `--config` | remove |
 | `review` | `--foreground` | keep |
 | `review` | `--timeout` | change |
-| `review` | `--no-preamble` | change |
+| `review` | `--no-preamble` | remove |
 | `review` | `--uncommitted` | keep |
 | `review` | `--base` | keep |
 | `review` | `--commit` | keep |
@@ -82,17 +86,20 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `status` | `--all` | change |
 | `status` | `--include-external` | change |
 | `status` | `--follow` | change |
-| `status` | `--interval` | change |
+| `status` | `--interval` | remove |
 | `status` | `--follow-timeout` | change |
+| `status` | `--heartbeat` | change |
 | `log` | `-h` | keep |
 | `log` | `--runs-dir` | keep |
 | `log` | `--project` | keep |
 | `log` | `--run` | change |
+| `log` | `--group` | change |
 | `log` | `--since` | keep |
 | `log` | `--level` | change |
 | `log` | `--follow` | change |
-| `log` | `--interval` | change |
+| `log` | `--interval` | remove |
 | `log` | `--follow-timeout` | change |
+| `log` | `--heartbeat` | change |
 | `show` | `-h` | keep |
 | `show` | `--runs-dir` | keep |
 | `show` | `--project` | keep |
@@ -120,13 +127,13 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `batch start` | `--model` | change |
 | `batch start` | `--effort` | change |
 | `batch start` | `--inherit-config` | keep |
-| `batch start` | `--isolate` | keep |
+| `batch start` | `--isolate` | remove |
 | `batch start` | `--priority` | change |
 | `batch start` | `--no-priority` | change |
 | `batch start` | `--schema` | change |
-| `batch start` | `--config` | change |
+| `batch start` | `--config` | remove |
 | `batch start` | `--timeout` | change |
-| `batch start` | `--no-preamble` | change |
+| `batch start` | `--no-preamble` | remove |
 | `batch start` | `--image` | keep |
 | `batch start` | `--prompt-file` | keep |
 | `batch start` | `--cwd` | keep |
@@ -136,7 +143,7 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `batch start` | `--tasks-file` | change |
 | `batch start` | `--force` | keep |
 | `batch start` | `--worktree` | change |
-| `batch start` | `--no-worktree` | change |
+| `batch start` | `--no-worktree` | remove |
 | `batch start` | `--base` | change |
 | `batch start` | `--resume-from` | change |
 | `batch start` | `--as-ready` | change |

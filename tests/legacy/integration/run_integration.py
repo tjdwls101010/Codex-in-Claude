@@ -558,6 +558,32 @@ def I15(project):
     return "refused while dirty, --force removed both, git no longer lists them"
 
 
+@case
+def I16(project):
+    """`log --group --follow` against real members, which is the whole point of
+    the command: `status --group --follow` prints only state *changes*, and a
+    member that is `running` for twenty minutes gives a watcher nothing.
+
+    Checked against real Codex output rather than the fake shim, because the
+    fake's event stream is a recording and the interleave has to hold for two
+    live processes writing at once."""
+    bridge(project, "batch", "start", "--group", "i16", "--sandbox", "read-only",
+           "--label", "twin",
+           "--task", "Reply with exactly: ONE",
+           "--task", "Reply with exactly: TWO")
+    out = bridge_text(project, "log", "--group", "i16", "--follow",
+                      "--follow-timeout", "600")
+    lines = [ln for ln in out.strip().splitlines() if ln.strip()]
+    assert lines[0].startswith("group.members group=i16 "), lines[:1]
+    body = [ln for ln in lines[1:] if not ln.startswith("group.")]
+    assert body, "no member events reached the stream"
+    for ln in body:
+        assert ln.startswith("[0:twin] ") or ln.startswith("[1:twin] "), ln
+    assert {ln[1] for ln in body} == {"0", "1"}, "one member's stream is missing"
+    assert lines[-1].startswith("group.completed group=i16"), lines[-1]
+    return f"{len(body)} prefixed event lines from both members, terminal: {lines[-1][:44]!r}"
+
+
 CASES = {name: fn for name, fn in sorted(globals().items())
          if callable(fn) and getattr(fn, "_is_case", False)}
 

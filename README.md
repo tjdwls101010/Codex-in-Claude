@@ -38,7 +38,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 - **Resume any thread** — including ones started outside this plugin, directly in the Codex TUI.
 - **Schema-validated results** — pass `--schema` and get back parsed, validated JSON instead of a message you have to eyeball.
 - **A deadline you choose** — `--timeout` works in the background and records a state of its own, so "it ran out of the time I gave it" never reads as "Codex failed". The thread stays resumable across it.
-- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Two or more members that can write get a git worktree each, so they can't edit each other's files mid-edit. Chain a next phase onto a group with `--resume-from`, and add `--as-ready` to start each member as soon as the one it continues is done rather than waiting for the slowest. See [Orchestration](docs/wiki/Orchestration.md).
+- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Members share your tree by default, the way a fan-out of Claude's own subagents does; `--worktree` gives each writing member its own git checkout when they would edit the same files. Chain a next phase onto a group with `--resume-from`, and add `--as-ready` to start each member as soon as the one it continues is done rather than waiting for the slowest. See [Orchestration](docs/wiki/Orchestration.md).
 - **Built-in diagnostics** — `doctor` checks your PATH, Codex auth, config, and the run registry in a single call.
 
 ## 3. Quick Start
@@ -184,7 +184,7 @@ This README gets you running. Everything else lives in [`docs/wiki/`](docs/wiki/
 
 ## 6. Project Status
 
-Codex in Claude is at **v0.4.0** — an early, actively developed release, verified against `codex-cli 0.147.0` and Claude Code `2.1.220+`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
+Codex in Claude is at **v0.6.0** — an early, actively developed release, verified against `codex-cli 0.149.1` and Claude Code `2.1.246`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
 
 **Upgrading from v0.1.0?** Two removals are breaking: the `SessionEnd` cleanup hook (and `--detach` with it) and `stop --all-mine`. Background runs are no longer stopped when a session ends — `status --all` finds them and `stop --run <id>`/`stop --all` ends them, and `doctor` now reports what the registry is holding. See the [changelog](CHANGELOG.md#020--2026-08-02).
 

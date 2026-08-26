@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] — 2026-08-27
 
 Twenty-one headless sessions were run before a line of this was written, each one delegating the same task twice — once to Claude's own `Agent`/`Workflow`/agent team, once to Codex — and graded on four invariants rather than on whether the two looked alike. Six of the seven axes came back identical. What this release changes is the one that did not, plus two waiting defects the benchmark surfaced and two things two field reports did. Every commit was then handed to a Codex review before the next was written, and the new `--help` strings to a second one; between them they found fourteen more defects, ten of which this release had just created.
 
@@ -66,7 +66,7 @@ Four defects found by adversarial review of this release's own commits, each rep
 
 - **`batch start --no-worktree`.** It negated a default that no longer exists (see Changed). Left in the parser it would parse and decide nothing, which is worse than absent: a caller typing it would read the success as isolation having been turned off.
 
-The user-facing surface goes from **44 distinct flag names to 39**, and 105 command/argument pairs to 90. `start --help` is 8,111 → 7,294 bytes, which is the small half of the point; the real change is five fewer decisions in front of a caller who has to make none of them.
+Counted across the whole release rather than this section alone — three flags are added below — the surface goes from **45 distinct flag names to 41**, and 142 command/argument pairs to 130, with `start --help` at 8,111 → 7,518 bytes. That is the small half of the point; the real change is five fewer decisions in front of a caller who has to make none of them.
 
 ## [0.5.0] — 2026-08-23
 

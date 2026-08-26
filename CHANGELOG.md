@@ -16,7 +16,19 @@ Twenty-one headless sessions were run before a line of this was written, each on
 
 ### Removed
 
-- **`batch start --no-worktree`.** It negated a default that no longer exists. Left in the parser it would parse and decide nothing, which is worse than absent: a caller typing it would read the success as isolation having been turned off. It is now argparse's usage error, exit status **2**.
+**Five flags.** Each is now argparse's usage error, exit status **2**, refused before anything is claimed. The shared reason is that none was used in 51 real delegations, which on its own would only argue for leaving them alone — what decided each one is the second reason.
+
+- **`--config k=v`** (`start`, `resume`, `review`, `batch start`). A raw `-c` passthrough, and `codex`'s `-c` is last-value-wins for a repeated key, so `--config 'sandbox_mode="danger-full-access"'` beat the wrapper's own enforced entry — the run executed fully privileged while `status` went on reporting `read-only`, and because `extra_config` was inherited by every resume that did not pass `--config` itself, the drift rode along for the rest of the thread (R24). Two guards were added at the time; neither is needed once the flag cannot be typed. A pass-through that can reach an invariant is a thing to remove rather than to guard twice. `extra_config` is gone from `meta.json` with it, so a run recorded before this version loses whatever raw entries it held when resumed.
+
+- **`--no-preamble`** (`start`, `resume`, `review`, `batch start`). V-18 measured the preamble *correcting a confident falsehood* — without it a batch member asserted it shared the caller's tree — for 113 input tokens. There is no good reason to switch that off, and a caller who wants to state those facts itself can write them into the prompt, which is the same channel. The flag was also the only place `--help` said anything was prepended at all; `start`'s and `batch start`'s epilogs say it now, unconditionally.
+
+- **`--isolate`** (`start`, `resume`, `review`, `batch start`). Isolation is the default, so on a fresh run the flag only ever agreed with what was already happening. On a resume it re-asserted a recorded choice with no way to take it back.
+
+- **`--interval`** (`log`, `status`). One second, in one place, and no measurement has ever wanted another value. A poll period is not a decision the caller has to make. Worth recording against the "0 uses" count that justified this: the flag *was* used in-repo, by three test files and two measurement scripts, which counted delegations do not see — those now poll at the default.
+
+- **`batch start --no-worktree`.** It negated a default that no longer exists (see Changed). Left in the parser it would parse and decide nothing, which is worse than absent: a caller typing it would read the success as isolation having been turned off.
+
+The user-facing surface goes from **44 distinct flag names to 39**, and 105 command/argument pairs to 90. `start --help` is 8,111 → 7,294 bytes, which is the small half of the point; the real change is five fewer decisions in front of a caller who has to make none of them.
 
 ## [0.5.0] — 2026-08-23
 

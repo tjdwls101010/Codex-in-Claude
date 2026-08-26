@@ -32,7 +32,7 @@ import time
 import uuid
 from pathlib import Path
 
-from _events import read_events, scan_progress
+from _events import FOLLOW_INTERVAL, read_events, scan_progress
 from _registry import (
     ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,
     meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
@@ -1171,7 +1171,7 @@ def follow_group(args, project, runs_dir):
                              f"failed={len(failed)}\n")
             sys.stdout.flush()
             return
-        time.sleep(args.interval)
+        time.sleep(FOLLOW_INTERVAL)
 
 
 GROUP_MESSAGE_CAP = 4000

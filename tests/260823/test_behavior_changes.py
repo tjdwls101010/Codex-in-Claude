@@ -119,8 +119,8 @@ class StatusRefusesSelectorsThatContradict(BridgeCase):
                      naming=("--include-external", "--group"))
 
     def test_follow_options_without_follow_are_refused(self):
-        self.refused("--group", "g", "--interval", "2",
-                     naming=("--interval", "--follow"))
+        self.refused("--group", "g", "--follow-timeout", "2",
+                     naming=("--follow-timeout", "--follow"))
         self.refused("--group", "g", "--follow-timeout", "5",
                      naming=("--follow-timeout", "--follow"))
 

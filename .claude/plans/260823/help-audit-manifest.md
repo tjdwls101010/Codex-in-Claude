@@ -19,14 +19,14 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `start` | `--model` | change |
 | `start` | `--effort` | change |
 | `start` | `--inherit-config` | keep |
-| `start` | `--isolate` | keep |
+| `start` | `--isolate` | remove |
 | `start` | `--priority` | change |
 | `start` | `--no-priority` | change |
 | `start` | `--schema` | change |
-| `start` | `--config` | change |
+| `start` | `--config` | remove |
 | `start` | `--foreground` | keep |
 | `start` | `--timeout` | change |
-| `start` | `--no-preamble` | change |
+| `start` | `--no-preamble` | remove |
 | `start` | `--image` | keep |
 | `start` | `--prompt-file` | keep |
 | `start` | `--cwd` | keep |
@@ -40,14 +40,14 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `resume` | `--model` | change |
 | `resume` | `--effort` | change |
 | `resume` | `--inherit-config` | keep |
-| `resume` | `--isolate` | keep |
+| `resume` | `--isolate` | remove |
 | `resume` | `--priority` | change |
 | `resume` | `--no-priority` | change |
 | `resume` | `--schema` | change |
-| `resume` | `--config` | change |
+| `resume` | `--config` | remove |
 | `resume` | `--foreground` | keep |
 | `resume` | `--timeout` | change |
-| `resume` | `--no-preamble` | change |
+| `resume` | `--no-preamble` | remove |
 | `resume` | `--image` | keep |
 | `resume` | `--prompt-file` | keep |
 | `resume` | `--last` | change |
@@ -61,14 +61,14 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `review` | `--model` | change |
 | `review` | `--effort` | change |
 | `review` | `--inherit-config` | keep |
-| `review` | `--isolate` | keep |
+| `review` | `--isolate` | remove |
 | `review` | `--priority` | change |
 | `review` | `--no-priority` | change |
 | `review` | `--schema` | change |
-| `review` | `--config` | change |
+| `review` | `--config` | remove |
 | `review` | `--foreground` | keep |
 | `review` | `--timeout` | change |
-| `review` | `--no-preamble` | change |
+| `review` | `--no-preamble` | remove |
 | `review` | `--uncommitted` | keep |
 | `review` | `--base` | keep |
 | `review` | `--commit` | keep |
@@ -84,7 +84,7 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `status` | `--all` | change |
 | `status` | `--include-external` | change |
 | `status` | `--follow` | change |
-| `status` | `--interval` | change |
+| `status` | `--interval` | remove |
 | `status` | `--follow-timeout` | change |
 | `log` | `-h` | keep |
 | `log` | `--runs-dir` | keep |
@@ -93,7 +93,7 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `log` | `--since` | keep |
 | `log` | `--level` | change |
 | `log` | `--follow` | change |
-| `log` | `--interval` | change |
+| `log` | `--interval` | remove |
 | `log` | `--follow-timeout` | change |
 | `show` | `-h` | keep |
 | `show` | `--runs-dir` | keep |
@@ -122,13 +122,13 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `batch start` | `--model` | change |
 | `batch start` | `--effort` | change |
 | `batch start` | `--inherit-config` | keep |
-| `batch start` | `--isolate` | keep |
+| `batch start` | `--isolate` | remove |
 | `batch start` | `--priority` | change |
 | `batch start` | `--no-priority` | change |
 | `batch start` | `--schema` | change |
-| `batch start` | `--config` | change |
+| `batch start` | `--config` | remove |
 | `batch start` | `--timeout` | change |
-| `batch start` | `--no-preamble` | change |
+| `batch start` | `--no-preamble` | remove |
 | `batch start` | `--image` | keep |
 | `batch start` | `--prompt-file` | keep |
 | `batch start` | `--cwd` | keep |

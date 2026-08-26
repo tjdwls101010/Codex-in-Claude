@@ -307,7 +307,7 @@ class LogAndShowEndToEnd(BridgeTestCase):
         ended, or a crashed run and a working one produce identical output."""
         r = self.start("x", env_extra={"FAKE_CODEX_EXIT": "4"})
         p = self.bridge_raw("log", "--run", r["run_id"], "--follow",
-                            "--interval", "0.2", "--follow-timeout", "45")
+                            "--follow-timeout", "45")
         self.assertEqual(p.returncode, 0)
         self.assertIn("run.failed", p.stdout)
         self.assertIn("exit=4", p.stdout)

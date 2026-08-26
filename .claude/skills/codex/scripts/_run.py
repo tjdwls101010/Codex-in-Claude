@@ -25,9 +25,8 @@ from datetime import datetime
 from pathlib import Path
 
 from _codex import (
-    RESERVED_CONFIG_KEYS, SANDBOX_MODES, THREAD_ID_WAIT, apply_preamble, build_argv,
-    check_model_effort, model_catalog, reserved_config_key, spawn_supervised,
-    supervise,
+    SANDBOX_MODES, THREAD_ID_WAIT, apply_preamble, build_argv,
+    check_model_effort, model_catalog, spawn_supervised, supervise,
 )
 from _events import first_thread_id, scan_progress
 from _registry import (
@@ -285,8 +284,8 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
 
     Nothing in this stage writes anything or claims a name, so every refusal it
     makes costs nothing: no run directory, no group slot burned, no Codex
-    process. That is why the raw-config check and the model/effort check live
-    here rather than next to the code that uses their values.
+    process. That is why the model/effort check lives here rather than next to
+    the code that uses its values.
     """
     cwd = (Path(args.cwd).expanduser().resolve() if getattr(args, "cwd", None)
            else (Path(base["cwd"]) if base else project))
@@ -297,25 +296,8 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     if kind != "review" and not prompt.strip():
         fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
 
-    # Raw `-c` entries, checked before anything is claimed on disk. Four keys
-    # are this wrapper's own — it records them in the registry and re-asserts
-    # them on every turn, which is the only reason a resumed run cannot quietly
-    # change its sandbox. A raw override of one makes that record a lie for the
-    # rest of the thread, because `extra_config` is inherited by every resume
-    # that does not pass `--config` itself.
-    extra_config = (list(args.config) if getattr(args, "config", None)
-                    else (base.get("extra_config") if base else [])) or []
-    for raw in extra_config:
-        key = reserved_config_key(raw)
-        if key:
-            fail(f"--config may not set {key!r}: this skill records that setting "
-                 f"and re-asserts it on every turn, so a raw override makes "
-                 f"`status` report something the run is not doing. Use "
-                 f"{RESERVED_CONFIG_KEYS[key]} instead.",
-                 config=raw, reserved=sorted(RESERVED_CONFIG_KEYS))
-
-    # Same placement and the same reason as the refusal above: before anything
-    # is claimed on disk. Two things about this call are deliberate. It reads
+    # Before anything is claimed on disk, which is the same placement every
+    # refusal in this stage has. Two things about this call are deliberate. It reads
     # `args` rather than the resolved values computed below, so a model or
     # effort inherited from the thread being resumed is never re-checked —
     # otherwise a model retired upstream would turn every resume of that thread
@@ -338,11 +320,13 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
              "is no conversation to continue",
              run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
+    # Isolated unless the caller asks for their config. `--isolate` used to
+    # state the default explicitly and was retired for saying nothing on a fresh
+    # run and too much on a resumed one — it re-asserted a recorded choice with
+    # no way to take it back.
     isolated = base["isolated"] if base else True
     if getattr(args, "inherit_config", False):
         isolated = False
-    if getattr(args, "isolate", False):
-        isolated = True
 
     sandbox = args.sandbox or (base["sandbox"] if base else "workspace-write")
     if getattr(args, "priority", None) is not None:
@@ -352,13 +336,13 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
         # every other recorded setting.
         priority = base.get("priority")
     else:
-        # No base, or --inherit-config/--isolate just flipped isolation: priority
-        # is only re-injected to undo what isolation removed, so it follows the
-        # new isolation state rather than carrying over the parent's value.
+        # No base, or --inherit-config just flipped isolation: priority is only
+        # re-injected to undo what isolation removed, so it follows the new
+        # isolation state rather than carrying over the parent's value.
         priority = isolated
 
-    return {"cwd": cwd, "prompt": prompt, "extra_config": extra_config,
-            "isolated": isolated, "sandbox": sandbox, "priority": priority}
+    return {"cwd": cwd, "prompt": prompt, "isolated": isolated,
+            "sandbox": sandbox, "priority": priority}
 
 
 def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group,
@@ -430,12 +414,10 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group,
                        for i in (getattr(args, "image", None) or [])],
             "add_dirs": [str(Path(d).expanduser().resolve())
                          for d in (getattr(args, "add_dir", None) or [])],
-            "extra_config": s["extra_config"],
             # Only where Codex's own guard does not apply. The wrapper does not
             # silently disable a Codex safety default just to keep its own argv
             # uniform.
             "skip_git_repo_check": git_toplevel(s["cwd"]) is None,
-            "preamble": not args.no_preamble,
             "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
             "foreground": bool(getattr(args, "foreground", False)),
             "timeout_seconds": getattr(args, "timeout", None),
@@ -548,7 +530,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     if batch and wt_info:
         batch = {**batch, "worktree": wt_info["path"], "base": wt_info["base"],
                  "uncommitted": wt_info["uncommitted_in_caller_tree"]}
-    send = (apply_preamble(s["prompt"], meta["preamble"], batch=batch)
+    send = (apply_preamble(s["prompt"], batch=batch)
             if s["prompt"].strip() else None)
     meta["argv"] = build_argv(meta, kind=kind, prompt=send,
                               thread_ref=thread_ref, review_args=review_args)

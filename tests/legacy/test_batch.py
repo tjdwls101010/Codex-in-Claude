@@ -328,7 +328,7 @@ class AMemberThatNeverStartedIsStillAMember(BridgeTestCase):
     def test_follow_says_so_on_its_terminal_line(self):
         self.half_started()
         p = self.bridge_raw("status", "--group", "p1", "--follow",
-                            "--follow-timeout", "10", "--interval", "0.2")
+                            "--follow-timeout", "10")
         self.assertEqual(p.returncode, 0, p.stderr)
         last = p.stdout.strip().splitlines()[-1]
         self.assertTrue(last.startswith("group.partial"), last)
@@ -515,7 +515,7 @@ class GroupSelectors(BridgeTestCase):
         rid = grp["runs"][0]["run_id"]
         self.wait_for_state(rid, ("running",), timeout=30)
         p = self.bridge_raw("status", "--group", "p1", "--follow",
-                            "--follow-timeout", "2", "--interval", "0.2")
+                            "--follow-timeout", "2")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("group.still-running", p.stdout)
         self.bridge("stop", "--group", "p1")

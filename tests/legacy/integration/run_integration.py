@@ -480,7 +480,7 @@ def I13(project):
                "--task", "Reply with exactly: FOLLOWED")
     del g
     out = bridge_text(project, "status", "--group", "i13", "--follow",
-                      "--follow-timeout", "600", "--interval", "2")
+                      "--follow-timeout", "600")
     lines = [ln for ln in out.strip().splitlines() if ln.strip()]
     assert lines, "follow printed nothing at all"
     last = lines[-1]

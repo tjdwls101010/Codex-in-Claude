@@ -67,7 +67,7 @@ for n in SIZES:
 
     t1 = time.perf_counter()
     subprocess.run([sys.executable, str(BRIDGE), "status", "--group", group,
-                    "--follow", "--interval", "5", "--follow-timeout", "1800"],
+                    "--follow", "--follow-timeout", "1800"],
                    cwd=str(project), capture_output=True, text=True, timeout=1900)
     wall = time.perf_counter() - t1
 

@@ -42,33 +42,6 @@ THREAD_ID_WAIT = 15.0
 
 # -- argv -------------------------------------------------------------------
 
-RESERVED_CONFIG_KEYS = {
-    "sandbox_mode": "--sandbox",
-    "service_tier": "--priority / --no-priority",
-    "model_reasoning_effort": "--effort",
-    "model": "--model",
-}
-
-
-def reserved_config_key(raw: str):
-    """The key in a raw `--config k=v`, if this wrapper is the one that sets it.
-
-    These four are not configuration this skill passes through — they are what
-    it records in the registry and re-asserts on every turn, which is the only
-    reason a resumed run cannot silently change its sandbox. A raw `-c` naming
-    one of them makes the registry's copy a lie: `status` keeps reporting what
-    was asked for while the run does something else, and because `extra_config`
-    is inherited by every later resume, it does so for the rest of the thread.
-
-    Refused rather than reordered around. Reordering (see `build_argv`) stops
-    the override from taking effect, but silently ignoring what a caller
-    explicitly typed is its own D27 failure — the caller has to be told that
-    `--sandbox` is where that decision lives.
-    """
-    key = str(raw).split("=", 1)[0].strip()
-    return key if key in RESERVED_CONFIG_KEYS else None
-
-
 def toml_cfg(key: str, value: str):
     """`-c` values are parsed as TOML, falling back to a raw string only if that
     fails — so a string value is emitted quoted. This is the canonical form."""
@@ -282,20 +255,14 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
     if meta.get("skip_git_repo_check"):
         argv.append("--skip-git-repo-check")
 
-    # The caller's raw `-c` entries go FIRST, and the order is the point.
-    # `codex`'s `-c` is last-value-wins for a repeated key, so while these were
-    # emitted last, `--config 'sandbox_mode="danger-full-access"'` beat the line
-    # below it — the run executed fully privileged while the registry, and
-    # therefore `status`, went on reporting `read-only`. Measured against the
-    # real binary: the same file write is refused with one `-c` and succeeds
-    # with both. That is the single thing this wrapper exists to prevent,
-    # reachable through a documented flag.
-    #
-    # `RESERVED_CONFIG_KEYS` refuses that collision at the point a run is built,
-    # which is the honest fix. This ordering is the second line: a key nobody
-    # thought to reserve still cannot outrank an invariant.
-    for raw in meta.get("extra_config") or []:
-        argv += ["-c", raw]
+    # `codex`'s `-c` is last-value-wins for a repeated key, so anything this
+    # wrapper considers its own has to be emitted after anything it does not.
+    # `--config` used to put the caller's raw entries here and was emitted
+    # *after* the line below, so `--config 'sandbox_mode="danger-full-access"'`
+    # simply won: the run executed fully privileged while the registry, and
+    # therefore `status`, went on reporting `read-only` (R24). The flag is gone,
+    # so there is nothing above this line today — the ordering is stated because
+    # it is the rule anything added here has to obey.
 
     # Invariant 1.
     argv += toml_cfg("sandbox_mode", meta["sandbox"])
@@ -400,12 +367,15 @@ def uncommitted_clause(n) -> str:
     return f"it does not contain the {n} uncommitted file(s) that exist in theirs."
 
 
-def apply_preamble(prompt: str, enabled: bool, batch=None) -> str:
-    """Prepend the run-context paragraphs. `--no-preamble` turns off all of them
-    together — a caller switching it off is saying it will brief Codex itself,
-    and half a briefing is worse than none."""
-    if not enabled:
-        return prompt
+def apply_preamble(prompt: str, batch=None) -> str:
+    """Prepend the run-context paragraphs.
+
+    Not optional. `--no-preamble` switched all of them off together and was
+    never used in 51 real delegations, which on its own would only argue for
+    leaving it alone — what argues for removing it is V-18: these paragraphs
+    were measured *correcting a confident falsehood* rather than merely adding
+    facts, and they cost 113 input tokens. A caller who wants to state the same
+    things itself can write them into the prompt, which is the same channel."""
     parts = [PREAMBLE]
     if batch:
         parts.append(BATCH_PREAMBLE.format(n=batch["n"], group=batch["group"]))

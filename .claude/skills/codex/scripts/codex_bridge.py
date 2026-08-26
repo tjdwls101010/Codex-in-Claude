@@ -46,8 +46,8 @@ from _codex import (  # noqa: E402
 )
 from _events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
-    FULL_ITEM_BYTES, LEVELS, find_item, format_events, read_events,
-    scan_progress, strip_wrapper,
+    FOLLOW_INTERVAL, FULL_ITEM_BYTES, LEVELS, find_item, format_events,
+    read_events, scan_progress, strip_wrapper,
 )
 from _batch import (  # noqa: E402
     TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
@@ -265,17 +265,13 @@ def cmd_status(args):
         fail("--follow needs --group; a group is what has an end to wait for. "
              "To watch one run, use `log --run <id> --follow`, which streams its "
              "events and ends on the run's terminal line.",
-             run=args.run, interval=args.interval)
-    # Same failure one step further out: these two only shape a follow, so
-    # passing either without `--follow` is an instruction that quietly does
-    # nothing. `--interval` compares against its default rather than None
-    # because argparse fills it in whether or not the caller typed it.
-    unused = [n for n, v in (("--interval", args.interval != 1.0),
-                             ("--follow-timeout", args.follow_timeout is not None))
-              if v]
-    if unused and not args.follow:
-        fail(f"{' and '.join(unused)} only shape a --follow, and there is no "
-             f"--follow here, so nothing would use them.",
+             run=args.run)
+    # Same failure one step further out: `--follow-timeout` only shapes a
+    # follow, so passing it without `--follow` is an instruction that quietly
+    # does nothing.
+    if args.follow_timeout is not None and not args.follow:
+        fail("--follow-timeout only shapes a --follow, and there is no --follow "
+             "here, so nothing would use it.",
              follow=args.follow, group=args.group)
     rows = []
     if args.run:
@@ -424,7 +420,7 @@ def cmd_log(args):
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
             sys.stdout.flush()
             return
-        time.sleep(args.interval)
+        time.sleep(FOLLOW_INTERVAL)
 
 
 def cmd_show(args):
@@ -926,6 +922,14 @@ silence.
 
 Collecting it is a separate call. `result --run <id>` is what hands back the
 work, and a run that finished is not a run you have read.
+
+What Codex is actually sent. Your prompt, with one paragraph in front of it
+stating what this turn's situation is: that nobody is watching, so a clarifying
+question ends the turn with the work not done, and that the final message is
+what reaches the caller. It is not optional. Measured, a run without it asserted
+something about its own situation that was simply false, so the paragraph
+corrects a fabrication rather than merely adding facts, and it costs about 113
+input tokens.
 """ % {"wait": THREAD_ID_WAIT}
 
 
@@ -966,6 +970,11 @@ own subagents does: the changes are in front of you as they are made and there
 is nothing to collect. What you give up is that no member can tell another
 member's edit from its own, so `result --group`'s `overlaps` is a report of what
 already happened rather than of a merge still ahead.
+
+What a member is told on top of that. The group's size and name, so a run knows
+other runs may be editing other paths alongside it — and, where it was given a
+worktree, that its tree is not the caller's, which commit it was cut from, and
+how many uncommitted files the caller's tree has that its own does not.
 
 Tasks. --task is a bare prompt, kind=start unless --resume-from turns it into
 the resume of the member it pairs with. --tasks-file takes one JSON object per
@@ -1034,14 +1043,10 @@ def add_run_options(p, *, kind, foreground=True):
                         "re-asserted.")
     p.add_argument("--inherit-config", action="store_true",
                    help="load the user's config.toml: their MCP servers, "
-                        "plugins, agent roles and hooks. Off by default. Auth "
-                        "is unaffected either way, coming from auth.json. "
-                        "Given together with --isolate, --isolate wins.")
-    p.add_argument("--isolate", action="store_true",
-                   help="ignore the user's config.toml. Already the default for "
-                        "a fresh run; pass it to override the setting a resumed "
-                        "thread recorded. Wins over --inherit-config when both "
-                        "are given.")
+                        "plugins, agent roles and hooks. Off by default — a "
+                        "fresh run is isolated, and a resumed one keeps "
+                        "whatever its thread recorded. Auth is unaffected "
+                        "either way, coming from auth.json.")
     p.add_argument("--priority", dest="priority", action="store_true", default=None,
                    help="inject service_tier=\"priority\" — the tier Codex "
                         "labels \"Fast mode\" and its config.toml spells "
@@ -1063,14 +1068,6 @@ def add_run_options(p, *, kind, foreground=True):
                         "`json` and fails loudly if the final message is not "
                         "valid JSON; `result --group` does not parse, so "
                         "collect a schema batch member by member.")
-    p.add_argument("--config", action="append", metavar="k=v",
-                   help="extra `-c k=v` passed through to Codex. Repeatable. "
-                        "The four keys this wrapper records and re-asserts — "
-                        "model, model_reasoning_effort, sandbox_mode, "
-                        "service_tier — are refused here; use their own flags. "
-                        "On a resume this replaces the thread's recorded set "
-                        "rather than adding to it, so repeat any entry you "
-                        "still want.")
     if foreground:
         # Not offered on `batch start`. It was, and was then refused by the
         # command — so its help string had to read "Refused on `batch start`",
@@ -1089,14 +1086,6 @@ def add_run_options(p, *, kind, foreground=True):
                         "before the deadline; without one there is no "
                         "conversation to continue. If Codex does not exit on "
                         "the SIGINT the signal ladder escalates.")
-    p.add_argument("--no-preamble", action="store_true",
-                   help="drop everything this wrapper prepends to the prompt: "
-                        "that nobody is watching the turn, so a clarifying "
-                        "question ends it with the work not done; that the "
-                        "final message is what the caller receives; and, for a "
-                        "batch member, the group size and its worktree's path "
-                        "and base. It is all or nothing — reach for it only "
-                        "when you are supplying those facts yourself.")
     if kind in ("start", "resume"):
         p.add_argument("--image", action="append",
                        help="attach an image file to the prompt. Repeatable.")
@@ -1227,10 +1216,6 @@ def build_parser():
                         "it holds no state, so a follower that dies loses "
                         "nothing and `status --group` answers the same question "
                         "at any time.")
-    p.add_argument("--interval", type=float, default=1.0,
-                   help="seconds between polls while following (default: "
-                        "1.0). Refused without --follow, which is the only "
-                        "thing it shapes.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
                         "group.still-running instead of a terminal group line. "
@@ -1277,9 +1262,6 @@ def build_parser():
                         "state on purpose: a follower that only printed "
                         "progress would go silent through a crash, and silence "
                         "is indistinguishable from still working.")
-    p.add_argument("--interval", type=float, default=1.0,
-                   help="seconds between polls while following (default: 1.0). "
-                        "Shapes nothing without --follow.")
     p.add_argument("--follow-timeout", type=float,
                    help="stop following after this many seconds and print "
                         "run.still-running instead of a terminal line, so a "

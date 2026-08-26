@@ -537,13 +537,20 @@ class Preamble(WorktreeTestCase):
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
-    def test_no_preamble_turns_off_the_batch_paragraphs_too(self):
-        """Half a briefing is worse than none: a caller switching the preamble
-        off is saying it will brief Codex itself."""
-        out = self.start_group("--no-preamble")
+    def test_the_batch_paragraphs_cannot_be_turned_off(self):
+        """`--no-preamble` is gone. V-18 measured the batch paragraph correcting
+        a confident falsehood — without it a run asserted it shared the caller's
+        tree — so switching it off buys 113 tokens and risks fabrication. A
+        caller who wants to state those facts itself can write them into the
+        prompt."""
+        p = self.bridge_raw("batch", "start", "--group", "p1", "--task", "a",
+                            "--no-preamble")
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("unrecognized arguments", p.stderr)
+        out = self.start_group()
         prompt = self.sent_prompt(out["runs"][0]["run_id"])
-        self.assertNotIn("Batch context", prompt)
-        self.assertNotIn("Run context", prompt)
+        self.assertIn("Run context", prompt)
+        self.assertIn("Batch context", prompt)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 

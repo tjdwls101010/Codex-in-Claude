@@ -22,13 +22,10 @@ Every subcommand accepts:
 | `--model <str>` | Override the model for this run |
 | `--effort <str>` | Reasoning effort, passed through as `model_reasoning_effort` |
 | `--inherit-config` | Load the user's own `$CODEX_HOME/config.toml` instead of isolating |
-| `--isolate` | Force isolation even if something else would disable it |
 | `--priority` / `--no-priority` | Force `service_tier="priority"` — the tier Codex labels "Fast mode" — re-injection on or off. Unset, it is derived per run; see `start --help` |
 | `--schema <path>` | Path to a JSON schema file; the run's final message must validate against it |
-| `--config k=v` | Append a raw `-c k="v"` passthrough (repeatable) |
 | `--foreground` | Block until the run finishes instead of returning immediately |
 | `--timeout <seconds>` | Give the run this long, then SIGINT its process group and record `timed_out`. Works in the background too |
-| `--no-preamble` | Disable the short situational preamble normally prepended to the prompt |
 
 A `start` or `resume` that can write to a directory another live writing run already occupies returns `concurrent_writers` naming them. Reported, never refused — sharing a directory is sometimes what you meant, but it is not something you can otherwise see. Runs in their own worktrees never appear there.
 
@@ -84,7 +81,7 @@ Drives `codex exec review`'s own distinct flag surface. Exactly one of `--uncomm
 
 ```bash
 $CODEX status [--run <ref>] [--thread <thread_id>] [--group <name>]
-              [--follow [--interval <sec>] [--follow-timeout <sec>]]
+              [--follow [--follow-timeout <sec>]]
               [--all] [--include-external]
 ```
 
@@ -106,12 +103,12 @@ Lists runs for the project. The default view — no `--run`, `--group` or `--all
 ## 6. `log`
 
 ```bash
-$CODEX log --run <ref> [--since <n>] [--level {compact,normal,full,raw}] [--follow] [--interval <sec>] [--follow-timeout <sec>]
+$CODEX log --run <ref> [--since <n>] [--level {compact,normal,full,raw}] [--follow] [--follow-timeout <sec>]
 ```
 
 Prints a run's event log, filtered to `--level` (default `compact` — see [Context Discipline & Event Log Levels](Context-Discipline.md)), starting from byte offset `--since` (default `0`). Ends with `# cursor=<n>` — pass that number back as `--since` on the next call to get only new events.
 
-`--follow` polls every `--interval` seconds (default `1.0`) and streams new events as they arrive, printing a terminal line (`run.completed`, `run.failed`, `run.interrupted`, or `run.orphaned`, each with the exit code) once the run reaches a terminal state, or `run.still-running` if `--follow-timeout` elapses first.
+`--follow` polls once a second and streams new events as they arrive, printing a terminal line (`run.completed`, `run.failed`, `run.interrupted`, or `run.orphaned`, each with the exit code) once the run reaches a terminal state, or `run.still-running` if `--follow-timeout` elapses first.
 
 ## 7. `show`
 

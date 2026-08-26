@@ -133,7 +133,7 @@ Batch members get an extra paragraph in their prompt stating facts they can't ob
 
 This isn't politeness. Measured: asked what tree it was in, a run without that paragraph answered *"it is the shared workspace with the person who started me, so we are looking at the same tree"* — wrong, and asserted rather than hedged. With it, the same run answered correctly and reasoned about the others. It costs 113 input tokens. The failure it prevents is fabrication, not omission.
 
-Facts only — nothing tells Codex *how* to cooperate. Being told the others exist is enough to stop it assuming they don't. `--no-preamble` removes all of it, including the base preamble, since half a briefing is worse than none.
+Facts only — nothing tells Codex *how* to cooperate. Being told the others exist is enough to stop it assuming they don't. There is no way to switch it off: V-18 measured it correcting a confident falsehood rather than merely adding facts, at a cost of 113 input tokens, and a caller who wants to state those things itself can write them into the prompt.
 
 ---
 [Back to the wiki index](README.md)

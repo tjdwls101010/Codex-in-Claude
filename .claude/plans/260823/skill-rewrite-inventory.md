@@ -78,7 +78,7 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `SKILL-35` | `fd3ad34bc125` | a | desc:status | Codex review 3: status already lists the project's groups and carries group and worktree on every row |
 | `SKILL-36` | `e5a0ed2f28e3` | a+b | epilog:batch start|SKILL.md#arming-a-wait | Codex review 3: that start returns after the spawns is the epilog's; only the host-turn half is prose |
 | `SKILL-37` | `f94e0c517c37` | a | help:stop --grace | Codex review 3: what a process group does and does not buy is stop's to state |
-| `SKILL-38` | `587bf83ac7e4` | a | help:start --no-preamble | already stated there |
+| `SKILL-38` | `587bf83ac7e4` | a | epilog:start | already stated there. Re-anchored 2026-08-26: it pointed at `--no-preamble`, and the 260826 round retired that flag — which took with it the only place `--help` said anything was prepended at all. `RUN_RETURN_EPILOG` says it now, unconditionally, which is what it is |
 | `SKILL-39` | `49317ae3477d` | a | desc:doctor | Codex review 3: the consequence of an override is not derivable from the two fields doctor already prints |
 | `SKILL-40` | `0bb7736b9426` | a | help:start --effort | efforts are per-model and omitting is not medium |
 | `SKILL-41` | `4b51cfc04d35` | a | help:start --foreground | background is the default |
@@ -210,7 +210,7 @@ One finding is neither accepted nor rejected but redirected. `orchestration-23` 
 | `orchestration-33` | `35b4f1534e08` | a | help:result --group | what result --group returns |
 | `orchestration-34` | `0c15185db4c2` | a | help:result --group | overlaps is the intersection only |
 | `orchestration-35` | `2e36e4fe087e` | a | help:result --run | one member's full message |
-| `orchestration-36` | `f5a5afac0472` | a | help:batch start --no-preamble | what a batch member is additionally told |
+| `orchestration-36` | `f5a5afac0472` | a | epilog:batch start | what a batch member is additionally told. Re-anchored 2026-08-26 with `SKILL-38`, for the same reason and to the same kind of place |
 | `orchestration-37` | `08855ffab4c9` | c | — | the fabrication measurement |
 | `orchestration-38` | `af09dd28c646` | c | — | why the preamble prevents fabrication rather than omission |
 | `orchestration-39` | `9f444091d17f` | b | SKILL.md#which-mode | N floors against one floor plus a growing replay |

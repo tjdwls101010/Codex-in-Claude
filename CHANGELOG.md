@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Twenty-one headless sessions were run before a line of this was written, each one delegating the same task twice — once to Claude's own `Agent`/`Workflow`/agent team, once to Codex — and graded on four invariants rather than on whether the two looked alike. Six of the seven axes came back identical. What this release changes is the one that did not, plus two waiting defects the benchmark surfaced and two things two field reports did.
+
+**Read Changed before upgrading.** The batch worktree default is inverted and five flags are gone.
+
+### Changed
+
+- **`batch start` shares your tree by default; `--worktree` is how you ask for isolation.** It used to isolate any batch with two or more writing members. Three measurements moved it. A session handed isolation collected three checkouts by hand — a `git apply` per member, then `batch clean --force` — steps a fan-out of Claude's own subagents does not have, because a native subagent's work lands in your tree. A second session, knowing that cost, declined to fan out at all and did three files in one run: the default was suppressing the parallelism the command exists for. And a worktree holds only what git tracks, so `.venv`, provider caches and fixture directories are absent — two field reports of runs that could not execute the verification they were asked for, or that rebuilt a cache against live data and reported every comparison as a regression. Against that, sessions judge file overlap correctly unaided: three separate sessions, asked to fan out across three named modules, each reasoned that the files do not overlap. **To keep the old behaviour, add `--worktree`.** Everything else about isolation is unchanged — it is still per member, and a resume, a review, a read-only member and one with its own `cwd` are never isolated.
+
+- **`--base` is refused without `--worktree`.** It names the commit a checkout is cut from, and no checkout is cut otherwise. Accepted silently it would hand back a success the caller reads as "cut from that commit".
+
+### Removed
+
+- **`batch start --no-worktree`.** It negated a default that no longer exists. Left in the parser it would parse and decide nothing, which is worse than absent: a caller typing it would read the success as isolation having been turned off. It is now argparse's usage error, exit status **2**.
+
 ## [0.5.0] — 2026-08-23
 
 The skill was written by adding a gotcha at a time across five rounds, so its structure was the order they were discovered in. This version rewrites it against one rule: **whatever the tool can say, the tool says.** A sentence in `--help` is regenerated from the code on every call and cannot drift from it; the same sentence in a paragraph is a copy, and the copy is what goes wrong.

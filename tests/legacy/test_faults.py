@@ -326,7 +326,7 @@ class WhenAMembersMetaCannotBeParsed(FaultTestCase):
     `--force` ever passed. Unknown is not terminal."""
 
     def test_clean_refuses_rather_than_guessing_the_run_is_dead(self):
-        out = self.bridge("batch", "start", "--group", "p1",
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--task", "a", "--task", "b")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -420,7 +420,7 @@ class WhenGitHasLockedAWorktree(FaultTestCase):
     says in its own output that `--force` "lifted every protection at once"."""
 
     def test_force_lifts_a_git_lock_too(self):
-        out = self.bridge("batch", "start", "--group", "p1",
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--task", "a", "--task", "b")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -440,7 +440,7 @@ class WhenGitHasLockedAWorktree(FaultTestCase):
 class WhenAWorktreeIsRemovedFromUnderALiveRun(FaultTestCase):
 
     def test_clean_does_not_claim_to_have_removed_what_is_gone(self):
-        out = self.bridge("batch", "start", "--group", "p1",
+        out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--task", "a", "--task", "b")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])

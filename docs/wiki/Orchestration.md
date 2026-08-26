@@ -45,9 +45,11 @@ Group-level flags are **defaults, not constraints** — a batch is usually the s
 
 **Process groups isolate signals, not files.** Each run gets its own process group, so stopping one never touches another — but two runs in the same directory still edit the same files, and neither can tell another agent's change from its own.
 
-So when two or more members can write (`workspace-write` or `danger-full-access`), each gets its own git worktree at `.codex-runs/<run_id>/wt`, checked out detached at `HEAD` (or at `--base <ref>`). Your own tree is untouched: `.codex-runs/.gitignore` is `*`, and `git status` in the main tree stays clean even while eight worktrees hold modified files. That's measured, not assumed.
+By default the members share your tree, which is what a fan-out of Claude's own subagents does — the changes appear in front of you as they are made, and there is nothing to collect afterwards. `--worktree` trades that for isolation: each writing member gets its own git worktree at `.codex-runs/<run_id>/wt`, checked out detached at `HEAD` (or at `--base <ref>`). Your own tree is untouched either way: `.codex-runs/.gitignore` is `*`, and `git status` in the main tree stays clean even while eight worktrees hold modified files. That's measured, not assumed.
 
-Assignment is **per member**, and each exclusion has its own reason:
+**The default was the other way round until 2026-08-26, and three measurements moved it.** A session handed isolation collected three checkouts by hand — a `git apply` per member, then `batch clean --force` — steps a native fan-out simply does not have. A second session, knowing that cost, declined to fan out at all and did three files in one run: the default was suppressing the parallelism the command exists for. And a worktree holds only what git tracks, so `.venv`, provider caches and fixture directories are absent from it — two field reports of runs that could not execute the verification they were asked for, or that rebuilt a cache against live data and then reported every comparison as a regression. Against all that, sessions judge overlap correctly on their own: asked to fan out across three named modules, three separate sessions each reasoned that the files do not overlap and said so. So the judgement is yours and `--worktree` is how you act on it.
+
+When you do pass it, assignment is **per member**, and each exclusion has its own reason:
 
 | Excluded | Why |
 |---|---|
@@ -56,9 +58,7 @@ Assignment is **per member**, and each exclusion has its own reason:
 | `kind: resume` members | They continue a thread whose directory they inherit. A new worktree would be a directory the thread has never seen |
 | Members with an explicit `cwd` | You already made that decision, and an inferred default shouldn't overrule a stated one |
 
-A single writer isn't isolated either — it has nobody to collide with, and isolating it would only put its results somewhere you have to go and fetch. `--worktree` overrides that; `--no-worktree` turns the whole thing off.
-
-Two things to know before using `--base`:
+`--base` is refused without `--worktree`, because it names the commit a checkout is cut from and there is no checkout otherwise. Two things to know when you do use it:
 
 - A worktree cut from an older base can silently lack `AGENTS.md`, so those runs start without your project's instructions. `batch start` compares and tells you when that happens.
 - The members' results are uncommitted changes **inside each worktree**, not in your tree. `result --group` reports `files_changed` per member; collecting the content is yours to do.

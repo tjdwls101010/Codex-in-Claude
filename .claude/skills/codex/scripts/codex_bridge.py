@@ -948,16 +948,24 @@ the list is never shorter than the tasks you handed over. Those slots appear as
 `unstarted` and make the group `partial`. One member failing never takes the
 others down, whatever the cause.
 
-Worktrees. A member gets its own git checkout at .codex-runs/<run_id>/wt when
-all of this holds: it is a kind=start task, its sandbox can write, it names no
-cwd of its own, two or more members qualify, the project is a git repository,
-and --base resolves. --worktree lifts the "two or more" condition and nothing
-else — a resume, a review, a read-only member and one with an explicit cwd are
-never isolated, by any flag. The checkout is cut from --base (default HEAD), so
-it holds none of your uncommitted work: that is also why a reviewer never gets
-one, since the diff it was started to look at lives only in your tree. Members'
-results stay inside those checkouts until you collect them with `result
---group`, and `batch clean --group` is what removes them.
+Worktrees. Off unless --worktree is passed, in which case a member gets its own
+git checkout at .codex-runs/<run_id>/wt when all of this holds: it is a
+kind=start task, its sandbox can write, it names no cwd of its own, the project
+is a git repository, and --base resolves. A resume, a review, a read-only member
+and one with an explicit cwd are never isolated, by any flag. The checkout is
+cut from --base (default HEAD), so it holds none of your uncommitted work — that
+is also why a reviewer never gets one, since the diff it was started to look at
+lives only in your tree — and none of what git does not track either, so a
+canonical interpreter, a provider cache or a fixture directory kept out of git
+is absent from it. Members' results stay inside those checkouts until you
+collect them with `result --group`, and `batch clean --group` is what removes
+them.
+
+Without it, every member works in your tree, which is what a fan-out of Claude's
+own subagents does: the changes are in front of you as they are made and there
+is nothing to collect. What you give up is that no member can tell another
+member's edit from its own, so `result --group`'s `overlaps` is a report of what
+already happened rather than of a merge still ahead.
 
 Tasks. --task is a bare prompt, kind=start unless --resume-from turns it into
 the resume of the member it pairs with. --tasks-file takes one JSON object per
@@ -1390,22 +1398,22 @@ def build_parser():
                    help="allow a resume task to start a second turn on a thread "
                         "that already has a live one")
     b.add_argument("--worktree", action="store_true",
-                   help="isolate a single writing member, which the two-or-more "
-                        "condition would otherwise skip. It lifts that "
-                        "condition and no other: a resume, a review, a "
-                        "read-only member and one with its own cwd stay in the "
-                        "caller's tree whatever this says.")
-    b.add_argument("--no-worktree", action="store_true",
-                   help="plan no new worktrees. Members with their own cwd, and "
-                        "resumed members already living in one, are unaffected "
-                        "— this stops worktrees being cut, not worktrees that "
-                        "exist.")
+                   help="give each writing member its own git checkout instead "
+                        "of the caller's tree. Off by default: members share "
+                        "the tree, so their work is in it as they do it. Reach "
+                        "for this when two or more members can touch the same "
+                        "files — the cost is that results stay in the "
+                        "checkouts until you collect them, and that a checkout "
+                        "holds only what git tracks. Per member, not per "
+                        "batch: a resume, a review, a read-only member and one "
+                        "with its own cwd stay in the caller's tree whatever "
+                        "this says.")
     b.add_argument("--base",
-                   help="commit or ref new worktrees are cut from (default "
-                        "HEAD); ignored when none are being cut. A base older "
-                        "than HEAD can be missing the project's AGENTS.md, "
-                        "which reaches a worktree run only from a base where "
-                        "the file exists.")
+                   help="commit or ref the worktrees are cut from (default "
+                        "HEAD). Refused without --worktree, which is the only "
+                        "thing it shapes. A base older than HEAD can be "
+                        "missing the project's AGENTS.md, which reaches a "
+                        "worktree run only from a base where the file exists.")
     b.add_argument("--resume-from", metavar="GROUP",
                    help="continue an earlier group: task i resumes member i of "
                         "that group, in its start order, keeping its thread and "

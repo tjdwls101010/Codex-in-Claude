@@ -403,7 +403,7 @@ def projected_cost(runs_dir: Path, n_runs: int):
 
 
 def wants_worktree(item, args):
-    """Whether this member would be isolated if the batch turns isolation on.
+    """Whether this member is one `--worktree` would isolate.
 
     D35 assigns per member, not per batch, and each exclusion has its own
     reason rather than a shared one:
@@ -431,21 +431,45 @@ def wants_worktree(item, args):
 def plan_worktrees(tasks, args, project):
     """Decide isolation for the batch, then report why in the same breath.
 
-    Returns `(eligible_indices, base_sha, note)`. The threshold is two writing
-    members because one writer has nobody to collide with, and isolating it
-    would only put its results somewhere the caller has to go and fetch.
+    Returns `(eligible_indices, base_sha, note)`.
+
+    **Isolation is opt-in (C-A).** It was the default for two or more writing
+    members, on the reasoning that concurrent writers in one directory edit each
+    other's files mid-edit — which is true, and is a risk Claude's own
+    subagents take by default too. What the default cost was measured three
+    ways. A session that got it collected three checkouts by hand (`git apply`
+    per member, then `batch clean --force`) — steps a native fan-out does not
+    have, because a native subagent's work lands in the caller's tree. A second
+    session, knowing that, declined to fan out at all and did three files in one
+    run: the default suppressed the parallelism the command exists for. And a
+    checkout holds only what git tracks, so `.venv`, provider caches and
+    fixtures are absent — two field reports of runs that could not execute the
+    verification they were asked for, or rebuilt a cache against live data and
+    reported every comparison as a regression.
+
+    Against that, sessions judge overlap correctly on their own: asked to
+    fan out across three named modules, three separate sessions each reasoned
+    that the files do not overlap. So the judgement stays with the caller and
+    `--worktree` is how they act on it — one flag, whose existence is the whole
+    of what has to be taught.
     """
     eligible = {i for i, t in enumerate(tasks) if wants_worktree(t, args)}
-    if getattr(args, "no_worktree", False):
-        return set(), None, "worktrees disabled by --no-worktree"
-    forced = getattr(args, "worktree", False)
+    if not getattr(args, "worktree", False):
+        # Stated, not silent, and only where it means something: two or more
+        # members that can reach the same files. With one writer there is
+        # nobody to collide with, and a note about a hazard that cannot occur
+        # is how a field stops being read.
+        if len(eligible) < 2:
+            return set(), None, None
+        return set(), None, (
+            f"{len(eligible)} members write to {project} and share it, so each "
+            f"one's changes are in your tree as it makes them — and none of "
+            f"them can tell another's edit from its own. `--worktree` gives "
+            f"each its own checkout instead; `result --group` then reports "
+            f"which paths more than one wrote.")
     if not eligible:
         return set(), None, ("no member writes to the tree, so there is nothing "
-                             "to isolate" if forced else None)
-    if len(eligible) < 2 and not forced:
-        return set(), None, ("only one member writes to the tree; a lone writer "
-                             "has nobody to collide with. Pass --worktree to "
-                             "isolate it anyway.")
+                             "to isolate")
     if git_toplevel(project) is None:
         return set(), None, (f"{project} is not a git repository, so worktrees "
                              "are unavailable; members share the caller's tree")
@@ -625,13 +649,18 @@ def cmd_batch_start(args):
     if not valid_name(args.group):
         fail("group name must be alphanumeric with . _ - and no path separators",
              got=args.group)
-    if getattr(args, "worktree", False) and getattr(args, "no_worktree", False):
-        # Checked here, above `claim_group`, and not where the flags are used.
-        # Silently letting one win would hand isolation — or its absence — to a
-        # caller who asked for both and cannot tell which they got; refusing
-        # after the name was claimed would burn that name on a typo, against
-        # the whole point of claiming before anything is spawned.
-        fail("--worktree and --no-worktree contradict each other; pass one")
+    if getattr(args, "base", None) and not getattr(args, "worktree", False):
+        # `--base` names the commit a checkout is cut from, and after C-A no
+        # checkout is cut unless it was asked for. Accepting it silently is the
+        # R19 shape: the caller reads the success as "cut from that commit" and
+        # then reasons correctly from a premise the tool handed them. Checked
+        # here, above `claim_group`, for the reason the refusals below it are —
+        # a combination that quietly means nothing is worse than an error, and
+        # refusing after the claim would burn a single-use group name on a typo.
+        fail("--base only shapes the worktrees --worktree cuts, and there is no "
+             "--worktree here, so nothing would use it. Members share the "
+             "caller's tree, which is whatever is checked out in it now.",
+             base=args.base)
     # `--foreground` used to be accepted here and refused below. The parser no
     # longer offers it, so argparse refuses it first and this command never sees
     # it. Why it can never work is unchanged: `task_args` copies the caller's

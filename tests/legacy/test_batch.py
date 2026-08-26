@@ -379,12 +379,13 @@ class AGroupIsDiscoverableFromStatus(BridgeTestCase):
 
 class ContradictionsAndGaps(BridgeTestCase):
 
-    def test_worktree_and_no_worktree_together_are_refused(self):
-        """Letting one win silently hands isolation, or its absence, to a
-        caller who asked for both and cannot tell which they got."""
+    def test_base_without_worktree_is_refused(self):
+        """`--base` shapes only the checkouts `--worktree` cuts. Accepting it
+        with no checkout to shape hands the caller a success they read as
+        "cut from that commit"."""
         out = self.bridge("batch", "start", "--group", "p1", "--task", "a",
-                          "--worktree", "--no-worktree", expect_rc=1)
-        self.assertIn("contradict", out["error"])
+                          "--base", "HEAD", expect_rc=1)
+        self.assertIn("--worktree", out["error"])
         # Refused above `claim_group`, not where the flags are read. Refusing
         # afterwards left an empty manifest behind and burned the name on a
         # typo, against the whole point of claiming before anything spawns.

@@ -103,7 +103,8 @@ class TheCleanTreeSentence(BridgeCase):
 
     def start_batch(self):
         tasks = self.tasks_file("one", "two")
-        return self.bridge("batch", "start", "--group", "g", "--tasks-file", tasks)
+        return self.bridge("batch", "start", "--group", "g", "--worktree",
+                           "--tasks-file", tasks)
 
     def test_a_clean_tree_is_not_described_as_zero_files_that_exist(self):
         self.start_batch()

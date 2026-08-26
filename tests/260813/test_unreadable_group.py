@@ -29,8 +29,12 @@ from helpers import BridgeCase
 class UnreadableManifest(BridgeCase):
 
     def start_group(self, name="g", n=2):
+        # `--worktree`: this file is about a manifest that will not parse, and
+        # what is genuinely at stake in that case is the members' checkouts —
+        # the only copy of what those runs produced.
         tasks = self.tasks_file(*[f"task {i}" for i in range(n)])
-        out = self.bridge("batch", "start", "--group", name, "--tasks-file", tasks)
+        out = self.bridge("batch", "start", "--group", name, "--worktree",
+                          "--tasks-file", tasks)
         for r in out["runs"]:
             self.wait_terminal(r["run_id"])
         return out

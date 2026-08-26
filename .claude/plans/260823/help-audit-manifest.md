@@ -4,6 +4,8 @@ Every argument a caller can pass, and what the 260823 audit did with its help te
 
 What it cannot check is whether a `keep` was right. That is what Codex run `20260823-145243-plan-review2-b855` was for: it read all 143 strings against the code and named the ones that were false, overstated, or ambiguous. Every `change` below traces to one of its findings or to one of the six behaviour changes; every `keep` is a string it read and did not object to.
 
+**2026-08-26.** The 260826 round retires arguments rather than rewording them, so its rows are marked `remove` here rather than getting a manifest of their own — the finish line this table draws is "every argument a caller can pass has been read", and an argument that no longer exists is read by nobody. `test_the_removals_actually_left` turns each of those rows into a claim about the tree.
+
 `(top level)` is the bridge itself. Arguments repeated across `start`, `resume`, `review` and `batch start` come from one shared block, so a `change` on one of them is the same edit four times — they are listed separately because that is how a caller meets them.
 
 | command | argument | verdict |
@@ -136,7 +138,7 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 | `batch start` | `--tasks-file` | change |
 | `batch start` | `--force` | keep |
 | `batch start` | `--worktree` | change |
-| `batch start` | `--no-worktree` | change |
+| `batch start` | `--no-worktree` | remove |
 | `batch start` | `--base` | change |
 | `batch start` | `--resume-from` | change |
 | `batch start` | `--as-ready` | change |

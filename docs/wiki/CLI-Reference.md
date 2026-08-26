@@ -143,8 +143,8 @@ Returns a run's final message and usage. With `--group`, returns every member's 
 
 ```bash
 $CODEX batch start --group <name> (--task "<prompt>"... | --tasks-file <jsonl>)
-                   [--resume-from <group> [--as-ready]] [--worktree | --no-worktree]
-                   [--base <ref>] [--force]
+                   [--resume-from <group> [--as-ready]] [--worktree [--base <ref>]]
+                   [--force]
                    [any start/resume/review flag as a group-wide default]
 ```
 
@@ -157,13 +157,13 @@ Starts N runs as one addressable group and returns every handle at once.
 | `--tasks-file <path>` | JSONL, one task object per line. Fields: `prompt`, `kind`, `label`, `model`, `effort`, `sandbox`, `schema`, `image`, `cwd`, `resume`, `review` |
 | `--resume-from <group>` | Task *i* continues member *i* of that group, in its recorded start order. Refuses while any member of that group is still live |
 | `--as-ready` | With `--resume-from`: start each member the moment the member it continues reaches a terminal state, instead of waiting for the slowest of them. Any terminal state releases, a failure included; `--timeout` bounds only the Codex turn and never the wait, and `stop --group` is what ends a wait |
-| `--worktree` / `--no-worktree` | Force worktree isolation on for a lone writer, or off entirely |
-| `--base <ref>` | Commit the worktrees are cut from (default `HEAD`) |
+| `--worktree` | Give each writing member its own git checkout instead of your tree. **Off by default** — members share the tree, so their work lands where you can see it |
+| `--base <ref>` | Commit the worktrees are cut from (default `HEAD`). Refused without `--worktree`, the only thing it shapes |
 | `--force` | Let a resume task start a second turn on a thread that already has one live. Not combinable with `--as-ready`, which is the opposite instruction |
 
 Group-level flags are **defaults**, not constraints; a per-item field overrides them. An unknown field name or a wrongly-typed value fails the command before anything starts. One member failing to spawn does not take the batch with it — the failure is recorded in that member's slot.
 
-**Worktrees** are assigned when two or more members can write (`workspace-write` or `danger-full-access`), one per member at `.codex-runs/<run_id>/wt`, detached. `read-only` members, `kind: review` members, `kind: resume` members, and any member with an explicit `cwd` never get one. See [Orchestration](Orchestration.md) for why each exclusion exists.
+**Worktrees** are cut only under `--worktree`, one per writing member at `.codex-runs/<run_id>/wt`, detached. `read-only` members, `kind: review` members, `kind: resume` members, and any member with an explicit `cwd` never get one whatever the flag says. A checkout also holds only what git tracks, so anything gitignored — a canonical interpreter, a cache, a fixture directory — is absent from it. See [Orchestration](Orchestration.md) for why each exclusion exists.
 
 **Output:** `group`, `runs` (one entry per task, in order, each with `run_id`/`thread_id`/`cwd`/`sandbox` or an `error`), `spawned`, `requested`, `projected_cost`, `manifest`; plus `worktrees` when any were cut (or a `note` saying why none were), and `resumed_from` under `--resume-from`.
 

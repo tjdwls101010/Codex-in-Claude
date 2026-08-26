@@ -603,10 +603,11 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
             out["concurrent_writers"] = others
             out["concurrent_writers_note"] = (
                 f"{len(others)} other live run(s) can write to {cwd}. None of you "
-                "can tell another agent's change from your own. `batch start` "
-                "assigns a worktree per writing member — including when "
-                "continuing an earlier group with --resume-from, which is the "
-                "only isolated way to resume several writers at once.")
+                "can tell another agent's change from your own. `batch start "
+                "--worktree` gives each writing member its own checkout — "
+                "including when continuing an earlier group with "
+                "--resume-from, which is the only isolated way to resume "
+                "several writers at once.")
     return out
 
 

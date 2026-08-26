@@ -269,11 +269,25 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
                               for name in blind])
 
 
-def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
-               group=None, batch=None, worktree_base=None, waits_for=None):
-    project = resolve_project(args.project)
-    runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
+# Building a run is five stages, and the thread's turn lock in the middle is why
+# they are worth naming. Everything that can still REFUSE a run happens before
+# the lock is taken; everything that makes the run VISIBLE happens inside it;
+# everything SLOW happens after it is released. Two of this project's
+# refinements are that ordering and nothing else — R26 (the check and the
+# publication have to sit in one critical section, or two resumes a fraction of
+# a second apart both see an idle thread) and R18/§worktree below (a checkout
+# cut before the run is published is reachable by no removal path at all) — and
+# both are invisible while the stages are one 290-line function.
 
+
+def resolve_settings(args, *, kind, base, project, thread_ref):
+    """Stage 1 — resolve what this run will be, and refuse it here if at all.
+
+    Nothing in this stage writes anything or claims a name, so every refusal it
+    makes costs nothing: no run directory, no group slot burned, no Codex
+    process. That is why the raw-config check and the model/effort check live
+    here rather than next to the code that uses their values.
+    """
     cwd = (Path(args.cwd).expanduser().resolve() if getattr(args, "cwd", None)
            else (Path(base["cwd"]) if base else project))
     if not cwd.is_dir():
@@ -343,9 +357,20 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         # new isolation state rather than carrying over the parent's value.
         priority = isolated
 
-    # From here to the first `write_meta` is one critical section per thread:
-    # the answer to "is this thread busy?" is only true until someone else
-    # publishes, and publishing is what the lock waits for.
+    return {"cwd": cwd, "prompt": prompt, "extra_config": extra_config,
+            "isolated": isolated, "sandbox": sandbox, "priority": priority}
+
+
+def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group,
+                waits_for):
+    """Stage 2 — take the thread's turn lock, claim a run directory, publish it.
+
+    From the lock to the first `write_meta` is one critical section per thread:
+    the answer to "is this thread busy?" is only true until someone else
+    publishes, and publishing is what the lock waits for.
+
+    Returns `(run_id, run_dir, meta)`.
+    """
     with thread_turn_lock(runs_dir, thread_ref):
         refuse_concurrent_turn(runs_dir, thread_ref,
                                getattr(args, "force", False),
@@ -390,14 +415,14 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
             "parent_run_id": base.get("run_id") if base else None,
             "kind": kind,
             "label": args.label or (base.get("label") if base else None),
-            "prompt_preview": clip(prompt, 300),
-            "cwd": str(cwd),
+            "prompt_preview": clip(s["prompt"], 300),
+            "cwd": str(s["cwd"]),
             "project": str(project),
-            "sandbox": sandbox,
+            "sandbox": s["sandbox"],
             "model": args.model or (base.get("model") if base else None),
             "effort": args.effort or (base.get("effort") if base else None),
-            "isolated": isolated,
-            "priority": priority,
+            "isolated": s["isolated"],
+            "priority": s["priority"],
             "schema_path": (str(Path(args.schema).expanduser().resolve())
                             if getattr(args, "schema", None)
                             else (base.get("schema_path") if base else None)),
@@ -405,11 +430,11 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
                        for i in (getattr(args, "image", None) or [])],
             "add_dirs": [str(Path(d).expanduser().resolve())
                          for d in (getattr(args, "add_dir", None) or [])],
-            "extra_config": extra_config,
+            "extra_config": s["extra_config"],
             # Only where Codex's own guard does not apply. The wrapper does not
             # silently disable a Codex safety default just to keep its own argv
             # uniform.
-            "skip_git_repo_check": git_toplevel(cwd) is None,
+            "skip_git_repo_check": git_toplevel(s["cwd"]) is None,
             "preamble": not args.no_preamble,
             "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
             "foreground": bool(getattr(args, "foreground", False)),
@@ -418,7 +443,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
             # a single run say which group it belongs to without one, so `status`
             # can still answer that after a manifest is lost or hand-deleted.
             "group": group,
-            "worktree": None,       # filled in below, once nothing can still refuse
+            "worktree": None,       # filled in by stage 3, once nothing can still refuse
             "started_at": now_iso(),
             # When Codex itself began, as distinct from when this run object was
             # built. They were the same thing to within milliseconds until
@@ -434,11 +459,11 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
             # waits for before it spawns Codex, and how that run ended.
             "waits_for": waits_for, "predecessor_state": None,
             # What this run was launched against, recorded even when it is not (yet)
-        # a thread id. `thread_id` cannot hold it — a ref may be a thread *name*
-        # — and leaving it nowhere is what made `refuse_concurrent_turn` blind
-        # to a thread the registry has not seen before.
-        "resume_ref": thread_ref,
-        # Who is building this run, so `reap` can ask instead of guessing from
+            # a thread id. `thread_id` cannot hold it — a ref may be a thread *name*
+            # — and leaving it nowhere is what made `refuse_concurrent_turn` blind
+            # to a thread the registry has not seen before.
+            "resume_ref": thread_ref,
+            # Who is building this run, so `reap` can ask instead of guessing from
             # meta.json's mtime. There is a real window between publishing the run
             # and handing it to a supervisor — `git worktree add` may take a minute
             # — and during it this pid is the only evidence the run is alive.
@@ -469,45 +494,67 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     # Lock released here, before the worktree is cut: `git worktree add` is
     # allowed a minute, and holding a thread's turn lock across it would turn
     # a loud refusal into a silent wait.
+    return run_id, run_dir, meta
 
-    # Cut the worktree last, after every check that can still refuse this run.
-    # It cannot be cut before `claim_run_dir` — it lives at `<run_dir>/wt`, and
-    # the run id naming that directory does not exist until then — but cutting
-    # it any earlier than here leaks. A member rejected afterwards never gets a
-    # meta.json and so never gets a run_id, and `batch clean` resolves
-    # worktrees through the manifest's run ids: the worktree would survive
-    # every documented removal path while `batch clean` reported the group
-    # fully cleaned.
-    wt_info = None
+
+def cut_worktree(run_dir: Path, meta: dict, source: Path, worktree_base: str):
+    """Stage 3 — give this run its own checkout, after every refusal has passed.
+
+    Returns `(cwd, wt_info)`; `meta` is updated in place and rewritten.
+
+    It cannot be cut before `claim_run_dir` — it lives at `<run_dir>/wt`, and
+    the run id naming that directory does not exist until then — but cutting it
+    any earlier than here leaks. A member rejected afterwards never gets a
+    meta.json and so never gets a run_id, and `batch clean` resolves worktrees
+    through the manifest's run ids: the worktree would survive every documented
+    removal path while `batch clean` reported the group fully cleaned.
+    """
+    wt = run_dir / "wt"
+    ok, err = worktree_add(source, wt, worktree_base)
+    if not ok:
+        fail(f"could not create the worktree for this member: {err}",
+             base=worktree_base, path=str(wt))
+    wt_info = {"path": str(wt), "base": worktree_base,
+               "uncommitted_in_caller_tree": worktree_uncommitted(source),
+               "source": str(source)}
+    meta["cwd"] = str(wt)
+    meta["worktree"] = wt_info
+    # Immediately, not with the rest of meta at the end of `create_run`.
+    # Between here and there lies `THREAD_ID_WAIT`, up to fifteen seconds of
+    # waiting for Codex to name its thread, and a checkout whose path is
+    # written nowhere is one `batch clean` skips: its loop takes the path from
+    # `meta["worktree"]`. Publishing the run without it closes half a hole and
+    # leaves the other half exactly as wide.
+    write_meta(run_dir, meta)
+    return wt, wt_info
+
+
+def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
+               group=None, batch=None, worktree_base=None, waits_for=None):
+    project = resolve_project(args.project)
+    runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
+
+    s = resolve_settings(args, kind=kind, base=base, project=project,
+                         thread_ref=thread_ref)
+    run_id, run_dir, meta = publish_run(
+        args, s, kind=kind, base=base, project=project, runs_dir=runs_dir,
+        thread_ref=thread_ref, group=group, waits_for=waits_for)
+
+    cwd, wt_info = s["cwd"], None
     if worktree_base:
-        source, wt = cwd, run_dir / "wt"
-        ok, err = worktree_add(source, wt, worktree_base)
-        if not ok:
-            fail(f"could not create the worktree for this member: {err}",
-                 base=worktree_base, path=str(wt))
-        cwd = wt
-        wt_info = {"path": str(wt), "base": worktree_base,
-                   "uncommitted_in_caller_tree": worktree_uncommitted(source),
-                   "source": str(source)}
-        meta["cwd"] = str(cwd)
-        meta["worktree"] = wt_info
-        # Immediately, not with the rest of meta at the end of this function.
-        # Between here and there lies `THREAD_ID_WAIT`, up to fifteen seconds
-        # of waiting for Codex to name its thread, and a checkout whose path is
-        # written nowhere is one `batch clean` skips: its loop takes the path
-        # from `meta["worktree"]`. Publishing the run without it closes half a
-        # hole and leaves the other half exactly as wide.
-        write_meta(run_dir, meta)
+        cwd, wt_info = cut_worktree(run_dir, meta, s["cwd"], worktree_base)
 
+    # Stage 4 — the argv, which is the last thing written before anything runs.
     if batch and wt_info:
         batch = {**batch, "worktree": wt_info["path"], "base": wt_info["base"],
                  "uncommitted": wt_info["uncommitted_in_caller_tree"]}
-    send = (apply_preamble(prompt, meta["preamble"], batch=batch)
-            if prompt.strip() else None)
+    send = (apply_preamble(s["prompt"], meta["preamble"], batch=batch)
+            if s["prompt"].strip() else None)
     meta["argv"] = build_argv(meta, kind=kind, prompt=send,
                               thread_ref=thread_ref, review_args=review_args)
     write_meta(run_dir, meta)
 
+    # Stage 5 — hand back a handle, or block for the whole turn.
     if meta["foreground"]:
         supervise(run_dir, timeout=getattr(args, "timeout", None))
         m = read_meta(run_dir) or {}
@@ -515,7 +562,8 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
         return {"run_id": run_id, "thread_id": m.get("thread_id"),
                 "state": m.get("state"), "exit_code": m.get("exit_code"),
                 "events": str(run_dir / "events.jsonl"), "project": str(project),
-                "cwd": str(cwd), "sandbox": sandbox, "isolated": isolated,
+                "cwd": str(cwd), "sandbox": s["sandbox"],
+                "isolated": s["isolated"],
                 "last_agent_message": info["last_agent_message"],
                 "usage": info["usage"]}
 
@@ -541,14 +589,14 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     out = {"run_id": run_id, "thread_id": thread_id,
            "state": m.get("state", "starting"),
            "events": str(run_dir / "events.jsonl"), "project": str(project),
-           "cwd": str(cwd), "sandbox": sandbox, "isolated": isolated}
+           "cwd": str(cwd), "sandbox": s["sandbox"], "isolated": s["isolated"]}
     if group:
         out["group"] = group
     if wt_info:
         out["worktree"] = wt_info
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
-    if sandbox in WRITING_SANDBOXES and not wt_info:
+    if s["sandbox"] in WRITING_SANDBOXES and not wt_info:
         others = concurrent_writers(runs_dir, cwd, exclude_run_id=run_id,
                                     waits_for=waits_for)
         if others:

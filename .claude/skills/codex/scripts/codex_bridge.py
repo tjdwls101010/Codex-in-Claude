@@ -965,7 +965,8 @@ cut from --base (default HEAD), so it holds none of your uncommitted work — th
 is also why a reviewer never gets one, since the diff it was started to look at
 lives only in your tree — and none of what git does not track either, so a
 canonical interpreter, a provider cache or a fixture directory kept out of git
-is absent from it. Members' results stay inside those checkouts until you
+is absent from it — `missing_ignored` in the reply names the ones this tree
+actually has. Members' results stay inside those checkouts until you
 collect them with `result --group`, and `batch clean --group` is what removes
 them.
 

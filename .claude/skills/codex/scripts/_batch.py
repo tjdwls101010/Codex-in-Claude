@@ -48,8 +48,9 @@ from _util import (
     now_iso,
 )
 from _worktree import (
-    is_dirty as worktree_dirty, missing_at_base as worktree_missing_at_base,
-    prune as worktree_prune, remove as worktree_remove, repo_identity,
+    ignored_entries as worktree_ignored_entries, is_dirty as worktree_dirty,
+    missing_at_base as worktree_missing_at_base, prune as worktree_prune,
+    remove as worktree_remove, repo_identity,
     resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
 )
 
@@ -865,6 +866,21 @@ def cmd_batch_start(args):
                     "<run_dir>/wt. Their changes are not in your tree; "
                     "`result --group` reports which paths more than one wrote. "
                     "`batch clean --group` removes them once you have collected."}
+        try:
+            own = runs_dir.relative_to(project).as_posix() + "/"
+        except ValueError:
+            own = None
+        ignored, ignored_more = worktree_ignored_entries(
+            project, skip=[own] if own else [])
+        if ignored:
+            # R14 — the tool knows this at the moment it cuts the checkout, and
+            # the caller cannot see it from anywhere. Named rather than
+            # summarised, because the decision it feeds is per entry: a cache
+            # is a rebuild, a `.venv` is a run that cannot execute the command
+            # it was asked to verify with.
+            out["worktrees"]["missing_ignored"] = ignored
+            if ignored_more:
+                out["worktrees"]["missing_ignored_truncated"] = ignored_more
         missing = worktree_missing_at_base(project, wt_base)
         if missing:
             # V-14: project instructions reach a worktree run, but only from a

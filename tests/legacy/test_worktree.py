@@ -264,6 +264,58 @@ class Assignment(WorktreeTestCase):
                 time.sleep(0.1)
 
 
+class WhatAWorktreeDoesNotHave(WorktreeTestCase):
+    """C8 — a checkout is `git worktree add` output, so it holds tracked files
+    at the base commit and nothing else.
+
+    Reproduced before this was written (V-27): `.venv/bin/python` planted in the
+    fixture, two worktree members asked to `ls .venv/bin`, both `No such file or
+    directory`. Two field reports of the same thing, and the worse half is not
+    the missing file — a run that rebuilds its own cache gets live data and
+    reports every comparison against the recorded baseline as a regression.
+
+    The tool knows this at the moment it cuts the checkout, which is R14's rule:
+    where the tool knows a fact the caller cannot see, the tool says it then.
+    """
+
+    def ignore(self, *entries):
+        (self.project / ".gitignore").write_text("\n".join(entries) + "\n")
+        for e in entries:
+            d = self.project / e.rstrip("/")
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "marker").write_text("x")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "ignore")
+
+    def test_the_response_names_what_the_checkouts_do_not_have(self):
+        self.ignore(".venv/", ".state/cache/")
+        out = self.start_group("--worktree")
+        missing = out["worktrees"]["missing_ignored"]
+        self.assertEqual(sorted(missing), [".state/cache/", ".venv/"])
+        for r in out["runs"]:
+            self.assertFalse((Path(r["worktree"]) / ".venv").exists(),
+                             "the claim is checked against the checkout itself")
+            self.wait_for_state(r["run_id"])
+
+    def test_a_tree_with_nothing_ignored_says_nothing(self):
+        """A field reporting an empty list on every batch is a field that stops
+        being read."""
+        out = self.start_group("--worktree")
+        self.assertNotIn("missing_ignored", out["worktrees"])
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+    def test_a_shared_tree_batch_has_nothing_to_report(self):
+        """Nothing is cut, so nothing is missing — and after C-A this is the
+        default, which is why the fact belongs to `--worktree` rather than to
+        `batch start`."""
+        self.ignore(".venv/")
+        out = self.start_group()
+        self.assertNotIn("missing_ignored", out.get("worktrees") or {})
+        for r in out["runs"]:
+            self.wait_for_state(r["run_id"])
+
+
 class OverlapsUnderIsolation(WorktreeTestCase):
     """Codex reports ABSOLUTE paths, and under worktree isolation every member
     has a different absolute prefix.

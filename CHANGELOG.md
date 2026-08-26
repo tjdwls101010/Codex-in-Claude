@@ -26,6 +26,10 @@ Twenty-one headless sessions were run before a line of this was written, each on
 
 - **A run recorded before this version keeps its tier when resumed.** `meta.json`'s boolean `priority` became the string `service_tier` in the same release that started reading the tier from `config.toml`; a thread recorded under the old key would have lost Fast mode for the rest of its life. The old key is read when the new one is absent — presence, not truth, so a new record that deliberately holds no tier is not overwritten.
 
+### Added
+
+- **`batch start --worktree` names what the checkouts do not have.** A worktree is `git worktree add` output — tracked files at the base commit and nothing else — so `.venv`, provider caches and fixture directories are all absent. Reproduced directly: `.venv/bin/python` planted in a fixture, two worktree members asked to `ls .venv/bin`, both `No such file or directory`. The reply now carries `missing_ignored` listing what this tree actually has, at the moment the checkouts are cut, since that is the last point where the caller could still act on it. The tool's own run registry is left out — it gitignores itself, and a checkout not having it is neither news nor actionable.
+
 ### Removed
 
 **Five flags.** Each is now argparse's usage error, exit status **2**, refused before anything is claimed. The shared reason is that none was used in 51 real delegations, which on its own would only argue for leaving them alone — what decided each one is the second reason.

@@ -91,6 +91,37 @@ def missing_at_base(cwd: Path, base: str, names=("AGENTS.md", "CLAUDE.md")):
     return missing
 
 
+def ignored_entries(cwd: Path, skip=(), limit=20):
+    """What git ignores in the caller's tree, at the shallowest ignored level.
+
+    A worktree is `git worktree add` output: tracked files at the base commit,
+    and nothing else. So every one of these is absent from a checkout — the
+    canonical interpreter, provider caches, fixture directories, whatever this
+    repository deliberately keeps out of git. V-27 reproduced it directly, and
+    the consequence is worse than a missing file: a run that rebuilds its own
+    cache gets live data and reports every comparison against the recorded
+    baseline as a regression, which reads as a finding rather than as a
+    setup problem.
+
+    `--ignored=matching` collapses a wholly-ignored directory to one entry, so
+    a `node_modules` does not arrive as fifty thousand lines. The cap is for
+    what that still does not collapse — a rule matching many siblings — and the
+    caller is told a count rather than handed a truncated list to reason from.
+
+    `skip` drops paths under a prefix: the run registry gitignores itself, and
+    a checkout not having this tool's own bookkeeping is neither news nor a
+    thing the caller can act on.
+    """
+    p = _git(cwd, "status", "--porcelain", "--ignored=matching",
+             "--untracked-files=normal")
+    if p.returncode != 0:
+        return [], 0
+    found = [ln[3:] for ln in p.stdout.splitlines()
+             if ln.startswith("!! ")
+             and not any(ln[3:].startswith(s) for s in skip)]
+    return found[:limit], max(0, len(found) - limit)
+
+
 def uncommitted_count(cwd: Path):
     """Files that differ from HEAD in the caller's tree, tracked or not, or
     `None` if git would not say.

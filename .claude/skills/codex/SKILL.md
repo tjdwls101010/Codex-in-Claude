@@ -105,7 +105,7 @@ This works because the agent's own account of what it found and did is never fil
 
 ## Troubleshooting
 
-Run `$CODEX doctor` first; it reports the whole environment in one line and exits non-zero when something will actually stop a run. Two things it cannot help with:
+Run `$CODEX doctor` first; it reports the whole environment in one line and exits non-zero when something it can see will stop a run. It answers without spawning anything, so a failure that only appears once `codex` is actually launched — a nested sandbox refusing it, a machine-level restriction — passes `doctor` cleanly and shows up as a run that comes back `failed` before it ever reaches a thread, with the reason in its `stderr_tail`. Two more things it cannot help with:
 
 - **`No such file or directory` on the bridge itself.** The path is wrong, and `doctor` cannot diagnose it because `doctor` is the same script. The `Base directory for this skill:` line in your context is the answer; `ls "<base directory>/scripts/"` confirms it.
 - **Auth that works in your terminal but not from here.** `CODEX_HOME` differs between the two environments. Compare `doctor`'s resolved value against `echo $CODEX_HOME` in the shell where it works.

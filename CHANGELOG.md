@@ -4,9 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-Twenty-one headless sessions were run before a line of this was written, each one delegating the same task twice — once to Claude's own `Agent`/`Workflow`/agent team, once to Codex — and graded on four invariants rather than on whether the two looked alike. Six of the seven axes came back identical. What this release changes is the one that did not, plus two waiting defects the benchmark surfaced and two things two field reports did.
+Twenty-one headless sessions were run before a line of this was written, each one delegating the same task twice — once to Claude's own `Agent`/`Workflow`/agent team, once to Codex — and graded on four invariants rather than on whether the two looked alike. Six of the seven axes came back identical. What this release changes is the one that did not, plus two waiting defects the benchmark surfaced and two things two field reports did. Every commit was then handed to a Codex review before the next was written, and the new `--help` strings to a second one; between them they found fourteen more defects, ten of which this release had just created.
 
-**Read Changed before upgrading.** The batch worktree default is inverted and five flags are gone.
+**Read Changed before upgrading.** The batch worktree default is inverted, five flags are gone, and an isolated run now takes the model, reasoning effort and service tier your `config.toml` sets instead of the server's defaults.
 
 ### Changed
 
@@ -38,7 +38,7 @@ Twenty-one headless sessions were run before a line of this was written, each on
 
 - **Choosing a shape is now two axes rather than four comparisons.** How many runs and how you address them, and whether anything has to be computed between rounds. A read-only fan-out is a batch for the first reason, and a round whose prompts come from the previous round's results leaves the tool entirely for the second.
 
-- **The one-turn waiting rule covers every way of arming.** It named the follower, so a session that armed a Monitor instead read the exception, did parallel work, and still ended the turn on a promise — as did one that armed a follower. The rule is now the property rather than the instrument: if you cannot name the thing that would wake you, do the parallel work first and make the turn's last call a blocking foreground `--follow`. Choosing between one notification and one per event is stated as a criterion in the same section instead of as an exception.
+- **The one-turn waiting rule covers every way of arming, and names the thing that was actually killing the wait.** It named the follower, so a session that armed a Monitor instead read the exception and still ended the turn on a promise. The rule is now the property rather than the instrument: if you cannot name what would wake you, do the parallel work first and make the turn's last call a blocking foreground `--follow`. Re-measured, that was still not enough — three of four sessions given the corrected rule left the **Bash call's own `timeout` at its 120-second default**, so the foreground follow was killed after two minutes and each reported it was still watching; the document had named the 600-second ceiling in a sentence that reads as the default. And the section's main idiom licensed "no parallel work, hand the turn back armed" with no condition on there being another turn, which is exactly what the exception forbids. With both fixed: 9 of 10 waiting sessions, against 3 of 8 at the start of the round. Choosing between one notification and one per event is stated as a criterion in the same section instead of as an exception.
 
 ### Fixed
 

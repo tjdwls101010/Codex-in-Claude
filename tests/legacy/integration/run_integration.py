@@ -253,7 +253,14 @@ def I5(project):
 
 @case
 def I6(project):
-    """review --uncommitted over a real change produces findings."""
+    """A read-only `start` over a real change reports findings AND its cost.
+
+    This is what replaced `review --uncommitted` in 0.7.0, and the usage
+    assertion is the half worth keeping: `review` runs reported all-zero token
+    usage after doing real work, so the wrapper had to hand back `null` and a
+    note. A `start` doing the same job is billed like any other turn, which is
+    what makes the cost of a verification round visible again.
+    """
     bad = project / "unsafe.py"
     bad.write_text(
         "import subprocess\n\n\n"
@@ -262,15 +269,23 @@ def I6(project):
         "    return subprocess.run(user_input, shell=True, capture_output=True)\n\n\n"
         "def divide(a, b):\n"
         "    return a / b\n")
-    r = bridge(project, "review", "--label", "i6", "--uncommitted", "--sandbox", "read-only")
+    r = bridge(project, "start", "--label", "i6", "--sandbox", "read-only",
+               "Review the uncommitted changes in this repository "
+               "(`git status --short` then `git diff`) and list what is wrong "
+               "with them. Do not edit anything.")
     wait_done(project, r["run_id"])
     res = bridge(project, "result", "--run", r["run_id"])
     msg = (res["message"] or "")
-    assert len(msg.strip()) > 40, f"review said almost nothing: {msg!r}"
-    assert res["usage"] is None and "unavailable" in res.get("usage_note", ""), (
-        f"review usage should be reported unavailable, got {res['usage']}")
+    assert len(msg.strip()) > 40, f"the run said almost nothing: {msg!r}"
+    usage = res.get("usage") or {}
+    assert usage.get("input_tokens"), (
+        f"a read-only start must report real usage, got {res.get('usage')}")
+    assert "usage_note" not in res, (
+        f"nothing is unmeasured any more: {res.get('usage_note')!r}")
     bad.unlink()
-    return f"{len(msg)} chars of findings; usage correctly null"
+    return (f"{len(msg)} chars of findings; "
+            f"usage input={usage.get('input_tokens')} "
+            f"output={usage.get('output_tokens')}")
 
 
 @case

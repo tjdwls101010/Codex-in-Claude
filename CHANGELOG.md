@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-08-28
+
+One command is gone, and the paragraph that pointed at it is replaced by what this repository has actually measured about verification loops that do not end.
+
+**Read Removed before upgrading.** `review` no longer exists.
+
+### Removed
+
+- **`review` — BREAKING.** The bridge added nothing to it: the argv it built differed from `start`'s only by the subword and a selector flag, with sandbox, model, effort, `--output-schema`, `-o` and prompt termination all going through the same code. Four things stood against keeping it. Of 46 runs in this project's registry, its 13 contain **zero** ad-hoc uses — four from a flag-surface walk and nine from one commit-by-commit sweep. It reported all-zero token usage after doing real work, so the cost of a verification round vanished from the accounting and three files carried code to wrap that. It could not take a lens and a scope at once — `review --uncommitted "races only"` was refused before spawning — so verification through it was always a general sweep, and a general sweep has no predicate to satisfy and nothing to hand back but findings. And a subcommand overlapping `start` with no measured difference is the case this project already refused once, when it turned down `--fast` on "one config key, one tier — a second name, not a second switch".
+
+  **Migration:** `review --commit <sha>` becomes `start --sandbox read-only "Review this commit: git show <sha>"`; `--uncommitted` and `--base <ref>` the same way, with `git diff` in the prompt. Say what to look for in the prompt — that is the thing `review` could not let you do. No preset or selector shim is provided, deliberately: writing the prompt yourself is half of why the command was redundant.
+
+  What goes with it: the `kind: review` task kind and its nested `review` object (a tasks file still carrying either is refused by name, with this migration in the message, rather than silently); `--uncommitted`, `--base`, `--commit`, `--title` as bridge flags; and the `usage_note` a `review` run's `status`/`result` carried. `usage` on those surfaces is now simply what the run reported.
+
+- **`result --group`'s `usage_unmeasured`.** It named members whose zero usage meant "unavailable, not free", and `review` runs were the only thing that could ever populate it. `totals` no longer excludes anybody.
+
+### Changed
+
+- **SKILL.md's `## Which mode` says why a verification loop fails to end, instead of routing you into one.** The paragraph it replaces promised that `review` came back with "a verdict you will act on" — the tool returned findings, which is a different object. What is there now is three things a model cannot re-derive from general competence, each measured in this repository. A stopping predicate whose subject is the examiner has no floor: four adversarial rounds ran here and none came back at zero, because a sufficiently new lens finds something in any codebase. What actually ended it was counting a *different* quantity — of nineteen findings, three were reachable in ordinary single-session use, and reachability is a property of the artifact, so it runs out. And a fresh round does not know what you rejected, so it reopens the questions the last one closed and "still wrong" and "asked again" arrive as one list of the same shape. `--schema` is pointed at rather than re-explained; its own `--help` already states what `result` hands back and how it fails.
+
+- **The wiki drops `review` throughout, and `CLI Reference`'s sections renumber** — §5–§12 become §4–§11. Cross-page anchors are updated.
+
 ## [0.6.0] — 2026-08-27
 
 Twenty-one headless sessions were run before a line of this was written, each one delegating the same task twice — once to Claude's own `Agent`/`Workflow`/agent team, once to Codex — and graded on four invariants rather than on whether the two looked alike. Six of the seven axes came back identical. What this release changes is the one that did not, plus two waiting defects the benchmark surfaced and two things two field reports did. Every commit was then handed to a Codex review before the next was written, and the new `--help` strings to a second one; between them they found fourteen more defects, ten of which this release had just created.

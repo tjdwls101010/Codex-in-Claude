@@ -31,7 +31,7 @@ That `out=8797B` is always computed and always shown, regardless of whether the 
 $CODEX show --run <run_id> --item item_2
 ```
 
-See [CLI Reference § show](CLI-Reference.md#7-show) for the full flag set, including the loud-truncation behavior above 20,000 bytes by default.
+See [CLI Reference § show](CLI-Reference.md#6-show) for the full flag set, including the loud-truncation behavior above 20,000 bytes by default.
 
 ## 4. Measured Cost
 
@@ -41,10 +41,10 @@ Four real workloads run against a 148-line Python package, at every filter level
 |---|---:|---:|---:|---:|
 | read-heavy ("explain this architecture") | 12,233 B | **4,951 B** (40.5%) | 4,951 B | 11,392 B |
 | write-heavy ("add a module + tests") | 13,262 B | **2,511 B** (18.9%) | 2,511 B | 11,168 B |
-| review (`--uncommitted`) | 16,841 B | **1,974 B** (11.7%) | 1,974 B | 11,964 B |
+| code review over an uncommitted diff | 16,841 B | **1,974 B** (11.7%) | 1,974 B | 11,964 B |
 | debug-failure ("tests fail, fix them") | 14,629 B | **1,516 B** (10.4%) | 3,647 B | 8,312 B |
 
-`compact` and `normal` come out identical on the first three workloads because every command in them exited `0` — `normal` costs nothing extra until something actually fails. The debug-failure workload was added specifically because the first three gave no evidence for comparing `compact` against `normal` at all. The method, the per-workload prompts and the threats to validity were recorded alongside the run; the conclusion the shipped default rests on is the table above.
+The review workload was measured through the `review` command, which 0.7.0 removed; the same work is now a `read-only` `start`, and nothing about the event stream these numbers filter changed with it. `compact` and `normal` come out identical on the first three workloads because every command in them exited `0` — `normal` costs nothing extra until something actually fails. The debug-failure workload was added specifically because the first three gave no evidence for comparing `compact` against `normal` at all. The method, the per-workload prompts and the threats to validity were recorded alongside the run; the conclusion the shipped default rests on is the table above.
 
 ## 5. Why `compact` Is the Default
 
@@ -54,7 +54,7 @@ Not because it's the smallest number in the table above — because of what's ac
 |---|---:|---:|
 | read-heavy | 4,951 | 4,218 (85%) |
 | write-heavy | 2,511 | 966 (38%) |
-| review | 1,974 | 779 (39%) |
+| code review | 1,974 | 779 (39%) |
 | debug-failure | 1,516 | 685 (45%) |
 
 Codex states what it found and what it did in its own final message, and that message is never filtered at any level — so raw command output is, in the common case, a **second copy** of a summary you already have. Read-heavy's apparently unimpressive 40.5%-of-raw figure is 85% the actual architecture explanation the run was asked to produce; strip that answer out and the structural overhead is roughly 730 bytes for a 12 KB stream.

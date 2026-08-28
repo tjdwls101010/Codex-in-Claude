@@ -10,7 +10,7 @@ Installation, requirements, and a full first-run walkthrough. For anyone setting
 | Python 3.10+ | Standard library only. No `jq`, no `pip install` step. |
 | Claude Code | 2.1.220 or later. |
 
-Codex resolves its home directory as `${CODEX_HOME:-$HOME/.codex}`. If you've set `CODEX_HOME` to something else, sessions, `config.toml`, `auth.json`, and the thread database all live there instead — see [Concepts § Isolation](Concepts.md#4-isolation---ignore-user-config) and the `doctor` command in [CLI Reference](CLI-Reference.md#12-doctor) for how to confirm which one is active.
+Codex resolves its home directory as `${CODEX_HOME:-$HOME/.codex}`. If you've set `CODEX_HOME` to something else, sessions, `config.toml`, `auth.json`, and the thread database all live there instead — see [Concepts § Isolation](Concepts.md#4-isolation---ignore-user-config) and the `doctor` command in [CLI Reference](CLI-Reference.md#11-doctor) for how to confirm which one is active.
 
 ## 2. Installation
 
@@ -123,7 +123,7 @@ If any of those didn't happen, run `doctor` again and check [Troubleshooting](Tr
 
 ## 6. Where to Go Next
 
-- [CLI Reference](CLI-Reference.md) for every subcommand and flag, including `resume`, `stop`, `review`, and `show`.
+- [CLI Reference](CLI-Reference.md) for every subcommand and flag, including `resume`, `stop`, and `show`.
 - [Sandbox Stability](Sandbox-Stability.md) to understand the defect this plugin exists to close.
 - [Context Discipline & Event Log Levels](Context-Discipline.md) to control how much of a run's output actually reaches Claude's context.
 

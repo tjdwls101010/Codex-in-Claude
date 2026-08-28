@@ -2,7 +2,7 @@
 
 Running several Codex runs as one thing: what the batch commands do, what worktrees buy you, how a batch continues into a next phase, and what it all costs.
 
-This page is mechanics. It deliberately doesn't tell you *which* work to parallelize or how many ways to split it — that depends on the task, and whoever is driving knows more about the task than this page could. See [CLI Reference §10–11](CLI-Reference.md#10-batch-start) for the exact flags.
+This page is mechanics. It deliberately doesn't tell you *which* work to parallelize or how many ways to split it — that depends on the task, and whoever is driving knows more about the task than this page could. See [CLI Reference §9–10](CLI-Reference.md#9-batch-start) for the exact flags.
 
 ## 1. Why a group and not N `start` calls
 
@@ -36,7 +36,7 @@ Membership lives in `.codex-runs/.groups/<name>.json`, recorded in start order, 
 ```jsonl
 {"prompt": "audit the parser", "label": "parser"}
 {"prompt": "audit the lexer",  "label": "lexer", "sandbox": "read-only"}
-{"kind": "review", "review": {"uncommitted": true}}
+{"prompt": "review the uncommitted diff, do not edit", "sandbox": "read-only"}
 ```
 
 Group-level flags are **defaults, not constraints** — a batch is usually the same thing N ways, and the per-item fields are how you say the exceptions. An unknown field name, or a field with the wrong type, fails the whole command before anything starts; a silently ignored field would mean a run that quietly used the group default instead, and nothing downstream could notice.
@@ -53,8 +53,7 @@ When you do pass it, assignment is **per member**, and each exclusion has its ow
 
 | Excluded | Why |
 |---|---|
-| `read-only` members | Nothing to isolate — they can't write |
-| `kind: review` members | A freshly cut worktree has **zero** uncommitted changes (measured). A reviewer inside one reviews nothing: the uncommitted work it was started to look at exists only in your tree |
+| `read-only` members | Nothing to isolate — they can't write. A freshly cut worktree also has **zero** uncommitted changes (measured), so a member put in one to look at uncommitted work would see none: that work exists only in your tree |
 | `kind: resume` members | They continue a thread whose directory they inherit. A new worktree would be a directory the thread has never seen |
 | Members with an explicit `cwd` | You already made that decision, and an inferred default shouldn't overrule a stated one |
 
@@ -104,7 +103,7 @@ The refusal above waits for every member of `audit`, which is a group-shaped ans
 A member that is waiting shows `state: "waiting"` with `waits_for` naming the run it is behind, and `codex_started_at` records when its turn actually began — distinct from `started_at`, which is when the run was created and is therefore *before* its predecessor finished. Any terminal state releases a member, including a failure: `predecessor_state` says how it ended, and "work out what went wrong" is a legitimate next phase. A wait is unbounded — `--timeout` bounds the Codex turn, never the wait — and `stop --group` is what ends one.
 
 Chains work: `p1 → p2 → p3` can all be registered up front, each waiting on its own predecessor. Not combinable with `--force`, which is the opposite instruction.
-- **A task may name its own target** with `kind: resume` and a `resume` field, and keeps it. A `resume` field on a `kind: start` task is a contradiction and is refused; so is a `kind: review` task, which can't be a continuation.
+- **A task may name its own target** with `kind: resume` and a `resume` field, and keeps it. A `resume` field on a `kind: start` task is a contradiction and is refused.
 
 ## 7. Watching and collecting
 

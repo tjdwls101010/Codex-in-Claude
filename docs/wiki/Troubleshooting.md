@@ -44,8 +44,6 @@ Known failure modes and their fixes. For anyone hitting something that doesn't l
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `review` says there's nothing to review | The tree is genuinely clean | Not an error — it exits `0` with a plain message. Confirm with `git status` |
-| `usage` is `null` on a review run | Review runs consistently report zero usage from the underlying CLI | Not a bug, and not free — the tokens were spent, Codex just doesn't report them for this subcommand |
 | `result` fails with "not valid JSON" | `--schema` was used, but the model's final message isn't valid JSON | Deliberate — handing back a malformed object shaped like the schema would be worse than failing loudly. The error includes a preview; re-run with a clearer prompt |
 | stderr contains `Reading additional input from stdin...` | Codex prints this on every non-TTY invocation | Normal output, not a failure — `status` filters this specific line out of `stderr_tail` |
 | A run in a Korean or space-containing path behaves strangely | APFS returns NFD-normalized paths while argv/JSON carry NFC | The bridge normalizes at every boundary where a path becomes a string. If you see drift anywhere else, that's a real bug worth reporting |

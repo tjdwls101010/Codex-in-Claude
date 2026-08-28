@@ -269,6 +269,12 @@ def I6(project):
         "    return subprocess.run(user_input, shell=True, capture_output=True)\n\n\n"
         "def divide(a, b):\n"
         "    return a / b\n")
+    # `git add -N` — intent to add, no content staged. Without it `unsafe.py`
+    # is untracked, `git diff` is empty, and the run is asked to review a diff
+    # that does not contain the planted bug. `review --uncommitted` inspected
+    # the working tree itself and hid this; a prompt naming `git diff` does not.
+    subprocess.run(["git", "-C", str(project), "add", "-N", "unsafe.py"],
+                   check=True, capture_output=True)
     r = bridge(project, "start", "--label", "i6", "--sandbox", "read-only",
                "Review the uncommitted changes in this repository "
                "(`git status --short` then `git diff`) and list what is wrong "
@@ -276,12 +282,23 @@ def I6(project):
     wait_done(project, r["run_id"])
     res = bridge(project, "result", "--run", r["run_id"])
     msg = (res["message"] or "")
-    assert len(msg.strip()) > 40, f"the run said almost nothing: {msg!r}"
+    # Not a length check. A length check passes on any paragraph, so it cannot
+    # tell "found the bug" from "described the file" — which is the failure the
+    # old assertion had. The planted defect is blatant, so naming it is a fair
+    # bar; like I15 this depends on the model performing, and a miss here is a
+    # finding about the prompt rather than about the bridge.
+    assert "shell" in msg.lower(), (
+        f"the run did not name the planted shell-injection bug: {msg!r}")
     usage = res.get("usage") or {}
     assert usage.get("input_tokens"), (
         f"a read-only start must report real usage, got {res.get('usage')}")
     assert "usage_note" not in res, (
         f"nothing is unmeasured any more: {res.get('usage_note')!r}")
+    # Both halves. `add -N` put an intent-to-add entry in the index, and
+    # unlinking the file without dropping it leaves `git status` reporting a
+    # deleted path for the rest of the run — which I10 and I15 read.
+    subprocess.run(["git", "-C", str(project), "rm", "--cached", "-q", "unsafe.py"],
+                   check=True, capture_output=True)
     bad.unlink()
     return (f"{len(msg)} chars of findings; "
             f"usage input={usage.get('input_tokens')} "

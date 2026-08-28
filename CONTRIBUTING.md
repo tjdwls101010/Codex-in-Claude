@@ -56,7 +56,7 @@ Both directories are separate `unittest` start dirs rather than one, because nei
 CODEX_SKILL_TEST_INTEGRATION=1 python3 tests/legacy/integration/run_integration.py
 ```
 
-This spins up a throwaway git repo and runs real `codex` calls through the bridge — background start/resume/stop, parallel runs, `--output-schema`, `review`, and image attachment. It costs real API usage, so it isn't run by default and isn't required for most PRs; run it if your change touches how the bridge invokes `codex` itself (argv composition, sandbox/model/effort handling, process lifecycle). Use `--only <case-id>` to run a single case while iterating.
+This spins up a throwaway git repo and runs real `codex` calls through the bridge — background start/resume/stop, parallel runs, `--output-schema`, a read-only review run, and image attachment. It costs real API usage, so it isn't run by default and isn't required for most PRs; run it if your change touches how the bridge invokes `codex` itself (argv composition, sandbox/model/effort handling, process lifecycle). Use `--only <case-id>` to run a single case while iterating.
 
 **Harness validation:**
 

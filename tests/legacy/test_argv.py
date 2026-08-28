@@ -83,7 +83,7 @@ class ArgvComposition(BridgeTestCase):
         self.assertFlagPair(argv, "--add-dir", str(extra))
 
     def test_cwd_is_set_on_the_child_never_via_dash_C(self):
-        """Invariant 2: -C does not exist on resume or review, so it is never used."""
+        """Invariant 2: -C does not exist on resume, so it is never used."""
         sub = self.project / "nested"
         sub.mkdir()
         r = self.start("x", "--cwd", str(sub))
@@ -242,15 +242,6 @@ class SandboxDriftRegression(BridgeTestCase):
         self.assertNoFlag(self.argv_records()[1]["argv"], "-s", "--sandbox", "-C",
                           "--cd", "--add-dir")
 
-    def test_review_never_emits_dash_s_dash_C_or_image(self):
-        r = self.bridge("review", "--uncommitted", "--sandbox", "read-only")
-        self.wait_for_state(r["run_id"])
-        argv = self.last_argv()
-        self.assertEqual(argv[:2], ["exec", "review"])
-        self.assertIn("--uncommitted", argv)
-        self.assertIn('sandbox_mode="read-only"', argv)
-        self.assertNoFlag(argv, "-s", "--sandbox", "-C", "--cd", "--add-dir", "-i", "--image")
-
     def test_resume_by_thread_id_and_by_last(self):
         r = self.start("first")
         self.wait_for_state(r["run_id"])
@@ -288,33 +279,6 @@ class SandboxDriftRegression(BridgeTestCase):
         self.assertNotIn("workspace-write", out["error"])
 
 
-class ReviewArgumentValidation(BridgeTestCase):
-
-    def test_review_rejects_combinations(self):
-        out = self.bridge("review", "--uncommitted", "--base", "main", expect_rc=1)
-        self.assertIn("exactly one of", out["error"])
-
-    def test_review_requires_one_selector(self):
-        out = self.bridge("review", expect_rc=1)
-        self.assertIn("exactly one of", out["error"])
-
-    def test_title_requires_commit(self):
-        out = self.bridge("review", "--uncommitted", "--title", "x", expect_rc=1)
-        self.assertIn("--title is only valid with --commit", out["error"])
-
-    def test_commit_with_title(self):
-        r = self.bridge("review", "--commit", "abc123", "--title", "My change")
-        self.wait_for_state(r["run_id"])
-        argv = self.last_argv()
-        self.assertFlagPair(argv, "--commit", "abc123")
-        self.assertFlagPair(argv, "--title", "My change")
-
-    def test_base_branch(self):
-        r = self.bridge("review", "--base", "origin/main")
-        self.wait_for_state(r["run_id"])
-        self.assertFlagPair(self.last_argv(), "--base", "origin/main")
-
-
 class PureArgvUnits(unittest.TestCase):
     """build_argv in isolation, for cases awkward to reach end-to-end."""
 
@@ -342,9 +306,9 @@ class PureArgvUnits(unittest.TestCase):
         self.assertEqual(argv[-2:], ["--", "--- summarise ---"])
 
     def test_output_last_message_always_present(self):
-        for kind in ("start", "resume", "review"):
+        for kind in ("start", "resume"):
             argv = _codex.build_argv(self.base(), kind=kind, prompt="p",
-                                           thread_ref="t", review_args=["--uncommitted"])
+                                           thread_ref="t")
             self.assertIn("-o", argv, f"{kind} must capture the final message")
 
     def test_add_dir_is_exec_only(self):
@@ -352,8 +316,6 @@ class PureArgvUnits(unittest.TestCase):
         self.assertIn("--add-dir", _codex.build_argv(meta, kind="start", prompt="p"))
         self.assertNotIn("--add-dir",
                          _codex.build_argv(meta, kind="resume", prompt="p", thread_ref="t"))
-        self.assertNotIn("--add-dir",
-                         _codex.build_argv(meta, kind="review", review_args=["--uncommitted"]))
 
     def test_resume_last_uses_the_flag_not_a_positional(self):
         argv = _codex.build_argv(self.base(), kind="resume", prompt="p",

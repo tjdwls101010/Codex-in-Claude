@@ -41,7 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
-    codex_version, config_scalars, model_catalog, review_argv,
+    codex_version, config_scalars, model_catalog,
     SANDBOX_MODES, THREAD_ID_WAIT, query_threads, state_db_path, supervise,
     user_defaults,
 )
@@ -84,7 +84,7 @@ EXTERNAL_TITLE_CAP = 200
 
 
 # --------------------------------------------------------------------------
-# start / resume / review — all three build a run the same way, in `_run.py`
+# start / resume — both build a run the same way, in `_run.py`
 # --------------------------------------------------------------------------
 
 def cmd_start(args):
@@ -162,13 +162,6 @@ def cmd_resume(args):
     emit(out)
 
 
-def cmd_review(args):
-    review_args = review_argv(uncommitted=args.uncommitted, base=args.base,
-                              commit=args.commit, title=args.title,
-                              prompt=args.prompt, fail=fail)
-    emit(create_run(args, kind="review", review_args=review_args))
-
-
 # --------------------------------------------------------------------------
 # status
 # --------------------------------------------------------------------------
@@ -241,9 +234,9 @@ def cmd_status(args):
     # `--run` and `--group` are two different questions and the branches below
     # answer whichever comes first, so passing both silently drops one of them
     # — including the case where the dropped one is the `--group` that would
-    # have made `--follow` mean something. Found by a `review` member reading
-    # the commit that added the check below, which is the kind of hole a fix
-    # leaves when it guards a symptom instead of the precedence underneath it.
+    # have made `--follow` mean something. Found by a Codex run reading the
+    # commit that added the check below, which is the kind of hole a fix leaves
+    # when it guards a symptom instead of the precedence underneath it.
     # `--thread` joined the pair R28 covered without joining the check: the
     # branch order below answers `--run` and drops it, so a caller who named
     # both got one run's row where they asked for a thread's.
@@ -616,17 +609,14 @@ def cmd_result(args):
                else info["last_agent_message"])
 
     usage = info["usage"]
-    review_zero = meta.get("kind") == "review" and usage is not None and not any(usage.values())
     out = {"run_id": meta["run_id"], "thread_id": meta.get("thread_id") or info["thread_id"],
            "state": meta.get("state"), "exit_code": meta.get("exit_code"),
-           "message": message, "usage": None if review_zero else usage,
+           "message": message, "usage": usage,
            # F8: same clipped `turn.failed` error as `run_row`, so `result`
            # doesn't force a second `log` call to learn why a run failed.
            "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
                           if info["turn_failed"] else None),
            "files_changed": info["files_changed"], "commands": info["commands"]}
-    if review_zero:
-        out["usage_note"] = "review runs report zero usage; unavailable, not free"
     if info["unparsed_events"]:
         out["unparsed_events"] = info["unparsed_events"]
     if meta.get("state") not in TERMINAL_STATES:
@@ -760,8 +750,8 @@ def cmd_doctor(args):
     if cfg_sandbox == "danger-full-access":
         warnings.append(
             'config.toml sets sandbox_mode = "danger-full-access". `codex exec resume` '
-            "and `codex exec review` have no -s flag and fall back to this value, which "
-            "is how a read-only thread becomes fully privileged on its second turn. "
+            "has no -s flag and falls back to this value, which is how a read-only "
+            "thread becomes fully privileged on its second turn. "
             "This wrapper passes -c sandbox_mode= on every invocation, so that fallback "
             "is never reached — but a bare `codex` command you run yourself will hit it.")
 
@@ -1008,11 +998,11 @@ for its own git checkout at <run_dir>/wt when all of this holds: it is a
 kind=start task, its sandbox can write, it names no cwd of its own, the project
 is a git repository, and --base resolves. Eligible, not guaranteed — if git
 cannot cut the checkout, that member's spawn fails and the others carry on. A
-resume, a review, a read-only member and one with an explicit cwd are never
-isolated, by any flag. The checkout is cut from --base (default HEAD), so it
-holds none of your uncommitted work — which is also why a reviewer never gets
-one, since an uncommitted diff it was started to look at lives only in your
-tree — and none of what git does not track either, so a canonical interpreter,
+resume, a read-only member and one with an explicit cwd are never isolated, by
+any flag. The checkout is cut from --base (default HEAD), so it holds none of
+your uncommitted work — which is also why a read-only member never gets one,
+since an uncommitted diff it was started to look at lives only in your tree —
+and none of what git does not track either, so a canonical interpreter,
 a provider cache or a fixture directory kept out of git is absent from it.
 `missing_ignored` in the reply names up to 20 of the ones this tree actually
 has, with `missing_ignored_truncated` counting any beyond that. Members' results
@@ -1171,7 +1161,7 @@ def add_run_options(p, *, kind, foreground=True):
         p.add_argument("--add-dir", action="append",
                        help="extra writable root beyond --cwd. Repeatable. "
                             "Codex offers it on `exec` only, so it cannot be "
-                            "added to a resumed or review run later.")
+                            "added to a resumed run later.")
 
 
 def build_parser():
@@ -1185,7 +1175,7 @@ def build_parser():
     # registered name including the suppressed one.
     sub = ap.add_subparsers(
         dest="cmd", required=True,
-        metavar="{start,resume,review,status,log,show,stop,result,batch,"
+        metavar="{start,resume,status,log,show,stop,result,batch,"
                 "models,doctor}",
         help="the whole command surface. Each takes its own --help, which is "
              "where every flag, its default and what it refuses are stated.")
@@ -1230,27 +1220,6 @@ def build_parser():
                         "and is refused too — wait for `status` to backfill it.")
     p.set_defaults(func=cmd_resume, cwd=None, add_dir=None, ref=None, prompt=None)
     ap.subparser_map["resume"] = p
-
-    p = sub.add_parser(
-        "review", formatter_class=HidesSuppressedCommands,
-        help="Codex's review mode against one diff selector — findings, not edits",
-        epilog=RUN_RETURN_EPILOG)
-    add_common(p); add_run_options(p, kind="review")
-    p.add_argument("--uncommitted", action="store_true",
-                   help="review the working tree's uncommitted changes")
-    p.add_argument("--base", metavar="REF",
-                   help="review the diff against this ref")
-    p.add_argument("--commit", metavar="SHA",
-                   help="review one commit")
-    p.add_argument("--title",
-                   help="title for the review; only valid with --commit")
-    p.add_argument("--cwd",
-                   help="directory to review in (default: the project root)")
-    p.add_argument("prompt", nargs="?",
-                   help="free-form review instruction. Exactly one of "
-                        "--uncommitted, --base, --commit or this is required; a "
-                        "combination is refused here, before anything spawns.")
-    p.set_defaults(func=cmd_review, image=None, add_dir=None, prompt_file=None)
 
     p = sub.add_parser(
         "status", formatter_class=HidesSuppressedCommands,
@@ -1471,8 +1440,7 @@ def build_parser():
     b.add_argument("--tasks-file",
                    help="JSONL, one task object per line, for long or "
                         "heterogeneous tasks; see the epilog for how these "
-                        "interact with the group-level options. Fields (`review`"
-                        " takes a nested object of the `review` flags): "
+                        "interact with the group-level options. Fields: "
                         + ", ".join(TASK_FIELDS))
     b.add_argument("--force", action="store_true",
                    help="allow a resume task to start a second turn on a thread "
@@ -1485,9 +1453,9 @@ def build_parser():
                         "files — the cost is that results stay in the "
                         "checkouts until you collect them, and that a checkout "
                         "holds only what git tracks. Per member, not per "
-                        "batch: a resume, a review, a read-only member and one "
-                        "with its own cwd stay in the caller's tree whatever "
-                        "this says.")
+                        "batch: a resume, a read-only member and one with "
+                        "its own cwd stay in the caller's tree whatever this "
+                        "says.")
     b.add_argument("--base",
                    help="commit or ref the worktrees are cut from (default "
                         "HEAD). Refused without --worktree, which is the only "

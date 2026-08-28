@@ -199,22 +199,6 @@ class Results(BridgeTestCase):
         self.assertIn("image not found", out["error"])
         self.assertEqual(self.argv_records(), [])
 
-    def test_review_usage_is_reported_unavailable_not_zero(self):
-        """Measured: review runs report all-zero usage after doing real work.
-        Zero is a wrong number; null is a true one."""
-        r = self.bridge("review", "--uncommitted",
-                        env_extra={"FAKE_CODEX_FIXTURE":
-                                   str(Path(__file__).parent / "fixtures"
-                                       / "review-clean-tree.jsonl")})
-        self.wait_for_state(r["run_id"])
-        row = self.bridge("status", "--run", r["run_id"])["runs"][0]
-        self.assertIsNone(row["usage"])
-        self.assertIn("unavailable", row["usage_note"])
-        out = self.bridge("result", "--run", r["run_id"])
-        self.assertIsNone(out["usage"])
-        self.assertIn("unavailable", out["usage_note"])
-
-
 class ForegroundMode(BridgeTestCase):
 
     def test_foreground_blocks_and_returns_the_answer(self):

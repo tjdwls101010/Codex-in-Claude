@@ -2,7 +2,7 @@
 
 Two invariants live in this module and unify the whole bridge. Both are forced
 by Codex's flag surface differing per subcommand — `exec` has `-s` and `-C`;
-`exec resume` and `exec review` have neither:
+`exec resume` has neither:
 
   1. The sandbox is ALWAYS expressed as `-c sandbox_mode="<mode>"`, never `-s`.
   2. The working directory is ALWAYS set on the child process, never via `-C`.
@@ -224,8 +224,8 @@ def check_model_effort(model, effort, *, catalog, fail, model_source=None,
     loud, but a wasted run late, and for a background run not seen until the
     next `status`. Reading the catalog instead costs ~30 ms and no API call.
 
-    `fail` is passed in for the same reason `review_argv` takes it: the CLI
-    exits, a batch member raises inside `failures_raise`.
+    `fail` is passed in because the two callers report errors differently: the
+    CLI exits, a batch member raises inside `failures_raise`.
 
     The two `*_source` strings name where a value came from when it was not
     typed on the command line, and they are per value rather than shared: with
@@ -263,43 +263,7 @@ def check_model_effort(model, effort, *, catalog, fail, model_source=None,
              hint="efforts are per-model; `models` shows which model takes which")
 
 
-REVIEW_SELECTORS = ("uncommitted", "base", "commit", "prompt")
-
-
-def review_argv(*, uncommitted=None, base=None, commit=None, title=None,
-                prompt=None, fail):
-    """`codex exec review`'s own flag surface, validated in one place.
-
-    Two callers build this — `review` on the command line and a `kind: review`
-    member of a batch — and they had drifted. The CLI refused a `--title`
-    without a `--commit` and refused combinations the Codex CLI itself rejects;
-    the batch path did neither, so a tasks file could ask for `uncommitted` and
-    `base` together and get a member that failed asynchronously, or name a
-    `title` that was dropped without a word. `load_tasks` already states the
-    principle it was breaking: a silently ignored field is a run that quietly
-    did something else.
-
-    `fail` is passed in because the two callers report errors differently — one
-    exits, one raises inside `failures_raise` so the rest of the batch survives.
-    """
-    chosen = [n for n, v in (("--uncommitted", uncommitted), ("--base", base),
-                             ("--commit", commit), ("prompt", prompt)) if v]
-    if len(chosen) != 1:
-        fail("review takes exactly one of --uncommitted, --base <ref>, "
-             "--commit <sha>, or a prompt; the Codex CLI rejects combinations",
-             given=chosen)
-    if title and not commit:
-        fail("--title is only valid with --commit")
-    if uncommitted:
-        return ["--uncommitted"]
-    if base:
-        return ["--base", str(base)]
-    if commit:
-        return ["--commit", str(commit)] + (["--title", str(title)] if title else [])
-    return []
-
-
-def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_args=None):
+def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None):
     """Compose the Codex argv for a run from its recorded settings.
 
     Every per-invocation setting is re-asserted on every call, including on
@@ -317,8 +281,6 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
             argv.append("--last")
         elif thread_ref:
             argv.append(thread_ref)
-    elif kind == "review":
-        argv.append("review")
 
     argv.append("--json")
 
@@ -356,9 +318,6 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None, review_ar
             argv += ["--add-dir", d]
     for img in meta.get("images") or []:
         argv += ["-i", img]
-
-    if kind == "review":
-        argv += list(review_args or [])
 
     if prompt is not None:
         # `--` terminates option parsing, and it is required rather than tidy.

@@ -63,10 +63,8 @@ FACTS = {
         "start", ["is not a run you have read"]),
     "resume carries the same return contract": (
         "resume", ["thread_id: null", "Nothing announces"]),
-    "review carries the same return contract": (
-        "review", ["thread_id: null", "Nothing announces"]),
     "which members qualify for a worktree": (
-        "batch start", ["worktree", "two or more", "read-only", "review"]),
+        "batch start", ["worktree", "two or more", "read-only", "resume"]),
     # Both flags carry the name, because it is what a caller searches for and
     # either one may be the entry they land on. The two needles are each unique
     # to one of them: a shared "Fast mode" would keep passing after the name was

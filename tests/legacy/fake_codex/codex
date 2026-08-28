@@ -105,7 +105,7 @@ _ONE_VALUE = {"-c", "--config", "-m", "--model", "-o", "--output-last-message",
 # point of parsing argv here: without it the shim silently accepts an argv the
 # real CLI rejects, and a broken command line looks like a passing test.
 _GREEDY = {"-i", "--image"}
-_SUBCOMMANDS = {"exec", "resume", "review"}
+_SUBCOMMANDS = {"exec", "resume"}
 
 
 def parse_positionals(argv):
@@ -208,8 +208,7 @@ def main():
         return rc
 
     # Reject exactly as the real CLI does when option parsing ate the prompt.
-    # `review` may legitimately have no prompt (--uncommitted et al).
-    if "review" not in argv[:3] and find_prompt(argv) is None:
+    if find_prompt(argv) is None:
         sys.stderr.write("Reading prompt from stdin...\nNo prompt provided via stdin.\n")
         return 1
 

@@ -29,7 +29,7 @@ from test_help_owns_its_facts import FACTS, RUN_STATES, help_text
 #: property of `batch start`'s own code and changes with it.
 RESTATEMENTS = {
     "the option surface as a table": (
-        re.compile(r"^\|\s*`(start|resume|review|status|log|show|stop|result|"
+        re.compile(r"^\|\s*`(start|resume|status|log|show|stop|result|"
                    r"doctor|models|batch[a-z ]*)`\s*\|", re.M),
         "a command table in prose is a second copy of `--help`'s own listing"),
     "the worktree eligibility rule": (

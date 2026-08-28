@@ -9,6 +9,7 @@ python3 -m unittest discover -s tests/legacy -p 'test_*.py'
 python3 -m unittest discover -s tests/260813 -p 'test_*.py'
 python3 -m unittest discover -s tests/260814 -p 'test_*.py'
 python3 -m unittest discover -s tests/260823 -p 'test_*.py'
+python3 -m unittest discover -s tests/260828 -p 'test_*.py'
 ```
 
 **340 tests in `tests/legacy`, passing in about three minutes**, requiring no network access and no real Codex CLI. These tests drive the real `codex_bridge.py` as a subprocess — not an in-process mock — with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. That fake replays event streams recorded from real runs (`tests/legacy/fixtures/*.jsonl`), so everything except the model itself is exercised for real: argument parsing, argv composition, process spawning, process groups, and signal delivery.
@@ -38,7 +39,7 @@ Gated behind an explicit environment variable so it never runs by accident, sinc
 | I3 | Two parallel runs get distinct process groups; stopping one doesn't touch the other |
 | I4 | **The sandbox regression, against the real CLI** — a `read-only` thread stays `read-only` across a resume, verified via the rollout's `turn_context` |
 | I5 | `--output-schema` round-trips valid, schema-shaped JSON |
-| I6 | `review --uncommitted` produces real findings; usage is correctly reported as `null`, not zero |
+| I6 | A `read-only` `start` over a real change produces real findings **and reports real usage** — the case that replaced `review --uncommitted` in 0.7.0, and the one that shows a verification round is billed like any other turn |
 | I7 | Isolation has a measurable effect (config-error event count), without asserting an unstable token ratio |
 | I8 | Image attachment via `--image` — the model correctly identifies a synthesized test image |
 | I9 | Three members of one batch get three distinct threads and three distinct process groups |
@@ -70,7 +71,7 @@ The results of the most recent run are recorded in `.claude/harness-spec.md` rat
 | Scenario | What it checked |
 |---|---|
 | E1 | A plain natural-language request correctly triggers the skill and completes a real background run |
-| E2 | A code-review request correctly routes to the `review` path, and finds a real planted bug |
+| E2 | A code-review request correctly reaches Codex and finds a real planted bug. It routed to the `review` command, which 0.7.0 removed; the scenario is unchanged but its expected route is now a `read-only` `start` |
 | E3 | **A deliberate near-miss** — a review request with no mention of Codex/GPT — correctly does **not** trigger the skill (zero skill invocations), and Claude reviews it directly instead |
 | E4 | Resuming an earlier session's thread from a fresh session, using only the run registry — no in-context memory of the original run |
 | E5 | Delegating a long-running task to Codex in the background while Claude does unrelated work in parallel, then reconciling both |

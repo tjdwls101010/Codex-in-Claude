@@ -43,6 +43,7 @@ python3 -m unittest discover -s tests/legacy -p 'test_*.py'
 python3 -m unittest discover -s tests/260813 -p 'test_*.py'
 python3 -m unittest discover -s tests/260814 -p 'test_*.py'
 python3 -m unittest discover -s tests/260823 -p 'test_*.py'
+python3 -m unittest discover -s tests/260828 -p 'test_*.py'
 ```
 
 These drive the real `codex_bridge.py` as a subprocess, but with a fake `codex` executable (`tests/legacy/fake_codex/codex`) placed first on `PATH`. The fake replays recorded event streams from `tests/legacy/fixtures/`, so process spawning, process-group signaling, and argv composition are all tested for real — only the Codex model itself is faked. This tier includes the sandbox-drift regression test: it asserts that a resumed run's recorded argv actually re-injects `-c sandbox_mode="..."`, which is the specific defect this project exists to close. Always run this tier before opening a PR — it's fast and requires nothing beyond a Python 3.10+ interpreter.
@@ -55,7 +56,7 @@ Both directories are separate `unittest` start dirs rather than one, because nei
 CODEX_SKILL_TEST_INTEGRATION=1 python3 tests/legacy/integration/run_integration.py
 ```
 
-This spins up a throwaway git repo and runs real `codex` calls through the bridge — background start/resume/stop, parallel runs, `--output-schema`, `review`, and image attachment. It costs real API usage, so it isn't run by default and isn't required for most PRs; run it if your change touches how the bridge invokes `codex` itself (argv composition, sandbox/model/effort handling, process lifecycle). Use `--only <case-id>` to run a single case while iterating.
+This spins up a throwaway git repo and runs real `codex` calls through the bridge — background start/resume/stop, parallel runs, `--output-schema`, a read-only review run, and image attachment. It costs real API usage, so it isn't run by default and isn't required for most PRs; run it if your change touches how the bridge invokes `codex` itself (argv composition, sandbox/model/effort handling, process lifecycle). Use `--only <case-id>` to run a single case while iterating.
 
 **Harness validation:**
 

@@ -146,9 +146,8 @@ class TasksFile(BridgeTestCase):
         started = [p for p in runs.iterdir() if p.is_dir()] if runs.is_dir() else []
         self.assertEqual(started, [], "a broken tasks file must cost nothing")
 
-    def test_a_wrongly_typed_review_or_image_field_is_rejected(self):
-        for item, want in (({"prompt": "a", "review": "uncommitted"}, "dict"),
-                           ({"prompt": "a", "image": "one.png"}, "list"),
+    def test_a_wrongly_typed_image_field_is_rejected(self):
+        for item, want in (({"prompt": "a", "image": "one.png"}, "list"),
                            ({"prompt": "a", "image": [7]}, "list of paths")):
             with self.subTest(item=item):
                 out = self.bridge("batch", "start", "--group", "g",

@@ -39,8 +39,7 @@ from _registry import (
     meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
     still_writing, unreadable_runs,
 )
-from _codex import (check_model_effort, model_catalog, review_argv,
-                    user_defaults)
+from _codex import check_model_effort, model_catalog, user_defaults
 from _run import (
     WRITING_SANDBOXES, create_run, run_row,
 )
@@ -241,7 +240,7 @@ def derived_groups(runs_dir: Path, name: str):
 # the batch subcommands, and the group views `status` and `result` grow for one
 # --------------------------------------------------------------------------
 TASK_FIELDS = ("prompt", "kind", "label", "model", "effort", "sandbox", "schema",
-               "image", "cwd", "resume", "review")
+               "image", "cwd", "resume")
 
 # Checking the field *names* is not enough. A value of the wrong type reaches
 # argv composition unexamined and surfaces as a Python error from deep inside
@@ -250,11 +249,9 @@ TASK_FIELDS = ("prompt", "kind", "label", "model", "effort", "sandbox", "schema"
 # the earlier members have already spawned; a tasks file this broken should
 # cost nothing, and the way to make it cost nothing is to read it fully before
 # starting anything.
-REVIEW_FIELDS = ("uncommitted", "base", "commit", "title")
-
 TASK_FIELD_TYPES = {"prompt": str, "kind": str, "label": str, "model": str,
                     "effort": str, "sandbox": str, "schema": str, "cwd": str,
-                    "resume": str, "image": list, "review": dict}
+                    "resume": str, "image": list}
 
 
 def load_tasks(args, runs_dir=None):
@@ -294,16 +291,16 @@ def load_tasks(args, runs_dir=None):
             if any(not isinstance(i, str) for i in item.get("image") or []):
                 fail(f"tasks file line {n}: 'image' must be a list of paths",
                      line=clip(line, 200))
-            # The same rule one level down. `review` is the only nested object
-            # a task has, and typing `titel` into it was silently a no-op while
-            # typing it at the top level was a loud refusal.
-            unknown_review = set(item.get("review") or {}) - set(REVIEW_FIELDS)
-            if unknown_review:
-                fail(f"tasks file line {n} has unknown 'review' field(s): "
-                     f"{sorted(unknown_review)}", known_fields=list(REVIEW_FIELDS))
             item.setdefault("kind", "start")
-            if item["kind"] not in ("start", "resume", "review"):
-                fail(f"tasks file line {n}: kind must be start, resume or review",
+            if item["kind"] not in ("start", "resume"):
+                # The allow-set alone would refuse a leftover `kind: review`
+                # without saying where the command went, and a tasks file is
+                # the one place its name was written down as data rather than
+                # typed. Named for this release only.
+                fail(f"tasks file line {n}: kind must be start or resume"
+                     + ("; `review` was removed in 0.7.0 — use kind 'start' "
+                        "with sandbox 'read-only' and say what to look at in "
+                        "the prompt" if item["kind"] == "review" else ""),
                      got=item["kind"])
             if (item["kind"] == "resume" and not item.get("resume")
                     and not getattr(args, "resume_from", None)):
@@ -455,19 +452,17 @@ def wants_worktree(item, args):
     D35 assigns per member, not per batch, and each exclusion has its own
     reason rather than a shared one:
 
-      * **`read-only`** has nothing to isolate — it cannot write.
-      * **`kind: review`** is excluded even though its sandbox defaults to
-        `workspace-write`, and this is the exclusion that matters most. A
-        freshly cut worktree has zero lines of `git diff HEAD` (measured,
-        V-15), so a reviewer inside one reviews nothing: the uncommitted work
-        it was started to look at exists only in the caller's tree.
+      * **`read-only`** has nothing to isolate — it cannot write, and a
+        freshly cut worktree has zero lines of `git diff HEAD` anyway
+        (measured, V-15), so a member put in one to look at uncommitted work
+        would see none: that work exists only in the caller's tree.
       * **an explicit `cwd`** was a decision the caller already made, and an
         inferred default does not overrule a stated one.
       * **`kind: resume`** continues a thread whose directory is inherited from
         its parent run; `--cwd` is not even accepted on resume, so a new
         worktree here would be a directory the thread has never seen.
     """
-    if item["kind"] in ("review", "resume"):
+    if item["kind"] == "resume":
         return False
     if item.get("cwd") or getattr(args, "cwd", None):
         return False
@@ -515,8 +510,6 @@ def why_not_isolated(item, args):
     """
     if item["kind"] == "resume":
         return "a resumed thread keeps the directory it already lives in"
-    if item["kind"] == "review":
-        return "a review has to see the uncommitted work in your tree"
     if item.get("cwd") or getattr(args, "cwd", None):
         return "a member with a cwd of its own was told where to go"
     return None
@@ -711,13 +704,6 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
     paired = []
     for slot, (task, prev) in enumerate(zip(tasks, prior)):
         kind, named = task["kind"], task.get("resume")
-        if kind == "review":
-            # Rewriting it would turn a read-only review into a full agentic
-            # turn on someone else's thread, which is a larger authority than
-            # the caller asked for and is invisible in the output.
-            fail(f"task {slot} is a review, but every task in a --resume-from "
-                 f"batch continues one member of {previous!r}; a review cannot "
-                 f"be that continuation")
         if kind != "resume" and named:
             # Neither reading is safe to pick silently: honouring `resume`
             # leaves this member's phase-1 counterpart unresumed while the
@@ -943,12 +929,9 @@ def cmd_batch_start(args):
 
 def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
                worktree_base=None):
-    """Start one member. Mirrors cmd_start/cmd_resume/cmd_review's dispatch,
-    minus their argv parsing, which `task_args` has already done."""
+    """Start one member. Mirrors cmd_start/cmd_resume's dispatch, minus their
+    argv parsing, which `task_args` has already done."""
     kind = item["kind"]
-    if kind == "start":
-        return create_run(ns, kind="start", group=group, batch=batch,
-                          worktree_base=worktree_base)
     if kind == "resume":
         rd, base = find_run(runs_dir, item["resume"])
         # Only `pair_with_previous` knows which member this task was paired
@@ -964,13 +947,8 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
         return create_run(ns, kind="resume", base=base,
                           thread_ref=base.get("thread_id"), group=group,
                           batch=batch, waits_for=waits_for)
-    review = item.get("review") or {}
-    review_args = review_argv(uncommitted=review.get("uncommitted"),
-                              base=review.get("base"), commit=review.get("commit"),
-                              title=review.get("title"),
-                              prompt=item.get("prompt"), fail=fail)
-    return create_run(ns, kind="review", review_args=review_args, group=group,
-                      batch=batch)
+    return create_run(ns, kind="start", group=group, batch=batch,
+                      worktree_base=worktree_base)
 
 
 def cmd_batch_clean(args):
@@ -1506,10 +1484,6 @@ def changed_paths(events_path: Path, root=None):
 def cmd_result_group(args, project, runs_dir):
     members = resolve_group(runs_dir, args.group)
     results, per_run_paths, totals = [], {}, {"input_tokens": 0, "output_tokens": 0}
-    # Members whose usage is a zero that means "unavailable", not "free".
-    # Named rather than folded in, so a total that undercounts says so.
-    unmeasured = []
-
     for rd, meta in members:
         meta = reap(rd, meta)
         info = scan_progress(rd / "events.jsonl",
@@ -1524,14 +1498,6 @@ def cmd_result_group(args, project, runs_dir):
         # the guess D07's cap exists to replace with a fact.
         raw = message.encode("utf-8", "replace")
         truncated = len(raw) > GROUP_MESSAGE_CAP
-        # The same caveat the single-run surfaces carry. A review turn reports
-        # all-zero usage after doing real work, so a plain zero here is a wrong
-        # number, not a free run — and summed into `totals` it silently
-        # understates a batch that mixed a reviewer with writers, which is the
-        # documented normal pattern. `run_row` and `cmd_result` have said so
-        # since v0.1.0; this surface did not, which is R28's shape yet again.
-        review_zero = (meta.get("kind") == "review" and info["usage"] is not None
-                       and not any((info["usage"] or {}).values()))
         row = {"run_id": meta["run_id"], "label": meta.get("label"),
                "state": meta.get("state"), "exit_code": meta.get("exit_code"),
                # D07: capped per run, with the real size stated. Whether to pull
@@ -1545,13 +1511,10 @@ def cmd_result_group(args, project, runs_dir):
                            if truncated else message),
                "message_bytes": len(raw),
                "message_truncated": truncated,
-               "usage": None if review_zero else info["usage"],
+               "usage": info["usage"],
                "files_changed": info["files_changed"],
                "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
                                if info["turn_failed"] else None)}
-        if review_zero:
-            row["usage_note"] = ("review runs report zero usage; unavailable, "
-                                 "not free — excluded from totals")
         if info["unparsed_events"]:
             row["unparsed_events"] = info["unparsed_events"]
         if meta.get("worktree"):
@@ -1562,11 +1525,8 @@ def cmd_result_group(args, project, runs_dir):
         # report every member as overlapping with its own past self.
         per_run_paths[meta["run_id"]] = changed_paths(
             rd / "events.jsonl", (meta.get("worktree") or {}).get("path") or meta.get("cwd"))
-        if review_zero:
-            unmeasured.append(meta["run_id"])
-        else:
-            for key in totals:
-                totals[key] += int((info["usage"] or {}).get(key) or 0)
+        for key in totals:
+            totals[key] += int((info["usage"] or {}).get(key) or 0)
 
     # D30: the intersection only. A full path list per run inverts the context
     # discipline this skill exists for, and `log` already prints file_change
@@ -1590,7 +1550,7 @@ def cmd_result_group(args, project, runs_dir):
         len(never) + len(gone))
     out = {"group": args.group, "project": str(project), "results": results,
            "overlaps": overlaps, "totals": totals,
-           "usage_unmeasured": unmeasured or None, "group_state": gstate,
+           "group_state": gstate,
            "done": done, "failed": failed, "running": running,
            "unstarted": never + gone,
            "overlaps_note": ("paths written by more than one member. Under worktree "

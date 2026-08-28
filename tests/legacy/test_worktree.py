@@ -132,22 +132,22 @@ class Assignment(WorktreeTestCase):
             self.assertIsNone(r.get("worktree"))
             self.wait_for_state(r["run_id"])
 
-    def test_a_review_member_stays_in_the_callers_tree(self):
+    def test_a_read_only_member_stays_in_the_callers_tree_beside_writers(self):
         """V-15 is the whole reason this exclusion exists: a fresh detached
-        worktree has zero lines of `git diff HEAD`, so a reviewer put inside one
-        would be reviewing nothing — the uncommitted work it was started to look
-        at lives only in the caller's tree."""
+        worktree has zero lines of `git diff HEAD`, so a read-only member put
+        inside one would see nothing — the uncommitted work it was started to
+        look at lives only in the caller's tree."""
         self.dirty_the_caller_tree()
         tf = self.tasks_file({"prompt": "w1"}, {"prompt": "w2"},
-                             {"kind": "review", "review": {"uncommitted": True}})
+                             {"prompt": "look", "sandbox": "read-only"})
         out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--tasks-file", tf)
-        writers, review = out["runs"][:2], out["runs"][2]
+        writers, reader = out["runs"][:2], out["runs"][2]
         for r in writers:
             self.assertIsNotNone(r["worktree"])
-        self.assertIsNone(review.get("worktree"))
-        self.assertEqual(review["cwd"], str(self.project),
-                         "the reviewer must see the changes it was asked about")
+        self.assertIsNone(reader.get("worktree"))
+        self.assertEqual(reader["cwd"], str(self.project),
+                         "a read-only member must see the changes it was asked about")
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
@@ -368,7 +368,7 @@ class WhatAWorktreeDoesNotHave(WorktreeTestCase):
 
 
 class TheNoteNamesTheRealExclusion(WorktreeTestCase):
-    """`--worktree` passes a member over for four different reasons, and the
+    """`--worktree` passes a member over for three different reasons, and the
     sharing note read the boolean as "these must be resumes" — so two fresh
     tasks pointed at one `cwd` were told they were resumed threads whose
     isolation had been decided in an earlier phase."""
@@ -381,13 +381,16 @@ class TheNoteNamesTheRealExclusion(WorktreeTestCase):
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
 
-    def test_worktree_over_a_review_only_batch_says_what_a_review_needs(self):
-        tf = self.tasks_file({"kind": "review", "review": {"uncommitted": True}},
-                             {"kind": "review", "review": {"uncommitted": True}})
+    def test_worktree_over_a_read_only_batch_says_nothing_writes(self):
+        """The other true answer, and the one a `--worktree` over a fan-out of
+        readers gets. `read-only` has no exclusion sentence of its own because
+        it needs none: nothing writes, so there is nothing to isolate."""
+        tf = self.tasks_file({"prompt": "a", "sandbox": "read-only"},
+                             {"prompt": "b", "sandbox": "read-only"})
         out = self.bridge("batch", "start", "--group", "p1", "--worktree",
                           "--tasks-file", tf)
         note = out["worktrees"]["note"]
-        self.assertIn("uncommitted work in your tree", note)
+        self.assertIn("nothing to isolate", note)
         self.assertNotIn("resumed", note)
         for r in out["runs"]:
             self.wait_for_state(r["run_id"])
@@ -972,18 +975,6 @@ class ResumeFrom(WorktreeTestCase):
                           "--tasks-file", tf, expect_rc=1)
         self.assertIn("names a thread to resume but its kind is 'start'",
                       out["error"])
-
-    def test_a_review_task_cannot_be_a_continuation(self):
-        """Rewriting it would turn a read-only review into a full agentic turn
-        on someone else's thread — a larger authority than was asked for, and
-        invisible in the output."""
-        self.phase_one()
-        tf = self.tasks_file({"prompt": "look", "kind": "review",
-                              "review": {"uncommitted": True}},
-                             {"prompt": "b"})
-        out = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
-                          "--tasks-file", tf, expect_rc=1)
-        self.assertIn("a review cannot be that continuation", out["error"])
 
     def test_an_unnamed_resume_task_is_paired_rather_than_rejected(self):
         """--resume-from supplies the target positionally, so under it an

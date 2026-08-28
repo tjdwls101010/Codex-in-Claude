@@ -4,15 +4,15 @@ The full picture of what Codex in Claude is, why it exists, and what it delibera
 
 ## 1. What This Solves
 
-The OpenAI [Codex CLI](https://developers.openai.com/codex/cli) exposes its work through `codex exec`, and that command's flag surface is uneven across its own subcommands:
+The OpenAI [Codex CLI](https://developers.openai.com/codex/cli) exposes its work through `codex exec`, and that command's flag surface is uneven across the two subcommands this plugin drives:
 
-| Flag | `exec` | `exec resume` | `exec review` |
-|---|---|---|---|
-| `-s`/`--sandbox` | ✅ | ❌ | ❌ |
-| `-C`/`--cd` | ✅ | ❌ | ❌ |
-| `--add-dir` | ✅ | ❌ | ❌ |
-| `-i`/`--image` | ✅ | ✅ | ❌ |
-| `-m`, `-c`, `--json`, `-o`, `--output-schema`, `--ignore-user-config` | ✅ | ✅ | ✅ |
+| Flag | `exec` | `exec resume` |
+|---|---|---|
+| `-s`/`--sandbox` | ✅ | ❌ |
+| `-C`/`--cd` | ✅ | ❌ |
+| `--add-dir` | ✅ | ❌ |
+| `-i`/`--image` | ✅ | ✅ |
+| `-m`, `-c`, `--json`, `-o`, `--output-schema`, `--ignore-user-config` | ✅ | ✅ |
 
 `exec resume` has no `-s`/`--sandbox` flag at all. Because of that, a resumed turn doesn't inherit the sandbox its thread was created with — it re-derives one from whatever configuration layer happens to be active at that moment. Measured on one thread across three turns, isolated throughout:
 
@@ -61,10 +61,10 @@ The property being sold is **stability of a run's settings across turns**. Preve
 | Start and resume Codex threads, background by default | [CLI Reference](CLI-Reference.md), [Getting Started](Getting-Started.md) |
 | Sandbox/model/effort held stable across every turn | [Sandbox Stability](Sandbox-Stability.md) |
 | Filtered live event log, four verbosity levels | [Context Discipline & Event Log Levels](Context-Discipline.md) |
-| Interrupt a run and redirect it on the same thread | [CLI Reference § stop](CLI-Reference.md#8-stop) |
+| Interrupt a run and redirect it on the same thread | [CLI Reference § stop](CLI-Reference.md#7-stop) |
 | Resume a thread started in the Codex TUI | [CLI Reference § resume](CLI-Reference.md#3-resume) |
-| Schema-validated JSON results | [CLI Reference § result](CLI-Reference.md#9-result) |
-| One-command environment diagnostics | [CLI Reference § doctor](CLI-Reference.md#12-doctor) |
+| Schema-validated JSON results | [CLI Reference § result](CLI-Reference.md#8-result) |
+| One-command environment diagnostics | [CLI Reference § doctor](CLI-Reference.md#11-doctor) |
 
 ## 5. Non-Goals
 

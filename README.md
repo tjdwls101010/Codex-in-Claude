@@ -125,7 +125,6 @@ See [Getting Started](docs/wiki/Getting-Started.md) for a fuller walkthrough, an
 |---|---|
 | `start` | New thread. Background by default; returns `{run_id, thread_id}` immediately |
 | `resume` | Add a turn to an existing thread; every recorded setting is re-asserted |
-| `review` | `codex exec review`'s separate flag surface |
 | `status` | State, elapsed/idle time, usage, last message, in-progress item |
 | `log` | Filtered events, delivered incrementally via `--since <cursor>` |
 | `show` | One item's full output, fetched on request |
@@ -184,7 +183,7 @@ This README gets you running. Everything else lives in [`docs/wiki/`](docs/wiki/
 
 ## 6. Project Status
 
-Codex in Claude is at **v0.6.0** — an early, actively developed release, verified against `codex-cli 0.149.1` and Claude Code `2.1.246`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
+Codex in Claude is at **v0.7.0** — an early, actively developed release, verified against `codex-cli 0.149.1` and Claude Code `2.1.246`. Its documented behaviors (background execution, sandbox stability, context filtering, batch orchestration, worktree isolation, and more) are validated against real Codex runs and real headless Claude sessions, not just the fake test shim — see [Testing](docs/wiki/Testing.md) for how.
 
 **Upgrading from v0.1.0?** Two removals are breaking: the `SessionEnd` cleanup hook (and `--detach` with it) and `stop --all-mine`. Background runs are no longer stopped when a session ends — `status --all` finds them and `stop --run <id>`/`stop --all` ends them, and `doctor` now reports what the registry is holding. See the [changelog](CHANGELOG.md#020--2026-08-02).
 

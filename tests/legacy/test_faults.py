@@ -641,28 +641,6 @@ class WhenTheUserHasTheirOwnWorktree(FaultTestCase):
                          "a checkout this skill did not cut is not its business")
 
 
-class WhenAReviewMemberReportsZeroUsage(FaultTestCase):
-    """A review turn reports all-zero usage after real work. The single-run
-    surfaces have said "unavailable, not free" since v0.1.0; the group one
-    reported a confident zero and summed it into `totals`, undercounting any
-    batch that mixed a reviewer with writers."""
-
-    fixture = "review-clean-tree.jsonl"
-
-    def test_the_group_result_does_not_call_it_free(self):
-        tf = self.tmp / "tasks.jsonl"
-        tf.write_text(json.dumps({"kind": "review",
-                                  "review": {"uncommitted": True}}) + "\n")
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", str(tf))
-        for r in out["runs"]:
-            self.wait_for_state(r["run_id"])
-        res = self.bridge("result", "--group", "p1")
-        row = res["results"][0]
-        self.assertIsNone(row["usage"])
-        self.assertIn("unavailable, not free", row["usage_note"])
-        self.assertEqual(res["usage_unmeasured"], [row["run_id"]])
-
-
 class WhenTwoSelectorsArePassedTogether(FaultTestCase):
     """`status` learned that `--run` and `--group` are different questions.
     `stop` and `result` never did, and they honoured opposite ones — so

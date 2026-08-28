@@ -8,7 +8,9 @@ What it cannot check is whether a `keep` was right. That is what Codex run `2026
 
 The same round adds three — `log --group`, `log --heartbeat`, `status --heartbeat` — and rewords `status --follow`. They are marked `change` on the same reasoning read the other way: the finish line is that every string a caller can reach has been read, and these were written and read in this round rather than carried over unexamined.
 
-`(top level)` is the bridge itself. Arguments repeated across `start`, `resume`, `review` and `batch start` come from one shared block, so a `change` on one of them is the same edit four times — they are listed separately because that is how a caller meets them.
+**2026-08-28.** The 0.7.0 round removed the `review` command outright, so every one of its rows is marked `remove` on the same reasoning the 260826 paragraph gives: an argument that no longer exists is read by nobody. The `change` verdicts those rows used to carry were real — that audit did read those strings — and they are recorded in this file's history rather than in the table, because the table is a claim about the tree as it stands.
+
+`(top level)` is the bridge itself. Arguments repeated across `start`, `resume` and `batch start` come from one shared block, so a `change` on one of them is the same edit three times — they are listed separately because that is how a caller meets them. `review` was a fourth until 0.7.0 removed it.
 
 | command | argument | verdict |
 |---|---|---|
@@ -55,28 +57,28 @@ The same round adds three — `log --group`, `log --heartbeat`, `status --heartb
 | `resume` | `--last` | change |
 | `resume` | `--force` | change |
 | `resume` | `rest` | change |
-| `review` | `-h` | keep |
-| `review` | `--runs-dir` | keep |
-| `review` | `--project` | keep |
-| `review` | `--label` | change |
-| `review` | `--sandbox` | change |
-| `review` | `--model` | change |
-| `review` | `--effort` | change |
-| `review` | `--inherit-config` | keep |
+| `review` | `-h` | remove |
+| `review` | `--runs-dir` | remove |
+| `review` | `--project` | remove |
+| `review` | `--label` | remove |
+| `review` | `--sandbox` | remove |
+| `review` | `--model` | remove |
+| `review` | `--effort` | remove |
+| `review` | `--inherit-config` | remove |
 | `review` | `--isolate` | remove |
-| `review` | `--priority` | change |
-| `review` | `--no-priority` | change |
-| `review` | `--schema` | change |
+| `review` | `--priority` | remove |
+| `review` | `--no-priority` | remove |
+| `review` | `--schema` | remove |
 | `review` | `--config` | remove |
-| `review` | `--foreground` | keep |
-| `review` | `--timeout` | change |
+| `review` | `--foreground` | remove |
+| `review` | `--timeout` | remove |
 | `review` | `--no-preamble` | remove |
-| `review` | `--uncommitted` | keep |
-| `review` | `--base` | keep |
-| `review` | `--commit` | keep |
-| `review` | `--title` | keep |
-| `review` | `--cwd` | keep |
-| `review` | `prompt` | change |
+| `review` | `--uncommitted` | remove |
+| `review` | `--base` | remove |
+| `review` | `--commit` | remove |
+| `review` | `--title` | remove |
+| `review` | `--cwd` | remove |
+| `review` | `prompt` | remove |
 | `status` | `-h` | keep |
 | `status` | `--runs-dir` | keep |
 | `status` | `--project` | keep |

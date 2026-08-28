@@ -19,8 +19,8 @@ one carries weight here:
     it would be strictly worse, since git's notion of dirty is the correct one.
   * A freshly cut detached worktree has zero lines of `git diff HEAD`. That is
     the whole reason worktrees are assigned per member rather than per batch: a
-    `read-only` reviewer put in one would be reviewing nothing, because the
-    uncommitted work it exists to look at lives only in the caller's tree.
+    `read-only` member put in one would see nothing, because the uncommitted
+    work it was started to look at lives only in the caller's tree.
 
 Detached rather than on a branch: nothing to name, nothing to collide, and the
 result stays as uncommitted changes in the worktree — which is exactly the state

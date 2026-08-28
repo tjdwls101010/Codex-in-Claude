@@ -8,11 +8,11 @@ A **thread** is Codex's own unit of conversation, identified by a `thread_id`. I
 
 ## 2. Run
 
-A **run** is this plugin's unit of work: one invocation of the bridge (`start`, `resume`, or `review`) that spawns exactly one `codex exec` process, identified by a `run_id` (format `<timestamp>-<label-or-'run'>-<4 hex chars>`). A single thread accumulates one run per turn — `start` creates a thread's first run, and each `resume` creates a new run against the same thread. A run's lifecycle state is one of `starting`, `running`, `stalled` (advisory), `completed`, `failed`, `interrupted`, or `orphaned`.
+A **run** is this plugin's unit of work: one invocation of the bridge (`start` or `resume`) that spawns exactly one `codex exec` process, identified by a `run_id` (format `<timestamp>-<label-or-'run'>-<4 hex chars>`). A single thread accumulates one run per turn — `start` creates a thread's first run, and each `resume` creates a new run against the same thread. A run's lifecycle state is one of `starting`, `running`, `stalled` (advisory), `completed`, `failed`, `interrupted`, or `orphaned`.
 
 ## 3. Sandbox Mode
 
-One of three values Codex enforces for a run: `read-only`, `workspace-write` (this plugin's default), or `danger-full-access`. It governs what a run is allowed to touch on disk. See [Sandbox Stability](Sandbox-Stability.md) for why this concept needs a whole page: `codex exec` only lets you *set* it with `-s`/`--sandbox` on a fresh invocation, never on `resume` or `review`.
+One of three values Codex enforces for a run: `read-only`, `workspace-write` (this plugin's default), or `danger-full-access`. It governs what a run is allowed to touch on disk. See [Sandbox Stability](Sandbox-Stability.md) for why this concept needs a whole page: `codex exec` only lets you *set* it with `-s`/`--sandbox` on a fresh invocation, never on `resume`.
 
 ## 4. Isolation (`--ignore-user-config`)
 

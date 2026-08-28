@@ -19,11 +19,11 @@ How the plugin's pieces fit together: the components, the request flow through t
 
 ```mermaid
 flowchart LR
-    Claude["Claude<br/>(skill: codex)"] -->|start / resume / review| Bridge["codex_bridge.py"]
+    Claude["Claude<br/>(skill: codex)"] -->|start / resume| Bridge["codex_bridge.py"]
     Bridge --> Registry["_registry.py<br/>writes meta.json"]
     Bridge --> Argv["_codex.py<br/>build_argv()"]
     Argv --> Supervisor["spawn_supervised()<br/>__supervise subprocess"]
-    Supervisor -->|new process group| CodexCLI["codex exec [resume|review]"]
+    Supervisor -->|new process group| CodexCLI["codex exec [resume]"]
     CodexCLI -->|stdout JSON| EventsFile[("events.jsonl")]
     Claude -->|log / status / show| Bridge2["codex_bridge.py"]
     Bridge2 --> Reader["_events.py<br/>read_events() + filter"]

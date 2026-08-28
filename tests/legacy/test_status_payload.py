@@ -127,7 +127,7 @@ class FollowNeedsAGroup(BridgeTestCase):
         """The first guard only asked whether `--group` was present, so
         `--run X --group g --follow` walked past it and the `--run` branch then
         won — a snapshot again, with `--group` dropped entirely. Found by a
-        Codex `review` member reading the commit that added the guard."""
+        Codex run reading the commit that added the guard."""
         r = self.start("do a thing")
         self.bridge("batch", "start", "--group", "p1", "--task", "a")
         for args in (("status", "--run", r["run_id"], "--group", "p1"),

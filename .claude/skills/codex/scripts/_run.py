@@ -3,7 +3,7 @@
 One function does the first job — `create_run` — and everything about a run's
 identity is decided inside it: which directory it runs in, which settings it
 carries, whether it gets its own worktree, and what prompt Codex actually
-receives. `start`, `resume`, `review` and every batch member funnel through it,
+receives. `start`, `resume` and every batch member funnel through it,
 which is what keeps a batch member and a hand-typed `start` from drifting apart.
 
 `run_row` does the second: the one-line summary that `status` prints, for a
@@ -191,7 +191,7 @@ def refuse_concurrent_turn(runs_dir, thread_id, force, waits_for=None):
     else. It used to be the caller's job, which left the check and the new run's
     publication in different critical sections — i.e. in none — so two resumes
     a fraction of a second apart both passed it. One caller, one lock, one
-    place: the same reason `review_argv` has one home (R20)."""
+    place."""
     if not thread_id or force:
         return
     # Matched on the recorded thread id OR on the ref the run was launched
@@ -293,7 +293,7 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
         fail(f"cwd does not exist: {cwd}")
 
     prompt = read_prompt(args)
-    if kind != "review" and not prompt.strip():
+    if not prompt.strip():
         fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
 
     if kind == "resume" and not thread_ref:
@@ -542,7 +542,7 @@ def cut_worktree(run_dir: Path, meta: dict, source: Path, worktree_base: str):
     return wt, wt_info
 
 
-def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
+def create_run(args, *, kind: str, base=None, thread_ref=None,
                group=None, batch=None, worktree_base=None, waits_for=None):
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
@@ -564,7 +564,7 @@ def create_run(args, *, kind: str, base=None, review_args=None, thread_ref=None,
     send = (apply_preamble(s["prompt"], batch=batch)
             if s["prompt"].strip() else None)
     meta["argv"] = build_argv(meta, kind=kind, prompt=send,
-                              thread_ref=thread_ref, review_args=review_args)
+                              thread_ref=thread_ref)
     write_meta(run_dir, meta)
 
     # Stage 5 — hand back a handle, or block for the whole turn.
@@ -685,10 +685,7 @@ def run_row(run_dir: Path, meta: dict, project: Path):
                         if l.strip() and "Reading additional input from stdin" not in l)
         stderr_tail = txt[-800:] or None
 
-    # Measured: review runs report all-zero usage even after real work. Zero
-    # would be a wrong number; null is a true one.
     usage = info["usage"]
-    review_zero = meta.get("kind") == "review" and usage is not None and not any(usage.values())
 
     row = {
         "run_id": meta.get("run_id"),
@@ -709,7 +706,7 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         # to run clean over `-c`.
         "service_tier": meta.get("service_tier"),
         "cwd": meta.get("cwd"),
-        "usage": None if review_zero else usage,
+        "usage": usage,
         "turns_completed": info["turns_completed"], "commands": info["commands"],
         "files_changed": info["files_changed"], "config_error_events": info["errors"],
         "in_progress_item": info["in_progress_item"],
@@ -751,8 +748,6 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         row["group"] = meta["group"]
     if meta.get("worktree"):
         row["worktree"] = meta["worktree"]["path"]
-    if review_zero:
-        row["usage_note"] = "review runs report zero usage; unavailable, not free"
     if meta.get("sandbox_changed_from"):
         row["sandbox_changed_from"] = meta["sandbox_changed_from"]
     if stderr_tail:

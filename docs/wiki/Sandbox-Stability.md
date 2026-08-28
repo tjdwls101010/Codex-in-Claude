@@ -4,17 +4,17 @@ The measured defect this project exists to fix, in full: what causes it, exactly
 
 ## 1. Why `resume` Can't Just Ask for a Sandbox
 
-`codex exec`'s flag surface is not the same across its own subcommands:
+`codex exec`'s flag surface is not the same across the two subcommands this plugin drives:
 
-| Flag | `exec` | `exec resume` | `exec review` |
-|---|---|---|---|
-| `-s`/`--sandbox` | ✅ | ❌ | ❌ |
-| `-C`/`--cd` | ✅ | ❌ | ❌ |
-| `--add-dir` | ✅ | ❌ | ❌ |
-| `-i`/`--image` | ✅ | ✅ | ❌ |
-| `-m`, `-c`, `--json`, `-o`, `--output-schema`, `--ignore-user-config` | ✅ | ✅ | ✅ |
+| Flag | `exec` | `exec resume` |
+|---|---|---|
+| `-s`/`--sandbox` | ✅ | ❌ |
+| `-C`/`--cd` | ✅ | ❌ |
+| `--add-dir` | ✅ | ❌ |
+| `-i`/`--image` | ✅ | ✅ |
+| `-m`, `-c`, `--json`, `-o`, `--output-schema`, `--ignore-user-config` | ✅ | ✅ |
 
-`-c` (raw config passthrough) is the only mechanism available on all three subcommands, so this plugin always expresses the sandbox as `-c sandbox_mode="<mode>"`, never `-s` — and always sets the working directory on the child process itself, never via `-C`, for the same reason. Applying both uniformly closes the hole below *by construction*, rather than by remembering to special-case `resume` and `review`.
+`-c` (raw config passthrough) is the only mechanism available on both, so this plugin always expresses the sandbox as `-c sandbox_mode="<mode>"`, never `-s` — and always sets the working directory on the child process itself, never via `-C`, for the same reason. Applying both uniformly closes the hole below *by construction*, rather than by remembering to special-case `resume`.
 
 One consequence worth knowing: `--add-dir` is `exec`-only, so extra writable roots can only be added when a thread is created with `start` — they can't be added later on a `resume`.
 
@@ -60,7 +60,7 @@ Two different things are in that table, and only one is a property you can rely 
 
 ## 4. How the Fix Works
 
-Every setting a run is created with — sandbox mode, model, reasoning effort, isolation, working directory — is written to that run's `meta.json` in the [run registry](Concepts.md#5-the-run-registry) the moment it starts, and re-read and re-injected as explicit `-c` flags on every subsequent `resume` or `review` call against that thread. Nothing is left to whatever the ambient config happens to be at call time. See [Architecture § request flow](Architecture.md#2-request-flow) for exactly where this happens in the code path.
+Every setting a run is created with — sandbox mode, model, reasoning effort, isolation, working directory — is written to that run's `meta.json` in the [run registry](Concepts.md#5-the-run-registry) the moment it starts, and re-read and re-injected as explicit `-c` flags on every subsequent `resume` against that thread. Nothing is left to whatever the ambient config happens to be at call time. See [Architecture § request flow](Architecture.md#2-request-flow) for exactly where this happens in the code path.
 
 An explicit, deliberate sandbox change on a `resume` call (passing a different `--sandbox` than the thread was created with) is not treated as drift — it's recorded in the registry as `sandbox_changed_from`, and surfaced in `status`, so an intentional change is distinguishable from an accidental one.
 

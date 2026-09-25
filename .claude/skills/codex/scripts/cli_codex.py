@@ -56,7 +56,7 @@ from _batch import (  # noqa: E402
     unstarted_members, vanished_members,
 )
 from worktree import registered as worktrees_registered  # noqa: E402
-from _registry import (  # noqa: E402
+from core.registry import (  # noqa: E402
     ACTIVE_STATES, TERMINAL_STATES, find_run, iter_runs, meta_unreadable,
     read_meta, reap, resolve_project, resolve_runs_dir, still_writing,
     unreadable_runs, update_meta_if,

@@ -35,7 +35,7 @@ from pathlib import Path
 
 from codex.events import (FOLLOW_INTERVAL, format_events, read_events,
                      scan_progress)
-from _registry import (
+from core.registry import (
     ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,
     meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
     still_writing, unreadable_runs,

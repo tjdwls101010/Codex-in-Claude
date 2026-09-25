@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from codex.events import first_thread_id
-from _registry import read_meta, update_meta
+from core.registry import read_meta, update_meta
 from util import now_iso
 
 # How long to wait for `thread.started` before returning `thread_id: null`. It

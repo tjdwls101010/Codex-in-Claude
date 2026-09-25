@@ -27,7 +27,7 @@ FIXTURES = SUPPORT / "fixtures"
 LEGACY_REGISTRY = SUPPORT / "legacy_registry"
 
 # The engine module each name maps to. Races that have to be staged below the CLI (a stale snapshot racing a completion, many writers on one meta.json) import through `engine()`, so this is the one place a test learns a module's name.
-ENGINE_MODULES = {"registry": "_registry"}
+ENGINE_MODULES = {"registry": "core.registry"}
 
 
 def engine(name):

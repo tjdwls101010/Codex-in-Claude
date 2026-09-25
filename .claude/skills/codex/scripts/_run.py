@@ -29,7 +29,7 @@ from codex.argv import SANDBOX_MODES, apply_preamble, build_argv
 from codex.catalog import check_model_effort, model_catalog
 from codex.config import user_defaults
 from codex.events import first_thread_id, scan_progress
-from _registry import (
+from core.registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
     resolve_project, resolve_runs_dir, still_writing, thread_turn_lock,
     unreadable_runs, write_meta,

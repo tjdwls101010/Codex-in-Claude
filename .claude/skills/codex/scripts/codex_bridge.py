@@ -545,6 +545,8 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
         # A descendant can outlive both Codex and the supervisor in the run's group; once they are gone the group holds nothing else of value.
         with contextlib.suppress(ProcessLookupError):
             os.killpg(int(pgid), signal.SIGKILL)
+            if sent[-1] != "SIGKILL":
+                sent.append("SIGKILL")
 
     result["signals_sent"] = sent
     result["signalled"] = bool(sent)

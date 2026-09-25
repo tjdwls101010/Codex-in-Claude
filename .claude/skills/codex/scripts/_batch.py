@@ -1123,8 +1123,9 @@ def cmd_batch_clean(args):
     # sees `name_released: true` can reuse the name and one who does not still
     # has a group to address the leftovers by. This is also the only way to
     # reclaim a name from a `batch start` that died before it recorded any
-    # member. A group with a live member never gets this far.
-    released = not kept
+    # member. A group with a live member never gets this far, and one with a
+    # member whose state cannot be read keeps its name.
+    released = not kept and not unknown
     if released:
         group_path(runs_dir, args.group).unlink(missing_ok=True)
     # Branched on what actually blocked the release. One note for both cases
@@ -1135,10 +1136,12 @@ def cmd_batch_clean(args):
     # never released. The remedy that does work is the one the message omitted.
     if released:
         note = None
-    elif any(k.get("stop") or k.get("run_dir") for k in kept):
-        note = ("some of these worktrees belong to runs that are live or whose "
-                "state cannot be read; kept[].reason says which, and kept[].stop "
-                "how to end a live one. The group name stays claimed until "
+    elif unknown or any(k.get("stop") for k in kept):
+        note = ("some members are live or cannot be read"
+                + (f" ({', '.join(m['run_id'] for m in unknown)} will not parse; "
+                   f"repair or remove those run directories)" if unknown else "")
+                + "; kept[].reason says which worktree is held and kept[].stop "
+                "how to end a live run. The group name stays claimed until "
                 "nothing is left.")
     else:
         note = ("these worktrees hold uncommitted changes — collect them, or "

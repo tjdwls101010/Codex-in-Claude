@@ -89,8 +89,9 @@ class TerminalStates(BridgeCase):
         pidfile = self.tmp / "grandchild.pid"
         out, _m = self.running("x", FAKE_CODEX_GRANDCHILD=pidfile)
         grandchild = self.grandchild(pidfile)
-        self.bridge("stop", "--run", out["run_id"])
+        res = self.bridge("stop", "--run", out["run_id"])["stopped"][0]
         self.assertTrue(wait_until(lambda: not alive(grandchild), timeout=10), "stop left a process of the run alive")
+        self.assertEqual(res["signals_sent"], ["SIGINT", "SIGKILL"], "what was sent is what is reported")
 
     def test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out(self):
         out, _m = self.running("--timeout", 600, "x")

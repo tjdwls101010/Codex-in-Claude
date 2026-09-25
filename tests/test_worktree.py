@@ -305,6 +305,14 @@ class Clean(WorktreeCase):
         self.assertFalse(res["name_released"])
         self.assertTrue(Path(victim["worktree"]).exists())
 
+    def test_force_keeps_the_name_of_a_group_with_a_member_whose_state_cannot_be_read(self):
+        out = self.group()
+        self.wait_all(out)
+        (self.runs_dir / out["runs"][0]["run_id"] / "meta.json").write_text("{ truncated")
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertFalse(res["name_released"])
+        self.assertIn(out["runs"][0]["run_id"], res["note"])
+
     def test_the_stop_command_it_returns_works_from_anywhere(self):
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()

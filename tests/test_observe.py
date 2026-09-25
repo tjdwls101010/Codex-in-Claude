@@ -9,7 +9,8 @@ import signal
 import time
 import unittest
 
-from support.harness import BridgeCase, FIXTURES, alive, wait_until
+from support.harness import (BridgeCase, FIXTURES, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
+                             wait_until)
 
 
 def answer_fixture(path, text, thread="t-answer"):
@@ -171,6 +172,40 @@ class Listing(BridgeCase):
         listing = self.bridge("status")
         self.assertEqual(listing["groups"], ["found-later"])
         self.assertEqual(self.row(out["runs"][0]["run_id"])["group"], "found-later")
+
+
+class AnOlderReleasesRegistry(BridgeCase):
+    """A registry written by 0.4–0.7 — a `review` run, a boolean `priority`, a batch member still `waiting` — is read by every view."""
+
+    def setUp(self):
+        super().setUp()
+        self.install_legacy_registry()
+
+    def test_the_views_read_it(self):
+        review = self.row(LEGACY_REVIEW)
+        self.assertEqual((review["kind"], review["state"], review["sandbox"]), ("review", "completed", "read-only"))
+        self.assertEqual(self.bridge("result", "--run", LEGACY_REVIEW)["message"], "no findings")
+        listing = self.bridge("status")
+        self.assertEqual({r["run_id"] for r in listing["runs"]}, {LEGACY_REVIEW, LEGACY_PREDECESSOR, LEGACY_WAITER})
+        self.assertEqual(listing["running"], [LEGACY_WAITER])
+        self.assertEqual(listing["groups"], ["p1", "p2"])
+        waiter = self.row(LEGACY_WAITER)
+        self.assertEqual((waiter["state"], waiter["waits_for"]), ("waiting", LEGACY_PREDECESSOR))
+        done = self.bridge("result", "--group", "p1")
+        self.assertEqual((done["group_state"], done["results"][0]["message"]), ("completed", "phase one done"))
+        self.assertEqual(self.bridge("result", "--group", "p2")["group_state"], "running")
+        rep = self.bridge("doctor")
+        self.assertEqual((rep["runs_dir_runs"], rep["runs_unreadable"]), (3, 0))
+
+    def test_a_finished_legacy_group_is_continued_and_cleaned(self):
+        self.bridge("stop", "--group", "p2")
+        self.wait_state(LEGACY_WAITER)
+        self.assertTrue(self.bridge("batch", "clean", "--group", "p2")["name_released"])
+        out = self.bridge("batch", "start", "--group", "p3", "--resume-from", "p1", "--task", "go on")
+        self.wait_all(out)
+        argv = self.last_argv()
+        self.assertEqual(argv[:3], ["exec", "resume", self.meta(LEGACY_PREDECESSOR)["thread_id"]])
+        self.assertEqual(self.config_values(argv)["service_tier"], '"priority"')
 
 
 class GroupResult(BridgeCase):

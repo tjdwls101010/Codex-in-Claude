@@ -647,7 +647,7 @@ def changed_paths(events_path: Path, root=None):
 
 
 def member_result(rd, meta):
-    """One member's row in `result --group`: its message capped in bytes (cut and measured in the same unit), plus usage and liveness."""
+    """One member's row in `result --group`: its message capped in bytes (cut and counted in the same unit), plus usage and liveness."""
     info = progress(rd, meta)
     msg_path = rd / "last-message.txt"
     message = (msg_path.read_text(encoding="utf-8") if msg_path.exists() else info["last_agent_message"]) or ""

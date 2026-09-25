@@ -8,12 +8,8 @@
     util.py      primitives
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from cli import main  # noqa: E402
+# Python puts this file's directory first on sys.path, which is what makes the packages beside it importable from any cwd and through a symlinked install.
+from cli import main
 
 if __name__ == "__main__":
     main()

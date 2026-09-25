@@ -33,7 +33,7 @@ import time
 import uuid
 from pathlib import Path
 
-from _events import (FOLLOW_INTERVAL, format_events, read_events,
+from codex.events import (FOLLOW_INTERVAL, format_events, read_events,
                      scan_progress)
 from _registry import (
     ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,

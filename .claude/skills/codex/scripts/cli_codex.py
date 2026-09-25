@@ -46,7 +46,7 @@ from _codex import (  # noqa: E402
 )
 from codex.catalog import codex_version, model_catalog  # noqa: E402
 from codex.config import codex_home, config_scalars, user_defaults  # noqa: E402
-from _events import (  # noqa: E402
+from codex.events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
     FOLLOW_INTERVAL, FULL_ITEM_BYTES, LEVELS, find_item, format_events,
     read_events, scan_progress, strip_wrapper,

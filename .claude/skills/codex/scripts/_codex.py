@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from _events import first_thread_id
+from codex.events import first_thread_id
 from _registry import read_meta, update_meta
 from util import now_iso
 

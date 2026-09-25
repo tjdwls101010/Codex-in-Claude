@@ -31,6 +31,7 @@ class Starting(BatchCase):
     def test_members_start_in_order_and_the_manifest_records_it(self):
         out = self.batch("p1", "alpha", "bravo", "charlie")
         self.assertEqual((out["spawned"], out["requested"]), (3, 3))
+        self.assertNotIn("projected_cost", out, "an estimate arriving after the spawn cannot inform it")
         ids = [r["run_id"] for r in out["runs"]]
         self.assertEqual(len(set(ids)), 3)
         self.wait_all(out)

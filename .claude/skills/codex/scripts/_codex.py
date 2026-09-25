@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-from _events import final_usage, first_thread_id
+from _events import first_thread_id
 from _registry import read_meta, update_meta
 from _util import codex_home, now_iso
 
@@ -541,9 +541,5 @@ def supervise(run_dir: Path) -> int:
     fields = {"state": state, "exit_code": rc, "ended_at": now_iso()}
     if tid:
         fields["thread_id"] = tid
-    # `batch start`'s projected_cost reads final usage from meta for several past runs at once.
-    usage = final_usage(events_path)
-    if usage:
-        fields["usage"] = usage
     update_meta(run_dir, **fields)
     return rc

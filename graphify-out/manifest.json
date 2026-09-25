@@ -18,9 +18,9 @@
     "semantic_hash": "d86ce5f05ea8e777a920aae592af344e"
   },
   ".claude/skills/codex/SKILL.md": {
-    "mtime": 1790340066.7446506,
-    "seen": 1790340068.338599,
-    "ast_hash": "d353af687555592aee22e00923263027",
+    "mtime": 1790343095.0186563,
+    "seen": 1790343096.4940429,
+    "ast_hash": "7a9e2517e026f1b1cfa4334fc9cf4bc7",
     "semantic_hash": ""
   },
   "AGENTS.md": {
@@ -144,9 +144,9 @@
     "semantic_hash": ""
   },
   "tests/test_install.py": {
-    "mtime": 1790331852.8441677,
-    "seen": 1790331857.215393,
-    "ast_hash": "208828885da575741ca3865192ffa35c",
+    "mtime": 1790343095.0200982,
+    "seen": 1790343096.494038,
+    "ast_hash": "deacdc9b66b399c6f746d76f02215ae8",
     "semantic_hash": ""
   },
   "tests/test_observe.py": {
@@ -339,6 +339,18 @@
     "mtime": 1790340066.7577207,
     "seen": 1790340068.3385978,
     "ast_hash": "840fe4dba4611d45cbe6eda99d4563d2",
+    "semantic_hash": ""
+  },
+  "tests/e2e/run_e2e.py": {
+    "mtime": 1790343095.0191684,
+    "seen": 1790343096.4940312,
+    "ast_hash": "d7ca0333954367c9f6727b89a8b9f258",
+    "semantic_hash": ""
+  },
+  "tests/e2e/scenarios.md": {
+    "mtime": 1790343095.01946,
+    "seen": 1790343096.494046,
+    "ast_hash": "2dd163bffd47ac92e801fbe3f90a0c3f",
     "semantic_hash": ""
   }
 }

@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from cli.guards import note_unreadable, refuse_competing_selectors, refuse_unresolved_run, refuse_unusable_heartbeat
+from cli.guards import note_unreadable, refuse_competing_selectors, refuse_unresolved_run, refuse_unusable_follow_options
 from codex.events import CursorOutOfRange, FOLLOW_INTERVAL, find_item, format_events, read_events, strip_wrapper
 from core.groups import (
     changed_paths, list_groups, member_result, overlaps, read_group, resolve_group, unstarted_members,
@@ -72,15 +72,8 @@ def cmd_status(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     refuse_competing_selectors(args, "status", "--run", "--thread", "--group")
     if args.follow and not args.group:
-        fail("--follow needs --group; a group is what has an end to wait for. "
-             "To watch one run, use `log --run <id> --follow`, which streams its "
-             "events and ends on the run's terminal line.",
-             run=args.run)
-    if args.follow_timeout is not None and not args.follow:
-        fail("--follow-timeout only shapes a --follow, and there is no --follow "
-             "here, so nothing would use it.",
-             follow=args.follow, group=args.group)
-    refuse_unusable_heartbeat(args)
+        fail("--follow requires --group; to follow one run use `log --run <id> --follow`", run=args.run)
+    refuse_unusable_follow_options(args)
     if args.group:
         return follow_group(args, project, runs_dir) if args.follow else status_group(args, project, runs_dir)
 
@@ -160,16 +153,10 @@ def follow_group(args, project, runs_dir):
 def cmd_log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
-    refuse_unusable_heartbeat(args)
-    if args.follow_timeout is not None and not args.follow:
-        fail("--follow-timeout requires --follow")
+    refuse_unusable_follow_options(args)
     if args.group:
         if args.since is not None:
-            fail("--since is one cursor and a group has one per member, each a "
-                 "byte offset into its own file. `log --run <id> --since` is "
-                 "where a cursor belongs; a group follower re-reads from the "
-                 "start of each stream instead.",
-                 group=args.group)
+            fail("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`", group=args.group)
         return log_group(args, project, runs_dir)
     if args.run:
         rd, meta = find_run(runs_dir, args.run)
@@ -177,7 +164,7 @@ def cmd_log(args):
     else:
         candidates = list(iter_runs(runs_dir))
         if not candidates:
-            fail("no runs in this project", runs_dir=str(runs_dir))
+            fail("no runs in this registry", runs_dir=str(runs_dir))
         rd, meta, _ = resolve_implicit_run(candidates)
 
     events_path = rd / "events.jsonl"
@@ -305,18 +292,16 @@ def cmd_result(args):
         out["note"] = f"run is still {meta.get('state')}; this is a partial result"
     elif still_writing(meta):
         # The same call later would return a different message, so this one is not final.
-        out["note"] = ("this run has no supervisor left to record its outcome, "
-                       "but its codex process is still running and still "
-                       "writing — so this is a partial result that will change")
+        out["note"] = "codex is still writing although the run is orphaned; this is a partial result"
     if meta.get("schema_path"):
         out["schema_path"] = meta["schema_path"]
         if not message:
-            fail("run used --schema but produced no final message", run_id=meta["run_id"], state=meta.get("state"))
+            fail("the --schema run has no final message", run_id=meta["run_id"], state=meta.get("state"))
         try:
             out["json"] = json.loads(message)
         except json.JSONDecodeError as e:
             # Loud rather than lenient: a malformed object handed back as if it had the schema's shape is worse.
-            fail("run used --schema but the final message is not valid JSON",
+            fail("the final message of a --schema run is not valid JSON",
                  run_id=meta["run_id"], parse_error=str(e), message=message)
         # The parsed object is the answer; the same text again as `message` would double it.
         del out["message"]

@@ -12,9 +12,7 @@ def refuse_competing_selectors(args, command, *selectors):
     given = {k: v for k, v in given.items() if v}
     if len(given) > 1:
         names = " and ".join(sorted(given))
-        fail(f"{names} are different questions; pass one. "
-             f"`{command}` acts on whichever it sees first, which is not "
-             f"necessarily the one you meant.",
+        fail(f"{names} select different runs; pass one",
              **{k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
 
 
@@ -23,24 +21,21 @@ def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
     if meta:
         return
     if run_dir is not None and meta_unreadable(run_dir):
-        fail(f"run {ref} exists but its meta.json will not parse, so nothing "
-             f"can be said about its state. Its event stream is a separate "
-             f"file and may still be readable.",
+        fail(f"run {ref} has a meta.json that will not parse, so its state is unknown; its event stream may still be readable",
              run_id=run_dir.name, run_dir=str(run_dir), events=str(run_dir / "events.jsonl"))
     fail(f"no such run: {ref}", runs_dir=str(runs_dir))
 
 
-def refuse_unusable_heartbeat(args):
-    """`--heartbeat` only means something to a follower, at a positive interval; accepted otherwise it would read as obeyed."""
-    beat = getattr(args, "heartbeat", None)
-    if beat is None:
-        return
-    if not args.follow:
-        fail("--heartbeat is a line a follower prints while it follows, and "
-             "there is no --follow here, so nothing would print it.")
-    if beat <= 0:
-        fail("--heartbeat is an interval in seconds and has to be positive; "
-             "omitting it is how a follower stays quiet.", heartbeat=beat)
+def refuse_unusable_follow_options(args):
+    """`--follow-timeout` and `--heartbeat` only mean something to a follower, at a positive number of seconds; accepted otherwise they would read as obeyed."""
+    for flag in ("--follow-timeout", "--heartbeat"):
+        value = getattr(args, flag[2:].replace("-", "_"), None)
+        if value is None:
+            continue
+        if not args.follow:
+            fail(f"{flag} requires --follow")
+        if value <= 0:
+            fail(f"{flag} must be a positive number of seconds", **{flag[2:].replace("-", "_"): value})
 
 
 def note_unreadable(out: dict, runs_dir):

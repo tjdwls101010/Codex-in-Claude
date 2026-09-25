@@ -12,13 +12,10 @@ from util import emit, fail
 
 def cmd_batch_start(args):
     if not valid_name(args.group):
-        fail("group name must be alphanumeric with . _ - and no path separators", got=args.group)
+        fail("group name must be 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a letter or digit (no path separators)", got=args.group)
     if getattr(args, "base", None) and not getattr(args, "worktree", False):
         # Refused before the claim, so a typo does not burn the name.
-        fail("--base only shapes the worktrees --worktree cuts, and there is no "
-             "--worktree here, so nothing would use it. Members share the "
-             "caller's tree, which is whatever is checked out in it now.",
-             base=args.base)
+        fail("--base requires --worktree", base=args.base)
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args)
@@ -32,12 +29,7 @@ def cmd_batch_start(args):
         epoch = claim_group(runs_dir, args.group, derived_from=previous, requested=len(tasks))["epoch"]
     except FileExistsError:
         existing = read_group(runs_dir, args.group) or {}
-        fail(f"group {args.group!r} already exists in this project; group names "
-             f"are single-use so that membership and start order stay unambiguous. "
-             f"`batch clean --group {args.group}` releases the name once its "
-             f"worktrees are gone — which is also how a name is reclaimed from a "
-             f"batch whose members all failed to spawn, since the claim happens "
-             f"before the first one is tried",
+        fail(f"group {args.group!r} already exists; `batch clean --group {args.group}` releases the name once nothing is left",
              created_at=existing.get("created_at"), members=len(existing.get("members") or []))
 
     isolated, base, note = plan_worktrees(tasks, args, project, runs_dir)

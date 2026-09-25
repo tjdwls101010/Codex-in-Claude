@@ -21,7 +21,7 @@ def cmd_resume(args):
     rest = list(args.rest)
     args.ref = None if args.last else (rest.pop(0) if rest else None)
     if len(rest) > 1:
-        fail("too many positional arguments for resume",
+        fail("too many positional arguments: resume takes [REF] PROMPT",
              expected="resume <ref> <prompt>  |  resume --last <prompt>", got=list(args.rest))
     args.prompt = rest[0] if rest else None
 
@@ -40,8 +40,7 @@ def cmd_resume(args):
             fail("resume needs a run id, thread id, thread name, or --last")
         _, base = find_run(runs_dir, args.ref)
         if base and not base.get("thread_id"):
-            fail("nothing to resume: that run never recorded a thread id, so "
-                 "there is no conversation to continue",
+            fail(f"run {base.get('run_id')} has no thread id, so there is nothing to resume; `status --run` shows why",
                  run_id=base.get("run_id"), state=base.get("state"))
         # A ref this registry has never seen may be a thread started elsewhere, so it is passed through.
         thread_ref = (base or {}).get("thread_id") or args.ref

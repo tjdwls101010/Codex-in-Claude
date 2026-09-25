@@ -10,7 +10,7 @@ import re
 import sqlite3
 import unittest
 
-from support.harness import BridgeCase, FIXTURES
+from support.harness import BridgeCase, FIXTURES, engine
 
 
 class OutputFrame(BridgeCase):
@@ -95,6 +95,8 @@ class FlagsThatWouldDecideNothing(BridgeCase):
                  ("status", "--group", "g", "--follow-timeout", "5"),
                  ("log", "--run", out["run_id"], "--heartbeat", "5"),
                  ("log", "--run", out["run_id"], "--follow-timeout", "5"),
+                 ("log", "--run", out["run_id"], "--follow", "--follow-timeout", "0"),
+                 ("status", "--group", "g", "--follow", "--follow-timeout", "-1"),
                  ("log", "--run", out["run_id"], "--follow", "--heartbeat", "0"),
                  ("log", "--group", "g", "--since", "0"),
                  ("batch", "start", "--group", "h", "--base", "HEAD", "--task", "x")]
@@ -248,6 +250,52 @@ class TheRegistryGoesWhereItIsTold(BridgeCase):
         self.assertEqual(self.wait_state(out["run_id"], extra=("--runs-dir", elsewhere))["state"], "completed")
         self.assertFalse(self.runs_dir.exists())
         self.bridge("status", "--run", out["run_id"], rc=1)
+
+
+COMMANDS = [(), ("start",), ("resume",), ("status",), ("log",), ("show",), ("stop",), ("result",), ("batch",),
+            ("batch", "start"), ("batch", "clean"), ("models",), ("doctor",)]
+
+# Provenance does not belong in help: measurements, document ids, discovery stories. This guards against it coming back; it does not pin any sentence.
+PROVENANCE = re.compile(r"\b[Mm]easured\b|\b[RDBFC][0-9]{1,2}\b|\bV-[0-9]+\b|\baudit\b|\bfield report\b")
+
+
+class HelpIsTheInterface(BridgeCase):
+
+    def arguments(self):
+        import argparse
+        parser = engine("cli.parser").build_parser()
+        found = []
+
+        def walk(p, path):
+            for a in p._actions:
+                if isinstance(a, argparse._SubParsersAction):
+                    for name, sp in a.choices.items():
+                        if name != "__supervise":
+                            walk(sp, path + (name,))
+                elif not isinstance(a, argparse._HelpAction):
+                    found.append((path, a))
+        walk(parser, ())
+        return found
+
+    def test_every_argument_explains_itself(self):
+        args = self.arguments()
+        self.assertGreater(len(args), 60, "the walk stopped finding arguments")
+        self.assertEqual([(" ".join(p), a.dest) for p, a in args if not (a.help or "").strip()], [])
+
+    def test_no_help_carries_provenance(self):
+        for cmd in COMMANDS:
+            with self.subTest(cmd=cmd):
+                text = self.bridge_raw(*cmd, "--help").stdout
+                self.assertEqual(PROVENANCE.findall(text), [])
+
+    def test_help_is_never_rewrapped_to_the_terminal(self):
+        for path, a in self.arguments():
+            with self.subTest(arg=a.dest, cmd=path):
+                text = self.bridge_raw(*path, "--help", env={"COLUMNS": 40}).stdout
+                self.assertIn(a.help % vars(a) if "%(" in a.help else a.help, text)
+
+    def test_the_internal_command_is_not_listed(self):
+        self.assertNotIn("__supervise", self.bridge_raw("--help").stdout)
 
 
 if __name__ == "__main__":

@@ -96,8 +96,7 @@ def write_members(runs_dir: Path, name: str, members: list, epoch=None) -> dict:
     """Record the member list so far, after every member: a spawned member must be reachable through its group from the instant it exists."""
     manifest = read_group(runs_dir, name) or {"group": name, "created_at": now_iso(), "derived_from": None}
     if epoch is not None and manifest.get("epoch") != epoch:
-        fail(f"group {name!r} was released and re-claimed while this batch was "
-             f"still starting; its manifest is no longer this batch's",
+        fail(f"group {name!r} was released and claimed again while this batch was starting; the members listed in `spawned` are still recorded as members of it",
              spawned=[m.get("run_id") for m in members if m.get("run_id")])
     manifest["members"] = members
     write_json_atomic(group_path(runs_dir, name), manifest)
@@ -130,12 +129,9 @@ def derived_groups(runs_dir: Path, name: str):
 def resolve_group(runs_dir: Path, name: str):
     """Members as (run_dir, meta) in start order; refuses an unknown or unreadable group. Slots that never spawned are `unstarted_members`."""
     if group_unreadable(runs_dir, name):
-        fail(f"group {name!r} has a manifest that will not parse, so its "
-             f"membership and start order cannot be read from it",
+        fail(f"group {name!r} has a manifest that will not parse; `members_recorded_by_runs` lists its runs, which `status --run` reads one by one",
              manifest=str(group_path(runs_dir, name)),
-             members_recorded_by_runs=owned_run_ids(runs_dir, name),
-             remedy=f"`batch clean --group {name} --force` removes their "
-                    f"worktrees and releases the name")
+             members_recorded_by_runs=owned_run_ids(runs_dir, name))
     ids = member_run_ids(runs_dir, name)
     if ids is None:
         fail(f"no such group: {name}", runs_dir=str(runs_dir), known_groups=list_groups(runs_dir))
@@ -216,9 +212,7 @@ def _task_from_line(n, line, args):
     item.setdefault("kind", "start")
     if item["kind"] not in ("start", "resume"):
         fail(f"tasks file line {n}: kind must be start or resume"
-             + ("; `review` was removed in 0.7.0 — use kind 'start' "
-                "with sandbox 'read-only' and say what to look at in "
-                "the prompt" if item["kind"] == "review" else ""),
+             + ("; for a review use kind 'start' with sandbox 'read-only'" if item["kind"] == "review" else ""),
              got=item["kind"])
     # Under --resume-from the target comes from the pairing, so an unnamed resume is normal there.
     if item["kind"] == "resume" and not item.get("resume") and not getattr(args, "resume_from", None):
@@ -269,9 +263,7 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     if manifest is None:
         if group_unreadable(runs_dir, previous):
             # Only the manifest records slots; inferring an order would land tasks on other tasks' threads.
-            fail(f"group {previous!r} has a manifest that will not parse, and "
-                 f"--resume-from pairs task to member by position, which only "
-                 f"the manifest records",
+            fail(f"group {previous!r} has a manifest that will not parse, and only the manifest records the start order --resume-from pairs by",
                  manifest=str(group_path(runs_dir, previous)),
                  members_recorded_by_runs=owned_run_ids(runs_dir, previous))
         fail(f"no such group to resume from: {previous}", known_groups=list_groups(runs_dir)[:20])
@@ -280,18 +272,10 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
         fail(f"group {previous!r} has no members that started, so there is nothing to resume")
     threadless = [m["run_id"] for m in prior if not (find_run(runs_dir, m["run_id"])[1] or {}).get("thread_id")]
     if threadless:
-        fail(f"{len(threadless)} member(s) of {previous!r} never recorded a "
-             f"thread id, so there is no conversation to continue for them — "
-             f"they failed before Codex started one, and their `stderr.log` "
-             f"records why. This refuses the whole batch rather than those "
-             f"slots: --resume-from pairs one task to every started member, so "
-             f"work for a threadless slot has to be started fresh, in a batch "
-             f"of its own",
+        fail(f"{len(threadless)} member(s) of {previous!r} have no thread id, so there is nothing to continue for them; `status --run` shows why. --resume-from needs every started member, so start that work fresh",
              members=threadless)
     if len(tasks) != len(prior):
-        fail(f"--resume-from pairs one task to one member in order, but "
-             f"{previous!r} has {len(prior)} started member(s) and this batch "
-             f"has {len(tasks)} task(s)",
+        fail(f"--resume-from pairs task i with member i, but {previous!r} has {len(prior)} started member(s) and this batch has {len(tasks)} task(s)",
              previous_members=[m["run_id"] for m in prior])
     # Checked for the whole group up front: per member, the refusal would come after earlier tasks had already resumed.
     live = []
@@ -307,17 +291,13 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
         if is_live(reaped):
             live.append({"run_id": m["run_id"], "state": reaped.get("state")})
     if live and not force:
-        fail(f"group {previous!r} still has members running; resuming a thread "
-             f"mid-turn would run two turns on it at once", running=live)
+        fail(f"group {previous!r} still has members running; wait for them, or pass --force to continue them mid-turn", running=live)
 
     paired = []
     for slot, (task, prev) in enumerate(zip(tasks, prior)):
         kind, named = task["kind"], task.get("resume")
         if kind != "resume" and named:
-            fail(f"task {slot} names a thread to resume but its kind is "
-                 f"{kind!r}; under --resume-from, set kind to 'resume' to keep "
-                 f"that target or drop the 'resume' field to be paired with "
-                 f"{prev['run_id']}")
+            fail(f"task {slot} names a `resume` target but has kind {kind!r}; set kind 'resume' to keep the target, or drop `resume` to pair it with {prev['run_id']}")
         paired.append(task if named else {**task, "kind": "resume", "resume": prev["run_id"]})
     return paired, [m["run_id"] for m in prior]
 
@@ -498,7 +478,7 @@ def clean_group(project, runs_dir, name, *, force, explicit_registry):
         fail(f"no such group in this project: {name}", known_groups=list_groups(runs_dir)[:20])
     live, unknown = _member_liveness(runs_dir, name)
     if live:
-        fail(f"group {name!r} still has running members; stop them first",
+        fail(f"group {name!r} still has running members; stop them with the command in `stop`, then clean again",
              running=live, stop=stop_commands(live, runs_dir, explicit_registry))
     overrode = _check_liftable_guards(runs_dir, name, force=force, lost_manifest=lost_manifest, unknown=unknown)
     removed, kept = _remove_worktrees(project, runs_dir, name, force=force,
@@ -509,22 +489,15 @@ def clean_group(project, runs_dir, name, *, force, explicit_registry):
         group_path(runs_dir, name).unlink(missing_ok=True)
         note = None
     elif unknown or any(k.get("stop") for k in kept):
-        note = ("some members are live or cannot be read"
-                + (f" ({', '.join(m['run_id'] for m in unknown)} will not parse; "
-                   f"repair or remove those run directories)" if unknown else "")
-                + "; kept[].reason says which worktree is held and kept[].stop "
-                "how to end a live run. The group name stays claimed until "
-                "nothing is left.")
+        note = ("the name stays reserved until nothing is left: "
+                + (f"{', '.join(m['run_id'] for m in unknown)} will not parse (repair or remove those run directories); " if unknown else "")
+                + "kept[].reason says why each worktree is kept, and kept[].stop ends a live run")
     else:
-        note = ("these worktrees hold uncommitted changes — collect them, or "
-                "pass --force to discard. The group name stays claimed until "
-                "they are gone.")
+        note = "the name stays reserved until nothing is left: kept[].reason says why git kept each worktree; collect uncommitted changes, or pass --force to discard them"
     out = {"group": name, "removed": removed, "kept": kept, "name_released": released, "note": note}
     if overrode:
         out["forced_past"] = overrode
-        out["forced_note"] = ("--force lifted every protection at once, not only the one you were "
-                              "after. What it overrode is listed above; none of it is recoverable "
-                              "from here.")
+        out["forced_note"] = "--force overrode everything in forced_past, not only the refusal you hit; discarded changes are not recoverable"
     return out
 
 
@@ -551,22 +524,16 @@ def _check_liftable_guards(runs_dir, name, *, force, lost_manifest, unknown):
     children = derived_groups(runs_dir, name)
     guards = [
         ("unreadable_manifest", lost_manifest,
-         f"group {name!r} has a manifest that will not parse, so what it "
-         f"was and what order it ran in cannot be read. Its members are still "
-         f"recoverable from the registry; pass --force to remove their "
-         f"worktrees and release the name",
+         f"group {name!r} has a manifest that will not parse; its members are listed in `members_recorded_by_runs`, and --force cleans them",
          lambda: {"manifest": str(group_path(runs_dir, name)),
                   "members_recorded_by_runs": owned_run_ids(runs_dir, name)},
          str(group_path(runs_dir, name))),
         ("unreadable_members", bool(unknown),
-         f"group {name!r} has members whose meta.json will not parse, so "
-         f"whether they are still running cannot be determined; pass --force "
-         f"to clean anyway",
+         f"group {name!r} has members whose meta.json will not parse, so whether they run is unknown; --force cleans the others and keeps those worktrees",
          lambda: {"running": unknown}, unknown),
         # `--resume-from` puts phase 2 in phase 1's worktrees. One hop only, which is why the removal asks the registry again.
         ("derived_groups", bool(children),
-         f"group {name!r} was resumed by another group, whose members are "
-         f"working in these worktrees",
+         f"group {name!r} was continued by another group (--resume-from), whose members work in these worktrees; --force lifts this refusal, but a worktree a live run still works in is kept",
          lambda: {"derived_groups": children}, children),
     ]
     overrode = {}
@@ -592,10 +559,7 @@ def _remove_worktrees(project, runs_dir, name, *, force, explicit_registry, over
             continue
         if meta is None:
             kept.append({"run_id": rid, "path": str(path),
-                         "reason": "its meta.json will not parse, so whether it "
-                                   "is still running cannot be determined; "
-                                   "repair or remove the run directory to "
-                                   "release this worktree",
+                         "reason": "its run's meta.json will not parse, so whether it runs is unknown; repair or remove the run directory to release this worktree",
                          "run_dir": str(rd)})
             continue
         # Who lives here is asked of the registry, not the group graph, which forgets an intermediate group once it is cleaned.

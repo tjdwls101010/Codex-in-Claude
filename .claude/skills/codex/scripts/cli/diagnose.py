@@ -23,9 +23,7 @@ def cmd_models(args):
     catalog = model_catalog()
     if catalog is None:
         emit({"models": None,
-              "error": "could not read the catalog from `codex debug models`; "
-                       "`doctor` reports why. Runs are unaffected — an invalid "
-                       "--model or --effort is caught by the API instead.",
+              "error": "could not read the catalog from `codex debug models`; `doctor` reports why. Runs still start, and an invalid --model or --effort then fails the run",
               "codex_path": shutil.which("codex")}, code=1)
     emit({"models": catalog, "codex_version": codex_version()})
 
@@ -48,10 +46,7 @@ def cmd_doctor(args):
     report["project_agents_md"] = str(agents) if agents.exists() else None
     if agents.exists():
         warnings.append(
-            f"{agents} is injected into every Codex run started in this project. "
-            "Project AGENTS.md survives --ignore-user-config (measured), so it is a "
-            "briefing channel that works — and equally, its contents are in context "
-            "whether or not that was intended.")
+            f"{agents} is given to every Codex run started in this project, isolated or not")
     _check_registry(report, blockers, warnings, project, runs_dir)
     report["blockers"] = blockers
     report["warnings"] = warnings
@@ -110,18 +105,12 @@ def _check_config(report, warnings):
     report["effective_defaults"] = user_defaults()
     if report["config_sandbox_mode"] == "danger-full-access":
         warnings.append(
-            'config.toml sets sandbox_mode = "danger-full-access". `codex exec resume` '
-            "has no -s flag and falls back to this value, which is how a read-only "
-            "thread becomes fully privileged on its second turn. "
-            "This wrapper passes -c sandbox_mode= on every invocation, so that fallback "
-            "is never reached — but a bare `codex` command you run yourself will hit it.")
+            'config.toml sets sandbox_mode = "danger-full-access", which a bare `codex exec resume` falls back to; runs started here always pass their own sandbox')
     catalog = model_catalog()
     report["models_catalog"] = len(catalog) if catalog else None
     if catalog is None:
         warnings.append(
-            "could not read `codex debug models`, so `start`/`resume`/`batch` "
-            "cannot check --model or --effort before spawning. Runs still work; "
-            "an invalid value is caught by the API instead, one wasted run later.")
+            "could not read `codex debug models`, so --model and --effort are not checked before spawning; an invalid value fails the run instead")
 
 
 def _check_registry(report, blockers, warnings, project, runs_dir):
@@ -146,21 +135,14 @@ def _check_registry(report, blockers, warnings, project, runs_dir):
     report["runs_unreadable"] = len(bad)
     if bad:
         warnings.append(
-            f"{len(bad)} run director(ies) have an unreadable meta.json and are "
-            f"absent from every run listing: {', '.join(bad)}. Their bytes are "
-            f"still counted in runs_dir_bytes. Nothing here writes a partial "
-            f"meta.json — a truncated one means the disk filled or something "
-            f"outside this skill edited it.")
+            f"{len(bad)} run director(ies) have a meta.json that will not parse and are missing from every listing, though counted in runs_dir_bytes: {', '.join(bad)}")
     warnings.extend(_overlapping_writers(runs_dir))
     # Only checkouts this skill cut: `git worktree list` also lists the user's own.
     live_wt = [p for p in worktrees_registered(project) if p.exists() and is_within(str(p), str(runs_dir))]
     report["worktrees"] = len(live_wt)
     if live_wt:
         warnings.append(
-            f"{len(live_wt)} git worktree(s) from batch runs are still "
-            f"checked out under {runs_dir}. Each is a full working copy and "
-            f"holds its run's uncommitted results; `batch clean --group "
-            f"<name>` removes a group's once you have collected them.")
+            f"{len(live_wt)} batch worktree(s) are still checked out under {runs_dir}, holding their runs' uncommitted results; `batch clean --group <name>` removes a group's once collected")
 
 
 def _overlapping_writers(runs_dir):
@@ -175,9 +157,6 @@ def _overlapping_writers(runs_dir):
         if len(group) < 2 or key in seen or not writers:
             continue
         seen.add(key)
-        out.append(f"{len(group)} live runs overlap in {m.get('cwd')}, "
-                   f"{len(writers)} of which can write there: "
-                   f"{', '.join(x.get('run_id') for x in group)}. None of them can "
-                   f"tell another agent's change from its own. Runs in their own "
-                   f"worktrees are exempt and will not appear here.")
+        out.append(f"{len(group)} live runs overlap in {m.get('cwd')} and {len(writers)} of them can write there, "
+                   f"unable to tell each other's changes apart: {', '.join(x.get('run_id') for x in group)}")
     return out

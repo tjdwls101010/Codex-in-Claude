@@ -28,6 +28,7 @@ and `_events.py` for "what reaches my context".
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -378,6 +379,8 @@ def cmd_log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     refuse_unusable_heartbeat(args)
+    if args.follow_timeout is not None and not args.follow:
+        fail("--follow-timeout requires --follow")
     if args.group:
         if args.since is not None:
             # Refused rather than given some collapsed meaning: every member has
@@ -538,6 +541,12 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
             time.sleep(0.1)
         if gone:
             break
+    if sent and "error" not in result:
+        # A descendant can outlive both Codex and the supervisor in the run's group; once they are gone the group holds nothing else of value.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(int(pgid), signal.SIGKILL)
+            if sent[-1] != "SIGKILL":
+                sent.append("SIGKILL")
 
     result["signals_sent"] = sent
     result["signalled"] = bool(sent)
@@ -1107,7 +1116,8 @@ def add_run_options(p, *, kind, foreground=True):
                         "fresh run is isolated, and a resumed one keeps "
                         "whatever its thread recorded. Auth is unaffected "
                         "either way, coming from auth.json.")
-    p.add_argument("--priority", dest="priority", action="store_true", default=None,
+    tier = p.add_mutually_exclusive_group()
+    tier.add_argument("--priority", dest="priority", action="store_true", default=None,
                    help="force service_tier=\"priority\" — the tier Codex "
                         "labels \"Fast mode\" and its config.toml spells "
                         "\"fast\"; both names are advertised and both were "
@@ -1115,7 +1125,7 @@ def add_run_options(p, *, kind, foreground=True):
                         "unset, an isolated run already takes whatever "
                         "service_tier your config.toml sets, and a resumed one "
                         "carries forward what its thread recorded.")
-    p.add_argument("--no-priority", dest="priority", action="store_false",
+    tier.add_argument("--no-priority", dest="priority", action="store_false",
                    help="send no service_tier at all, and record that choice "
                         "so later turns on the thread do not re-add Fast "
                         "mode. That "
@@ -1154,7 +1164,7 @@ def add_run_options(p, *, kind, foreground=True):
         p.add_argument("--prompt-file",
                        help="read the prompt from this file instead of the "
                             "positional argument")
-    if kind == "start":
+    if kind in ("start", "batch"):
         p.add_argument("--cwd",
                        help="directory the run works in (default: the project "
                             "root)")
@@ -1425,7 +1435,7 @@ def build_parser():
     b = bsub.add_parser("start", help="start N runs as one addressable group",
                         formatter_class=HidesSuppressedCommands,
                         epilog=BATCH_START_EPILOG)
-    add_common(b); add_run_options(b, kind="start", foreground=False)
+    add_common(b); add_run_options(b, kind="batch", foreground=False)
     b.add_argument("--group", required=True,
                    help="name for this group. Single-use per project until "
                         "`batch clean` releases it: reusing a live name would "
@@ -1488,16 +1498,19 @@ def build_parser():
     add_common(b)
     b.add_argument("--group", required=True,
                    help="the group to clean up. The name is released only when "
-                        "nothing is left behind — a live member keeps it "
-                        "claimed even after its worktrees are gone. Refused by "
-                        "name while a member is live, another run is working "
-                        "inside a worktree, a group derived from this one still "
-                        "needs them, or git will not discard uncommitted "
-                        "changes.")
+                        "nothing is left behind. Refused while a member is live, "
+                        "and a worktree another live run is working inside is "
+                        "kept; both say which `stop` ends them. Also refused "
+                        "while a member's meta.json will not parse or a group "
+                        "derived from this one still needs the worktrees, and a "
+                        "worktree git will not discard uncommitted changes from "
+                        "is kept.")
     b.add_argument("--force", action="store_true",
-                   help="lift all four of those refusals at once, not only the "
-                        "one you hit, and proceed past a manifest or meta file "
-                        "it could not read. The result says what it overrode. "
+                   help="lift every refusal at once, not only the one you "
+                        "hit, including a manifest that will not parse — except "
+                        "that a worktree whose run is live, or whose meta.json "
+                        "will not parse, is always kept. The result says what "
+                        "it overrode. "
                         "Where a worktree held uncommitted changes, that work "
                         "had no other copy.")
     b.set_defaults(func=cmd_batch_clean)
@@ -1554,13 +1567,9 @@ def build_parser():
 
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
-    if "--priority" in raw and "--no-priority" in raw:
-        # The two share one dest, so argparse's answer to both is "whichever
-        # came last" — and nothing downstream records which that was. Whether a
-        # run paid for the priority tier is a cost the caller cannot see again
-        # afterwards, which makes a silent coin toss the wrong answer. Checked
-        # on argv because by the time argparse is done the pair is one boolean.
-        fail("--priority and --no-priority contradict each other; pass one")
+    if os.environ.get("CODEX_HOME"):
+        # The supervisor and codex run in other directories, so a relative value is pinned to what it meant here.
+        os.environ["CODEX_HOME"] = str(codex_home())
     ap = build_parser()
     # `resume` is the only subcommand with two optional positionals
     # (`[REF] PROMPT`). Plain argparse binds them in groups split by any option

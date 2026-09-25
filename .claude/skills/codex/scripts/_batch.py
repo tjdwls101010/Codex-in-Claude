@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import uuid
@@ -486,13 +487,9 @@ def writers_by_directory(tasks, args, project, runs_dir):
         if item["kind"] == "resume" and item.get("resume"):
             _rd, parent = find_run(runs_dir, item["resume"])
             parent = parent or {}
-        # A resume inherits both of these from its thread when the task names
-        # neither, exactly as `resolve_settings` will. Defaulting them to the
-        # group's instead reported a phase of read-only resumes as writers
-        # sharing a tree — a warning about a hazard that cannot occur, which is
-        # how a field stops being read.
-        sandbox = (item.get("sandbox") or parent.get("sandbox")
-                   or args.sandbox or "workspace-write")
+        # The order `resolve_settings` uses: the task's own field, then the group's flag, then what the resumed thread recorded.
+        sandbox = (item.get("sandbox") or args.sandbox or parent.get("sandbox")
+                   or "workspace-write")
         if sandbox not in WRITING_SANDBOXES:
             continue
         where = item.get("cwd") or getattr(args, "cwd", None) or parent.get("cwd")
@@ -951,6 +948,22 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
                       worktree_base=worktree_base)
 
 
+def stop_commands(runs, runs_dir, explicit_registry=False):
+    """The `stop` calls that end these runs: the group's when the run is one of its recorded members, since that one call ends them all, else the run's own.
+
+    A registry the caller named explicitly is named in the command too, or it would resolve against whatever directory it is run from.
+    """
+    where = f" --runs-dir {shlex.quote(str(runs_dir))}" if explicit_registry else ""
+    out = []
+    for m in runs:
+        g = m.get("group")
+        cmd = (f"stop --group {g}" if g and m["run_id"] in (member_run_ids(runs_dir, g) or [])
+               else f"stop --run {m['run_id']}") + where
+        if cmd not in out:
+            out.append(cmd)
+    return out
+
+
 def cmd_batch_clean(args):
     """Remove a finished group's worktrees and release its name.
 
@@ -958,21 +971,22 @@ def cmd_batch_clean(args):
     only copy of what a run produced, and nothing should delete that on a
     schedule the caller did not choose.
 
-    Five things stop a clean without `--force`. Three are group-level checks,
-    listed in `guards` below in the order they run. The other two are per
-    worktree and land in `kept` rather than failing the call: git's own refusal
-    of a dirty tree, which is not reimplemented here, and a live run occupying
-    the checkout — R10's fallback, which catches what the `derived_groups`
-    guard cannot once an intermediate manifest has been cleaned.
+    Live work is never removed: a live member fails the call and a live run
+    occupying a checkout keeps it, `--force` or not. Three group-level checks in
+    `guards` below are liftable by `--force`, and git's own refusal of a dirty
+    tree lands in `kept` unless forced. The occupancy check is asked of the
+    registry, which catches what the `derived_groups` guard cannot once an
+    intermediate manifest has been cleaned.
     """
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    explicit = bool(args.project or args.runs_dir)
     manifest = read_group(runs_dir, args.group)
     lost_manifest = manifest is None and group_unreadable(runs_dir, args.group)
     if manifest is None and not lost_manifest:
         fail(f"no such group in this project: {args.group}",
              known_groups=list_groups(runs_dir)[:20])
-    live, removed, kept = [], [], []
+    live, unknown, removed, kept = [], [], [], []
     for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
         if not meta:
@@ -983,7 +997,7 @@ def cmd_batch_clean(args):
             # `--force` ever being passed. Unknown is not terminal: refuse, and
             # make the caller say --force if they mean it.
             if rd is not None and meta_unreadable(rd):
-                live.append({"run_id": rid, "state": "unreadable",
+                unknown.append({"run_id": rid, "state": "unreadable",
                              "reason": "its meta.json will not parse, so whether "
                                        "it is still running cannot be determined"})
             continue
@@ -993,15 +1007,19 @@ def cmd_batch_clean(args):
         # directory being removed" — and a run whose supervisor died is
         # terminal while its codex keeps writing into exactly that directory.
         if meta.get("state") not in TERMINAL_STATES or still_writing(meta):
-            live.append({"run_id": rid, "state": meta.get("state"),
+            live.append({"run_id": rid, "state": meta.get("state"), "group": meta.get("group"),
                          **({"codex_still_running": True} if still_writing(meta) else {})})
 
+    if live:
+        # Not liftable by --force: a live member is still writing into the very directory being removed.
+        fail(f"group {args.group!r} still has running members; stop them first",
+             running=live, stop=stop_commands(live, runs_dir, explicit))
+
     children = derived_groups(runs_dir, args.group)
-    # The three refusals in one list, in check order, because one flag lifts all
-    # three and a caller reaches for it to get past exactly one. What `--force`
-    # actually overrode therefore has to be in the result and not only in
-    # `--help`: whoever forced past a dependent group needs to see that a
-    # running member's directory went with it.
+    # The liftable refusals in one list, in check order, because one flag lifts
+    # all of them and a caller reaches for it to get past exactly one. What
+    # `--force` actually overrode therefore has to be in the result and not
+    # only in `--help`.
     #
     # `(key, tripped, message, detail, forced_value)` — `detail` is what the
     # refusal reports, `forced_value` what `forced_past` records instead.
@@ -1022,12 +1040,11 @@ def cmd_batch_clean(args):
          lambda: {"manifest": str(group_path(runs_dir, args.group)),
                   "members_recorded_by_runs": owned_run_ids(runs_dir, args.group)},
          str(group_path(runs_dir, args.group))),
-        # The reason the loop above bothers with `still_writing` as well as the
-        # state: a live member is writing into the very directory being removed.
-        ("running_members", bool(live),
-         f"group {args.group!r} still has running members; stop them first or "
-         f"pass --force",
-         lambda: {"running": live}, live),
+        ("unreadable_members", bool(unknown),
+         f"group {args.group!r} has members whose meta.json will not parse, so "
+         f"whether they are still running cannot be determined; pass --force "
+         f"to clean anyway",
+         lambda: {"running": unknown}, unknown),
         # R10's better error message, and only that: `--resume-from` puts phase
         # 2 in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
         # under runs still using it. Free to detect thanks to the manifest's
@@ -1061,6 +1078,15 @@ def cmd_batch_clean(args):
         path = Path(wt["path"]) if wt else rd / "wt"
         if not path.exists():
             continue
+        if meta is None:
+            # Liveness unknown is not dead: the checkout stays until its run can be read, --force or not.
+            kept.append({"run_id": rid, "path": str(path),
+                         "reason": "its meta.json will not parse, so whether it "
+                                   "is still running cannot be determined; "
+                                   "repair or remove the run directory to "
+                                   "release this worktree",
+                         "run_dir": str(rd)})
+            continue
         # The fourth refusal, and the one this code does not perform: `git
         # worktree remove` declines a dirty tree by itself (measured, V-13) and
         # git's definition of dirty is the correct one, so its refusal is
@@ -1077,17 +1103,18 @@ def cmd_batch_clean(args):
                          or still_writing(m))
                      and m.get("run_id") != rid
                      and is_within(m.get("cwd"), path)]
-        if occupants and not args.force:
+        if occupants:
+            # Not liftable by --force either, for the same reason as a live member.
             kept.append({"run_id": rid, "path": str(path),
                          "reason": "another run is still working in this "
                                    "worktree",
-                         "occupied_by": [m["run_id"] for m in occupants]})
+                         "occupied_by": [m["run_id"] for m in occupants],
+                         "stop": stop_commands(occupants, runs_dir, explicit)})
             continue
-        if occupants:
-            overrode.setdefault("removed_under_live_runs", []).extend(
-                m["run_id"] for m in occupants)
         dirty = worktree_dirty(path)
-        ok, err = worktree_remove(project, path, force=args.force)
+        # The repository the checkout was cut from: recorded with the worktree, or — when `git worktree add` never returned — the cwd the run was published with.
+        source = Path((wt or {}).get("source") or meta.get("cwd") or project)
+        ok, err = worktree_remove(source, path, force=args.force, owned=path == rd / "wt")
         if ok and dirty and args.force:
             overrode.setdefault("discarded_uncommitted", []).append(str(path))
         (removed if ok else kept).append(
@@ -1095,18 +1122,12 @@ def cmd_batch_clean(args):
              **({} if ok else {"reason": err, "dirty": dirty})})
 
     # The name is released only when nothing was left behind, so a caller who
-    # sees `cleaned: true` can reuse the name and one who does not still has a
-    # group to address the leftovers by. This is also the only way to reclaim a
-    # name from a `batch start` that died before it recorded any member.
-    # `kept` can only be populated from a worktree that is still on disk, and a
-    # `kind=resume` member never gets one — which is every `--as-ready` waiter.
-    # So a forced clean of a group whose live members have no checkouts released
-    # the name in the same reply that listed those members as still running, and
-    # the freed name was then reclaimed by an unrelated batch. After that,
-    # `owned_run_ids`' registry fallback matches on the bare name with no epoch,
-    # so the new owner's `batch clean` is refused citing a run it has never seen.
-    # A name whose members are still running is not free.
-    released = not kept and not live
+    # sees `name_released: true` can reuse the name and one who does not still
+    # has a group to address the leftovers by. This is also the only way to
+    # reclaim a name from a `batch start` that died before it recorded any
+    # member. A group with a live member never gets this far, and one with a
+    # member whose state cannot be read keeps its name.
+    released = not kept and not unknown
     if released:
         group_path(runs_dir, args.group).unlink(missing_ok=True)
     # Branched on what actually blocked the release. One note for both cases
@@ -1117,15 +1138,17 @@ def cmd_batch_clean(args):
     # never released. The remedy that does work is the one the message omitted.
     if released:
         note = None
-    elif kept:
+    elif unknown or any(k.get("stop") for k in kept):
+        note = ("some members are live or cannot be read"
+                + (f" ({', '.join(m['run_id'] for m in unknown)} will not parse; "
+                   f"repair or remove those run directories)" if unknown else "")
+                + "; kept[].reason says which worktree is held and kept[].stop "
+                "how to end a live run. The group name stays claimed until "
+                "nothing is left.")
+    else:
         note = ("these worktrees hold uncommitted changes — collect them, or "
                 "pass --force to discard. The group name stays claimed until "
                 "they are gone.")
-    else:
-        note = ("this group still has running member(s), so its name stays "
-                "claimed — --force does not release a name whose members are "
-                "live. Stop them first: "
-                + ", ".join(f"stop --run {m['run_id']}" for m in live))
     out = {"group": args.group, "removed": removed, "kept": kept,
            "name_released": released, "note": note}
     if overrode:
@@ -1240,7 +1263,8 @@ def group_snapshot(rows, unstarted=0):
                if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
-              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
+              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")
+              and not r.get("codex_still_running")]
     if running:
         state = "running"
     elif failed or unstarted or not rows:
@@ -1517,6 +1541,8 @@ def cmd_result_group(args, project, runs_dir):
                                if info["turn_failed"] else None)}
         if info["unparsed_events"]:
             row["unparsed_events"] = info["unparsed_events"]
+        if still_writing(meta):
+            row["codex_still_running"] = True
         if meta.get("worktree"):
             row["worktree"] = meta["worktree"]
         results.append(row)
@@ -1546,7 +1572,7 @@ def cmd_result_group(args, project, runs_dir):
     never = unstarted_members(runs_dir, args.group)
     gone = vanished_members(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(
-        [{"run_id": r["run_id"], "state": r["state"]} for r in results],
+        results,
         len(never) + len(gone))
     out = {"group": args.group, "project": str(project), "results": results,
            "overlaps": overlaps, "totals": totals,

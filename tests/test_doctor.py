@@ -23,6 +23,17 @@ class Doctor(BridgeCase):
         self.assertEqual(rep["models_catalog"], 2)
         self.assertFalse((self.project / ".codex-runs").exists(), "a diagnostic does not create what it diagnoses")
 
+    def test_a_relative_codex_home_means_the_directory_it_named_when_the_command_ran(self):
+        (self.project / "rel-home").mkdir()
+        rep = self.bridge("doctor", env={"CODEX_HOME": "rel-home"})
+        self.assertEqual(rep["codex_home"], str(self.project / "rel-home"))
+        sub = self.project / "sub"
+        sub.mkdir()
+        out = self.bridge("start", "--cwd", sub, "x", env={"CODEX_HOME": "rel-home"})
+        self.wait_state(out["run_id"])
+        self.assertEqual(self.runs_invoked()[-1]["codex_home"], str(self.project / "rel-home"),
+                         "codex runs elsewhere, so it has to be handed the path the caller meant")
+
     def test_what_an_unnamed_run_would_use(self):
         (self.codex_home / "config.toml").write_text(
             'model = "fake-big"\nmodel_reasoning_effort = "high"\nservice_tier = "fast"\n'

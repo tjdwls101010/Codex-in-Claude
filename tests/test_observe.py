@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import time
 import unittest
 
-from support.harness import BridgeCase, FIXTURES, wait_until
+from support.harness import BridgeCase, FIXTURES, alive, wait_until
 
 
 def answer_fixture(path, text, thread="t-answer"):
@@ -180,6 +182,19 @@ class GroupResult(BridgeCase):
         self.wait_all(out)
         member = self.bridge("result", "--group", "g")["results"][0]
         self.assertEqual((member["message"], member["message_truncated"]), ("OK", False))
+
+    def test_a_member_whose_codex_still_writes_keeps_the_group_running(self):
+        out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
+        rid = out["runs"][0]["run_id"]
+        self.wait_state(rid, ("running",))
+        m = self.meta(rid)
+        os.kill(int(m["supervisor_pid"]), signal.SIGKILL)
+        wait_until(lambda: not alive(m["supervisor_pid"]), timeout=10)
+        self.assertEqual(self.row(rid)["state"], "orphaned")
+        res = self.bridge("result", "--group", "g")
+        self.assertEqual((res["group_state"], res["running"], res["failed"]), ("running", [rid], []))
+        self.assertEqual(self.bridge("status", "--group", "g")["group_state"], "running",
+                         "status and result answer the same question the same way")
 
     def test_a_failed_member_makes_the_group_partial(self):
         out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_EXIT": 3})

@@ -59,6 +59,40 @@ class TerminalStates(BridgeCase):
         self.assertEqual(row["state"], "timed_out")
         self.assertIn("timed out", row["error"])
 
+    def test_the_deadline_counts_from_launch_not_from_the_thread_id(self):
+        t0 = time.monotonic()
+        out = self.bridge("start", "--timeout", 1.5, "x", env={"FAKE_CODEX_PRE_DELAY": 8, "FAKE_CODEX_HANG": 60})
+        self.assertEqual(self.wait_state(out["run_id"], timeout=30)["state"], "timed_out")
+        self.assertLess(time.monotonic() - t0, 6)
+
+    def grandchild(self, pidfile):
+        pid = wait_until(lambda: pidfile.exists() and int(pidfile.read_text()), timeout=20)
+        self.assertTrue(pid, "the run never started its descendant")
+        self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGKILL))
+        return pid
+
+    def test_a_deadline_ends_the_whole_process_group(self):
+        cases = [({}, "codex exits on SIGINT and leaves a descendant that ignores it"),
+                 ({"FAKE_CODEX_IGNORE_SIGINT": 1}, "codex and its descendant ignore SIGINT"),
+                 ({"FAKE_CODEX_IGNORE_SIGINT": 1, "FAKE_CODEX_IGNORE_SIGTERM": 1}, "only SIGKILL ends them")]
+        for n, (env, why) in enumerate(cases):
+            with self.subTest(why=why):
+                pidfile = self.tmp / f"grandchild-{n}.pid"
+                out = self.bridge("start", "--timeout", 1, "x",
+                                  env={"FAKE_CODEX_HANG": 60, "FAKE_CODEX_GRANDCHILD": pidfile, **env})
+                grandchild = self.grandchild(pidfile)
+                self.assertEqual(self.wait_state(out["run_id"], timeout=40)["state"], "timed_out")
+                self.assertTrue(wait_until(lambda: not alive(grandchild), timeout=5), "a process of the run outlived its deadline")
+                self.assertFalse(alive(self.meta(out["run_id"])["codex_pid"]))
+
+    def test_stop_ends_a_descendant_its_codex_left_behind(self):
+        pidfile = self.tmp / "grandchild.pid"
+        out, _m = self.running("x", FAKE_CODEX_GRANDCHILD=pidfile)
+        grandchild = self.grandchild(pidfile)
+        res = self.bridge("stop", "--run", out["run_id"])["stopped"][0]
+        self.assertTrue(wait_until(lambda: not alive(grandchild), timeout=10), "stop left a process of the run alive")
+        self.assertEqual(res["signals_sent"], ["SIGINT", "SIGKILL"], "what was sent is what is reported")
+
     def test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out(self):
         out, _m = self.running("--timeout", 600, "x")
         self.bridge("stop", "--run", out["run_id"])

@@ -113,7 +113,7 @@ def codex_home() -> Path:
     """Never hardcode ~/.codex: CODEX_HOME is overridden on some machines and
     then sessions, config and auth all live somewhere else entirely."""
     v = os.environ.get("CODEX_HOME")
-    return Path(v).expanduser() if v else Path.home() / ".codex"
+    return Path(v).expanduser().resolve() if v else Path.home() / ".codex"
 
 
 def is_within(path, parent) -> bool:

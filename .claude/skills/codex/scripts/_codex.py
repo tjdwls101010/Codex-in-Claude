@@ -13,6 +13,7 @@ of by remembering to special-case two subcommands.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -38,6 +39,9 @@ SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 # is generous only so a cold start cannot lose the id, and missing it is not an
 # error because `status` backfills it from events.jsonl.
 THREAD_ID_WAIT = 15.0
+
+# Seconds a timed-out run gets after SIGINT to flush its rollout before SIGTERM, the same first rung `stop --grace` defaults to.
+DEADLINE_GRACE = 5.0
 
 
 # -- argv -------------------------------------------------------------------
@@ -635,6 +639,8 @@ def supervise(run_dir: Path, timeout=None) -> int:
         out.close()
         err.close()
 
+    # The deadline counts from launch: the thread-id wait below is part of the time the run was given.
+    ends_at = time.time() + timeout if timeout is not None else None
     try:
         pgid = os.getpgid(proc.pid)
     except Exception:
@@ -644,6 +650,8 @@ def supervise(run_dir: Path, timeout=None) -> int:
                 codex_started_at=now_iso())
 
     deadline = time.time() + THREAD_ID_WAIT
+    if ends_at is not None:
+        deadline = min(deadline, ends_at)
     tid = None
     while time.time() < deadline:
         tid = first_thread_id(events_path)
@@ -655,25 +663,30 @@ def supervise(run_dir: Path, timeout=None) -> int:
         time.sleep(0.05)
 
     try:
-        rc = proc.wait(timeout=timeout)
+        rc = proc.wait(timeout=None if ends_at is None else max(0.0, ends_at - time.time()))
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-        except Exception:
-            pass
-        try:
-            rc = proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            rc = proc.wait()
         # A distinct terminal state, not `interrupted`: the caller needs to tell
         # "I stopped it" from "Codex failed" from "it ran out of the time I gave
-        # it", and only the third is answered by raising --timeout. Measured
-        # (V-16): the thread stays resumable across this SIGINT, with the
-        # pre-timeout turn's context intact — so `timed_out` is recoverable,
-        # not a failure.
-        update_meta(run_dir, state="timed_out", exit_code=rc, ended_at=now_iso(),
-                    error=f"timed out after {timeout}s")
+        # it", and only the third is answered by raising --timeout. The thread
+        # stays resumable across the SIGINT, with the pre-timeout turn's context
+        # intact.
+        fields = {"state": "timed_out", "ended_at": now_iso(), "error": f"timed out after {timeout}s"}
+        rc, group = None, pgid or proc.pid
+        # SIGINT lets Codex flush its rollout. Every rung is sent even after Codex exits, because a descendant of it can outlive it in the same group.
+        for sig, wait in ((signal.SIGINT, DEADLINE_GRACE), (signal.SIGTERM, 3.0)):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group, sig)
+            try:
+                rc = proc.wait(timeout=wait)
+            except subprocess.TimeoutExpired:
+                pass
+        # In the background this supervisor is in the group it is about to SIGKILL, so the outcome is written first.
+        update_meta(run_dir, exit_code=rc if rc is not None else -signal.SIGKILL, **fields)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(group, signal.SIGKILL)
+        if rc is None:
+            rc = proc.wait()
+            update_meta(run_dir, exit_code=rc)
         return rc
 
     if not tid:

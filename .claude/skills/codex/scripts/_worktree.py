@@ -30,6 +30,7 @@ that makes `git worktree remove` protect it.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -209,7 +210,7 @@ def add(source: Path, target: Path, base: str):
     return True, None
 
 
-def remove(source: Path, target: Path, force: bool = False):
+def remove(source: Path, target: Path, force: bool = False, owned: bool = False):
     """Remove a worktree. Returns (ok, error).
 
     Not forced by default, so git's own refusal of a dirty worktree is what
@@ -227,9 +228,18 @@ def remove(source: Path, target: Path, force: bool = False):
     if force:
         args += ["--force", "--force"]
     r = _git(source, *args, str(target))
-    if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()[:400]
-    return True, None
+    if r.returncode == 0:
+        return True, None
+    if force and owned and not (target / ".git").exists():
+        # A `git worktree add` killed before it wrote the checkout's .git file leaves a directory git refuses to validate as a working tree. `owned` is the caller's word that `target` is a checkout this skill cut for one run; only then is it unlocked, deleted and pruned instead.
+        _git(source, "worktree", "unlock", str(target))
+        shutil.rmtree(target, ignore_errors=True)
+        prune(source)
+        listed = _git(source, "worktree", "list", "--porcelain")
+        still = [ln[len("worktree "):] for ln in listed.stdout.splitlines() if ln.startswith("worktree ")]
+        if not target.exists() and listed.returncode == 0 and str(target) not in still:
+            return True, None
+    return False, (r.stderr or r.stdout).strip()[:400]
 
 
 def prune(source: Path):

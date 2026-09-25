@@ -63,6 +63,23 @@ class Starting(BatchCase):
     def test_a_name_that_could_escape_the_registry_is_refused(self):
         self.assertIn("path separators", self.batch("../oops", "x", rc=1)["error"])
 
+    def test_prompt_and_image_are_per_task_fields_only(self):
+        img = self.tmp / "a.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n")
+        prompt = self.tmp / "p.md"
+        prompt.write_text("from a file")
+        for flag, value in (("--prompt-file", prompt), ("--image", img)):
+            with self.subTest(flag=flag):
+                p = self.bridge_raw("batch", "start", "--group", "p1", flag, value, "--task", "x")
+                self.assertEqual(p.returncode, 2, p.stdout)
+                self.assertIn("unrecognized arguments", p.stderr)
+        self.assertEqual(self.run_dirs(), [])
+        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file",
+                          self.tasks_file({"prompt": "look", "image": [str(img)]}))
+        self.wait_all(out)
+        argv = self.last_argv()
+        self.assertEqual(argv[argv.index("-i") + 1], str(img))
+
     def test_a_batch_needs_a_task(self):
         self.assertIn("at least one", self.bridge("batch", "start", "--group", "p1", rc=1)["error"])
 
@@ -224,6 +241,14 @@ class ResumeFrom(BatchCase):
         wait_until(lambda: not alive(m["supervisor_pid"]), timeout=10)
         self.assertEqual(self.row(rid)["state"], "orphaned")
         self.assertEqual([x["run_id"] for x in self.refused("x")["running"]], [rid])
+
+    def test_writers_sharing_a_tree_are_counted_with_the_sandbox_they_will_get(self):
+        one = self.batch("p1", "a", "b", extra=("--sandbox", "read-only"))
+        self.wait_all(one)
+        two = self.batch("p2", "x", "y", extra=("--resume-from", "p1", "--sandbox", "workspace-write"))
+        self.wait_all(two)
+        self.assertEqual([r["sandbox"] for r in two["runs"]], ["workspace-write"] * 2)
+        self.assertIn(f"2 members write to {self.project}", two["worktrees"]["note"])
 
     def test_force_continues_live_members_anyway(self):
         one = self.phase_one(env={"FAKE_CODEX_HANG": 60})

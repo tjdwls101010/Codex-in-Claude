@@ -93,9 +93,9 @@ class FlagsThatWouldDecideNothing(BridgeCase):
         cases = [("status", "--follow"),
                  ("status", "--group", "g", "--follow-timeout", "5"),
                  ("log", "--run", out["run_id"], "--heartbeat", "5"),
+                 ("log", "--run", out["run_id"], "--follow-timeout", "5"),
                  ("log", "--run", out["run_id"], "--follow", "--heartbeat", "0"),
                  ("log", "--group", "g", "--since", "0"),
-                 ("start", "--priority", "--no-priority", "x"),
                  ("batch", "start", "--group", "h", "--base", "HEAD", "--task", "x")]
         for args in cases:
             with self.subTest(args=args):
@@ -160,6 +160,16 @@ class WhatReachesCodex(BridgeCase):
         self.assertEqual([rec["argv"][i + 1] for i, t in enumerate(rec["argv"]) if t == "-i"],
                          [str(self.tmp / "a.png"), str(self.tmp / "b.png")])
         self.assertTrue(rec["argv"][-1].endswith("compare them"))
+
+    def test_the_tier_flags_are_one_choice(self):
+        p = self.bridge_raw("start", "--priority", "--no-priority", "x")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("not allowed with", p.stderr)
+
+    def test_a_prompt_after_the_terminator_is_only_a_prompt(self):
+        out, rec = self.started("--priority", "--", "--no-priority")
+        self.assertTrue(rec["argv"][-1].endswith("\n\n--no-priority"))
+        self.assertEqual(self.config_values(rec["argv"])["service_tier"], '"priority"')
 
     def test_a_prompt_starting_with_a_dash_survives(self):
         out, rec = self.started("--- summarise this diff ---")

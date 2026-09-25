@@ -242,6 +242,14 @@ class ResumeFrom(BatchCase):
         self.assertEqual(self.row(rid)["state"], "orphaned")
         self.assertEqual([x["run_id"] for x in self.refused("x")["running"]], [rid])
 
+    def test_writers_sharing_a_tree_are_counted_with_the_sandbox_they_will_get(self):
+        one = self.batch("p1", "a", "b", extra=("--sandbox", "read-only"))
+        self.wait_all(one)
+        two = self.batch("p2", "x", "y", extra=("--resume-from", "p1", "--sandbox", "workspace-write"))
+        self.wait_all(two)
+        self.assertEqual([r["sandbox"] for r in two["runs"]], ["workspace-write"] * 2)
+        self.assertIn(f"2 members write to {self.project}", two["worktrees"]["note"])
+
     def test_force_continues_live_members_anyway(self):
         one = self.phase_one(env={"FAKE_CODEX_HANG": 60})
         two = self.batch("p2", "x", "y", extra=("--resume-from", "p1", "--force"))

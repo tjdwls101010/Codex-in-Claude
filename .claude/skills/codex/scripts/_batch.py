@@ -486,13 +486,9 @@ def writers_by_directory(tasks, args, project, runs_dir):
         if item["kind"] == "resume" and item.get("resume"):
             _rd, parent = find_run(runs_dir, item["resume"])
             parent = parent or {}
-        # A resume inherits both of these from its thread when the task names
-        # neither, exactly as `resolve_settings` will. Defaulting them to the
-        # group's instead reported a phase of read-only resumes as writers
-        # sharing a tree — a warning about a hazard that cannot occur, which is
-        # how a field stops being read.
-        sandbox = (item.get("sandbox") or parent.get("sandbox")
-                   or args.sandbox or "workspace-write")
+        # The order `resolve_settings` uses: the task's own field, then the group's flag, then what the resumed thread recorded.
+        sandbox = (item.get("sandbox") or args.sandbox or parent.get("sandbox")
+                   or "workspace-write")
         if sandbox not in WRITING_SANDBOXES:
             continue
         where = item.get("cwd") or getattr(args, "cwd", None) or parent.get("cwd")

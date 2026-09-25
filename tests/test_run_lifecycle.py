@@ -59,6 +59,21 @@ class TerminalStates(BridgeCase):
         self.assertEqual(row["state"], "timed_out")
         self.assertIn("timed out", row["error"])
 
+    def test_the_deadline_counts_from_launch_not_from_the_thread_id(self):
+        t0 = time.monotonic()
+        out = self.bridge("start", "--timeout", 1.5, "x", env={"FAKE_CODEX_PRE_DELAY": 8, "FAKE_CODEX_HANG": 60})
+        self.assertEqual(self.wait_state(out["run_id"], timeout=30)["state"], "timed_out")
+        self.assertLess(time.monotonic() - t0, 6)
+
+    def test_a_deadline_ends_the_whole_process_group(self):
+        pidfile = self.tmp / "grandchild.pid"
+        out = self.bridge("start", "--timeout", 1, "x", env={"FAKE_CODEX_HANG": 60, "FAKE_CODEX_IGNORE_SIGINT": 1,
+                                                             "FAKE_CODEX_GRANDCHILD": pidfile})
+        self.assertEqual(self.wait_state(out["run_id"], timeout=40)["state"], "timed_out")
+        grandchild = int(pidfile.read_text())
+        self.addCleanup(lambda: alive(grandchild) and os.kill(grandchild, signal.SIGKILL))
+        self.assertTrue(wait_until(lambda: not alive(grandchild), timeout=5), "a process of the run outlived its deadline")
+
     def test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out(self):
         out, _m = self.running("--timeout", 600, "x")
         self.bridge("stop", "--run", out["run_id"])

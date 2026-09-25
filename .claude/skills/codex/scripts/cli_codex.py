@@ -42,8 +42,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
-    codex_version, model_catalog, SANDBOX_MODES, THREAD_ID_WAIT, supervise,
+    SANDBOX_MODES, THREAD_ID_WAIT, supervise,
 )
+from codex.catalog import codex_version, model_catalog  # noqa: E402
 from codex.config import codex_home, config_scalars, user_defaults  # noqa: E402
 from _events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,

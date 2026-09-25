@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Stand-in for the `codex` binary, first on PATH during the suite.
+
+It records every invocation and replays an event stream, controlled only
+through the environment so the bridge cannot tell it from the real CLI:
+
+  FAKE_CODEX_ARGV_LOG   append one JSON line per invocation: {argv, cwd, codex_home, stdin_is_tty}
+  FAKE_CODEX_FIXTURE    JSONL file to replay on stdout (default: a four-line stream)
+  FAKE_CODEX_DELAY      seconds between emitted lines
+  FAKE_CODEX_PRE_DELAY  seconds before the first line
+  FAKE_CODEX_HANG       seconds to sleep after replaying, before exiting
+  FAKE_CODEX_EXIT       exit code (default 0)
+  FAKE_CODEX_STDERR     extra text for stderr
+  FAKE_CODEX_VERSION    what `--version` prints
+  FAKE_CODEX_MODELS     what `debug models` prints: unset gives a two-model catalog, "" empty stdout, "!fail" a non-zero exit, "!garbage" unparseable output
+  FAKE_CODEX_LOGIN_RC   exit code for `login status`
+  FAKE_CODEX_LOGIN_OUT  what `login status` prints
+  FAKE_CODEX_THREAD_ID  thread id to put in `thread.started`
+  FAKE_CODEX_IGNORE_SIGINT  sit through SIGINT so a signal ladder has to escalate
+"""
+
+import json
+import os
+import signal
+import sys
+import time
+
+DEFAULT_THREAD = "019f0000-0000-7000-0000-00000000fake"
+
+DEFAULT_STREAM = [
+    {"type": "thread.started", "thread_id": DEFAULT_THREAD},
+    {"type": "turn.started"},
+    {"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "OK"}},
+    {"type": "turn.completed", "usage": {"input_tokens": 15871, "cached_input_tokens": 13056,
+                                         "output_tokens": 5, "reasoning_output_tokens": 0}},
+]
+
+CATALOG = {"models": [
+    {"slug": "fake-big", "display_name": "Fake Big", "default_reasoning_level": "low",
+     "context_window": 400000, "visibility": "list", "supported_in_api": True,
+     "base_instructions": "x" * 4096,
+     "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high", "xhigh", "ultra")]},
+    {"slug": "fake-small", "display_name": "Fake Small", "default_reasoning_level": "medium",
+     "context_window": 200000, "visibility": "list", "supported_in_api": True,
+     "base_instructions": "y" * 4096,
+     "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high")]},
+]}
+
+# Options that take one value. `-i` takes several and keeps consuming until the next flag or `--`, which is why a prompt after it needs the terminator.
+ONE_VALUE = {"-c", "--config", "-m", "--model", "-o", "--output-last-message", "--output-schema",
+             "--add-dir", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--color"}
+GREEDY = {"-i", "--image"}
+
+
+def thread_for(argv):
+    """A fresh `exec` opens a new thread; `exec resume <ref>` reports that ref back."""
+    if "resume" in argv[:2]:
+        for a in argv[argv.index("resume") + 1:]:
+            if a == "--last":
+                break
+            if not a.startswith("-"):
+                return a
+        return DEFAULT_THREAD
+    return f"019f0000-0000-7000-0000-{os.getpid():012x}"[:36]
+
+
+def positionals(argv):
+    out, i, after_ddash = [], 0, False
+    while i < len(argv):
+        tok = argv[i]
+        if after_ddash:
+            out.append(tok)
+        elif tok == "--":
+            after_ddash = True
+        elif tok in GREEDY:
+            i += 1
+            while i < len(argv) and not argv[i].startswith("-"):
+                i += 1
+            continue
+        elif tok in ONE_VALUE:
+            i += 1
+        elif tok.startswith("-"):
+            pass
+        elif tok in ("exec", "resume") and not out:
+            pass
+        else:
+            out.append(tok)
+        i += 1
+    return out
+
+
+def prompt_of(argv):
+    pos = positionals(argv)
+    if "resume" in argv[:3] and "--last" not in argv:
+        return pos[1] if len(pos) > 1 else None
+    return pos[0] if pos else None
+
+
+def main():
+    argv = sys.argv[1:]
+
+    # Not logged: the log records what the bridge asked Codex to run, and a catalog lookup is not a run.
+    if argv[:2] == ["debug", "models"]:
+        raw = os.environ.get("FAKE_CODEX_MODELS")
+        if raw == "":
+            return 0
+        if raw == "!fail":
+            return 1
+        if raw == "!garbage":
+            print("not json at all")
+            return 0
+        print(raw if raw else json.dumps(CATALOG))
+        return 0
+
+    log = os.environ.get("FAKE_CODEX_ARGV_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"argv": argv, "cwd": os.getcwd(),
+                                 "codex_home": os.environ.get("CODEX_HOME"),
+                                 "stdin_is_tty": sys.stdin.isatty()}, ensure_ascii=False) + "\n")
+
+    if "--version" in argv:
+        print(os.environ.get("FAKE_CODEX_VERSION", "codex-cli 0.0.0-fake"))
+        return 0
+    if argv[:2] == ["login", "status"]:
+        rc = int(os.environ.get("FAKE_CODEX_LOGIN_RC", "0"))
+        print(os.environ.get("FAKE_CODEX_LOGIN_OUT", "Logged in using ChatGPT" if rc == 0 else "Not logged in"))
+        return rc
+
+    if prompt_of(argv) is None:
+        sys.stderr.write("Reading prompt from stdin...\nNo prompt provided via stdin.\n")
+        return 1
+
+    sys.stderr.write("Reading additional input from stdin...\n")
+    if os.environ.get("FAKE_CODEX_STDERR"):
+        sys.stderr.write(os.environ["FAKE_CODEX_STDERR"] + "\n")
+    sys.stderr.flush()
+
+    def on_int(_signum, _frame):
+        if not os.environ.get("FAKE_CODEX_IGNORE_SIGINT"):
+            raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, on_int)
+
+    fixture = os.environ.get("FAKE_CODEX_FIXTURE")
+    if fixture:
+        with open(fixture, encoding="utf-8") as fh:
+            stream = [json.loads(ln) for ln in fh if ln.strip()]
+    else:
+        stream = DEFAULT_STREAM
+    tid = os.environ.get("FAKE_CODEX_THREAD_ID") or thread_for(argv)
+    delay = float(os.environ.get("FAKE_CODEX_DELAY", "0"))
+
+    try:
+        time.sleep(float(os.environ.get("FAKE_CODEX_PRE_DELAY", "0")))
+        last_message = None
+        for ev in stream:
+            if ev.get("type") == "thread.started":
+                ev = dict(ev, thread_id=tid)
+            item = ev.get("item") or {}
+            if ev.get("type") == "item.completed" and item.get("type") == "agent_message":
+                last_message = item.get("text")
+            sys.stdout.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+            time.sleep(delay)
+        if "-o" in argv:
+            with open(argv[argv.index("-o") + 1], "w", encoding="utf-8") as fh:
+                fh.write(last_message or "")
+        time.sleep(float(os.environ.get("FAKE_CODEX_HANG", "0")))
+    except KeyboardInterrupt:
+        sys.stderr.write("interrupted\n")
+        return 130
+    return int(os.environ.get("FAKE_CODEX_EXIT", "0"))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

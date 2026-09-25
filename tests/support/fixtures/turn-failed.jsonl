@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"019f9958-629c-7983-9d6b-fdc4edd47b21"}
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"Turn failed: rate limit exceeded, retry after 30s"}}

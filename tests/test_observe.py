@@ -49,7 +49,9 @@ class Result(BridgeCase):
         fixture = answer_fixture(self.tmp / "a.jsonl", '{"verdict": "ok", "count": 3}')
         out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_state(out["run_id"])
-        self.assertEqual(self.bridge("result", "--run", out["run_id"])["json"], {"verdict": "ok", "count": 3})
+        res = self.bridge("result", "--run", out["run_id"])
+        self.assertEqual(res["json"], {"verdict": "ok", "count": 3})
+        self.assertNotIn("message", res, "the parsed answer is not handed back twice")
 
     def test_a_schema_run_whose_answer_is_not_json_fails_loudly(self):
         schema = self.tmp / "s.json"
@@ -60,6 +62,7 @@ class Result(BridgeCase):
         res = self.bridge("result", "--run", out["run_id"], rc=1)
         self.assertIn("not valid JSON", res["error"])
         self.assertIn("parse_error", res)
+        self.assertEqual(res["message"], "Sure! {verdict: nope", "the unparsed answer is the only copy")
 
     def test_a_resumed_schema_thread_keeps_its_schema(self):
         schema = self.tmp / "s.json"

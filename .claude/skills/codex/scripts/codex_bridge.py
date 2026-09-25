@@ -616,8 +616,9 @@ def cmd_result(args):
             # Loud, not lenient: handing back a malformed object as though it
             # had the schema's shape is worse than failing here.
             fail("run used --schema but the final message is not valid JSON",
-                 run_id=meta["run_id"], parse_error=str(e),
-                 message_preview=clip(message, 400))
+                 run_id=meta["run_id"], parse_error=str(e), message=message)
+        # The parsed object is the answer; the same text again as `message` would double it.
+        del out["message"]
     emit(out)
 
 

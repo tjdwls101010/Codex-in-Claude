@@ -1491,16 +1491,17 @@ def build_parser():
     add_common(b)
     b.add_argument("--group", required=True,
                    help="the group to clean up. The name is released only when "
-                        "nothing is left behind — a live member keeps it "
-                        "claimed even after its worktrees are gone. Refused by "
-                        "name while a member is live, another run is working "
-                        "inside a worktree, a group derived from this one still "
-                        "needs them, or git will not discard uncommitted "
-                        "changes.")
+                        "nothing is left behind. Refused while a member is live, "
+                        "and a worktree another live run is working inside is "
+                        "kept; both say which `stop` ends them. Also refused "
+                        "while a member's meta.json will not parse or a group "
+                        "derived from this one still needs the worktrees, and a "
+                        "worktree git will not discard uncommitted changes from "
+                        "is kept.")
     b.add_argument("--force", action="store_true",
-                   help="lift all four of those refusals at once, not only the "
-                        "one you hit, and proceed past a manifest or meta file "
-                        "it could not read. The result says what it overrode. "
+                   help="lift every refusal except the live-run ones at once, "
+                        "not only the one you hit, including a manifest that "
+                        "will not parse. The result says what it overrode. "
                         "Where a worktree held uncommitted changes, that work "
                         "had no other copy.")
     b.set_defaults(func=cmd_batch_clean)

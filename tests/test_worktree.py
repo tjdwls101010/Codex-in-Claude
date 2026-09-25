@@ -182,6 +182,36 @@ class Clean(WorktreeCase):
         self.assertEqual(sorted(m["run_id"] for m in res["running"]), sorted(r["run_id"] for r in out["runs"]))
         self.assertTrue(all(Path(r["worktree"]).exists() for r in out["runs"]))
 
+    def test_force_does_not_reach_a_live_member(self):
+        out = self.group("--worktree", env={"FAKE_CODEX_HANG": 60})
+        res = self.bridge("batch", "clean", "--group", "p1", "--force", rc=1)
+        self.assertEqual(sorted(m["run_id"] for m in res["running"]), sorted(r["run_id"] for r in out["runs"]))
+        self.assertEqual(res["stop"], ["stop --group p1"])
+        self.assertTrue(all(Path(r["worktree"]).exists() for r in out["runs"]))
+        self.bridge(*res["stop"][0].split())
+        self.wait_all(out)
+        self.assertTrue(self.bridge("batch", "clean", "--group", "p1", "--force")["name_released"])
+
+    def test_force_does_not_reach_a_worktree_another_group_is_working_in(self):
+        one = self.finished()
+        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b",
+                          env={"FAKE_CODEX_HANG": 60})
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual(res["removed"], [])
+        self.assertFalse(res["name_released"])
+        self.assertEqual(sorted(o for k in res["kept"] for o in k["occupied_by"]), sorted(r["run_id"] for r in two["runs"]))
+        self.assertEqual({c for k in res["kept"] for c in k["stop"]}, {"stop --group p2"})
+        self.assertTrue(all(Path(r["worktree"]).exists() for r in one["runs"]))
+
+    def test_force_does_not_reach_a_worktree_a_lone_run_works_inside(self):
+        one = self.finished(n=1)
+        inside = Path(one["runs"][0]["worktree"]) / "sub"
+        inside.mkdir()
+        lone, _m = self.running("--cwd", inside, "x")
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual([k["stop"] for k in res["kept"]], [[f"stop --run {lone['run_id']}"]])
+        self.assertTrue(inside.exists())
+
     def test_an_orphan_still_writing_refuses_a_plain_clean(self):
         out = self.group("--worktree", n=1, env={"FAKE_CODEX_HANG": 60})
         rid = out["runs"][0]["run_id"]

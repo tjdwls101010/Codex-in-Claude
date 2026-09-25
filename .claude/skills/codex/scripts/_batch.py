@@ -947,6 +947,18 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
                       worktree_base=worktree_base)
 
 
+def stop_commands(runs, runs_dir):
+    """The `stop` calls that end these runs: the group's when the run is one of its recorded members, since that one call ends them all, else the run's own."""
+    out = []
+    for m in runs:
+        g = m.get("group")
+        cmd = (f"stop --group {g}" if g and m["run_id"] in (member_run_ids(runs_dir, g) or [])
+               else f"stop --run {m['run_id']}")
+        if cmd not in out:
+            out.append(cmd)
+    return out
+
+
 def cmd_batch_clean(args):
     """Remove a finished group's worktrees and release its name.
 
@@ -954,12 +966,12 @@ def cmd_batch_clean(args):
     only copy of what a run produced, and nothing should delete that on a
     schedule the caller did not choose.
 
-    Five things stop a clean without `--force`. Three are group-level checks,
-    listed in `guards` below in the order they run. The other two are per
-    worktree and land in `kept` rather than failing the call: git's own refusal
-    of a dirty tree, which is not reimplemented here, and a live run occupying
-    the checkout — R10's fallback, which catches what the `derived_groups`
-    guard cannot once an intermediate manifest has been cleaned.
+    Live work is never removed: a live member fails the call and a live run
+    occupying a checkout keeps it, `--force` or not. Three group-level checks in
+    `guards` below are liftable by `--force`, and git's own refusal of a dirty
+    tree lands in `kept` unless forced. The occupancy check is asked of the
+    registry, which catches what the `derived_groups` guard cannot once an
+    intermediate manifest has been cleaned.
     """
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -968,7 +980,7 @@ def cmd_batch_clean(args):
     if manifest is None and not lost_manifest:
         fail(f"no such group in this project: {args.group}",
              known_groups=list_groups(runs_dir)[:20])
-    live, removed, kept = [], [], []
+    live, unknown, removed, kept = [], [], [], []
     for rid in owned_run_ids(runs_dir, args.group) or []:
         rd, meta = find_run(runs_dir, rid)
         if not meta:
@@ -979,7 +991,7 @@ def cmd_batch_clean(args):
             # `--force` ever being passed. Unknown is not terminal: refuse, and
             # make the caller say --force if they mean it.
             if rd is not None and meta_unreadable(rd):
-                live.append({"run_id": rid, "state": "unreadable",
+                unknown.append({"run_id": rid, "state": "unreadable",
                              "reason": "its meta.json will not parse, so whether "
                                        "it is still running cannot be determined"})
             continue
@@ -989,15 +1001,19 @@ def cmd_batch_clean(args):
         # directory being removed" — and a run whose supervisor died is
         # terminal while its codex keeps writing into exactly that directory.
         if meta.get("state") not in TERMINAL_STATES or still_writing(meta):
-            live.append({"run_id": rid, "state": meta.get("state"),
+            live.append({"run_id": rid, "state": meta.get("state"), "group": meta.get("group"),
                          **({"codex_still_running": True} if still_writing(meta) else {})})
 
+    if live:
+        # Not liftable by --force: a live member is still writing into the very directory being removed.
+        fail(f"group {args.group!r} still has running members; stop them first",
+             running=live, stop=stop_commands(live, runs_dir))
+
     children = derived_groups(runs_dir, args.group)
-    # The three refusals in one list, in check order, because one flag lifts all
-    # three and a caller reaches for it to get past exactly one. What `--force`
-    # actually overrode therefore has to be in the result and not only in
-    # `--help`: whoever forced past a dependent group needs to see that a
-    # running member's directory went with it.
+    # The liftable refusals in one list, in check order, because one flag lifts
+    # all of them and a caller reaches for it to get past exactly one. What
+    # `--force` actually overrode therefore has to be in the result and not
+    # only in `--help`.
     #
     # `(key, tripped, message, detail, forced_value)` — `detail` is what the
     # refusal reports, `forced_value` what `forced_past` records instead.
@@ -1018,12 +1034,11 @@ def cmd_batch_clean(args):
          lambda: {"manifest": str(group_path(runs_dir, args.group)),
                   "members_recorded_by_runs": owned_run_ids(runs_dir, args.group)},
          str(group_path(runs_dir, args.group))),
-        # The reason the loop above bothers with `still_writing` as well as the
-        # state: a live member is writing into the very directory being removed.
-        ("running_members", bool(live),
-         f"group {args.group!r} still has running members; stop them first or "
-         f"pass --force",
-         lambda: {"running": live}, live),
+        ("unreadable_members", bool(unknown),
+         f"group {args.group!r} has members whose meta.json will not parse, so "
+         f"whether they are still running cannot be determined; pass --force "
+         f"to clean anyway",
+         lambda: {"running": unknown}, unknown),
         # R10's better error message, and only that: `--resume-from` puts phase
         # 2 in phase 1's worktrees, so cleaning phase 1 pulls the tree out from
         # under runs still using it. Free to detect thanks to the manifest's
@@ -1073,15 +1088,14 @@ def cmd_batch_clean(args):
                          or still_writing(m))
                      and m.get("run_id") != rid
                      and is_within(m.get("cwd"), path)]
-        if occupants and not args.force:
+        if occupants:
+            # Not liftable by --force either, for the same reason as a live member.
             kept.append({"run_id": rid, "path": str(path),
                          "reason": "another run is still working in this "
                                    "worktree",
-                         "occupied_by": [m["run_id"] for m in occupants]})
+                         "occupied_by": [m["run_id"] for m in occupants],
+                         "stop": stop_commands(occupants, runs_dir)})
             continue
-        if occupants:
-            overrode.setdefault("removed_under_live_runs", []).extend(
-                m["run_id"] for m in occupants)
         dirty = worktree_dirty(path)
         ok, err = worktree_remove(project, path, force=args.force)
         if ok and dirty and args.force:
@@ -1091,18 +1105,11 @@ def cmd_batch_clean(args):
              **({} if ok else {"reason": err, "dirty": dirty})})
 
     # The name is released only when nothing was left behind, so a caller who
-    # sees `cleaned: true` can reuse the name and one who does not still has a
-    # group to address the leftovers by. This is also the only way to reclaim a
-    # name from a `batch start` that died before it recorded any member.
-    # `kept` can only be populated from a worktree that is still on disk, and a
-    # `kind=resume` member never gets one — which is every `--as-ready` waiter.
-    # So a forced clean of a group whose live members have no checkouts released
-    # the name in the same reply that listed those members as still running, and
-    # the freed name was then reclaimed by an unrelated batch. After that,
-    # `owned_run_ids`' registry fallback matches on the bare name with no epoch,
-    # so the new owner's `batch clean` is refused citing a run it has never seen.
-    # A name whose members are still running is not free.
-    released = not kept and not live
+    # sees `name_released: true` can reuse the name and one who does not still
+    # has a group to address the leftovers by. This is also the only way to
+    # reclaim a name from a `batch start` that died before it recorded any
+    # member. A group with a live member never gets this far.
+    released = not kept
     if released:
         group_path(runs_dir, args.group).unlink(missing_ok=True)
     # Branched on what actually blocked the release. One note for both cases
@@ -1113,15 +1120,14 @@ def cmd_batch_clean(args):
     # never released. The remedy that does work is the one the message omitted.
     if released:
         note = None
-    elif kept:
+    elif any(k.get("stop") for k in kept):
+        note = ("live runs are working in some of these worktrees; stop them "
+                "with the commands in kept[].stop, then clean again. The group "
+                "name stays claimed until nothing is left.")
+    else:
         note = ("these worktrees hold uncommitted changes — collect them, or "
                 "pass --force to discard. The group name stays claimed until "
                 "they are gone.")
-    else:
-        note = ("this group still has running member(s), so its name stays "
-                "claimed — --force does not release a name whose members are "
-                "live. Stop them first: "
-                + ", ".join(f"stop --run {m['run_id']}" for m in live))
     out = {"group": args.group, "removed": removed, "kept": kept,
            "name_released": released, "note": note}
     if overrode:

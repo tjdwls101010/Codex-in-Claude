@@ -161,7 +161,7 @@ To hand three independent pieces of work to three Codex runs at once and collect
 $CODEX batch start --group audit --task "audit the parser" --task "audit the lexer" --task "audit the cache"
 $CODEX status --group audit --follow      # ends on a terminal line, never in silence
 $CODEX result --group audit               # each message, plus which paths more than one wrote
-$CODEX batch clean --group audit          # only if you asked for worktrees
+$CODEX batch clean --group audit          # removes any worktrees and releases the group name
 ```
 
 Members work in your tree, the way a fan-out of your own subagents does: their changes are there as they make them, with nothing to collect. Add `--worktree` when they would edit the same files, and each writing member gets its own checkout instead.

@@ -35,6 +35,9 @@ class RealCodex(unittest.TestCase):
             if (real_home / name).exists():
                 shutil.copy(real_home / name, self.home / name)
         self.env = {**os.environ, "CODEX_HOME": str(self.home)}
+        # Cleanups run last-in first-out, so a run still going after a failed assertion is stopped before its directory goes.
+        self.addCleanup(subprocess.run, ["python3", str(ENTRY), "stop", "--all", "--project", str(self.project)],
+                        cwd=self.project, env=self.env, capture_output=True)
 
     def cli(self, *args, timeout=600):
         p = subprocess.run(["python3", str(ENTRY), *args, "--project", str(self.project)],
@@ -52,11 +55,13 @@ class RealCodex(unittest.TestCase):
         for sandbox in ("read-only", "workspace-write"):
             with self.subTest(sandbox=sandbox):
                 started = json.loads(self.cli("start", "--sandbox", sandbox, "--label", "smoke", "Reply with exactly the word: first"))
-                run_id, thread_id = started["run_id"], started["thread_id"]
+                run_id = started["run_id"]
                 self.cli("log", "--run", run_id, "--follow", "--follow-timeout", "500")
                 first = json.loads(self.cli("result", "--run", run_id))
                 self.assertEqual(first["state"], "completed", first)
                 self.assertIn("first", first["message"].lower())
+                # `start` may return before Codex reports the thread id; the finished run has it.
+                thread_id = first["thread_id"]
 
                 resumed = json.loads(self.cli("resume", run_id, "Reply with exactly the word: second"))
                 self.cli("log", "--run", resumed["run_id"], "--follow", "--follow-timeout", "500")

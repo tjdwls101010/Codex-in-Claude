@@ -51,7 +51,7 @@ Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt wh
 Without --worktree, members work in your tree as they go and none can tell another member's edit from its own; the reply says so when two or more writers share a directory.
 Each member is told the group's name and size; a member with a checkout is also told it is not your tree, which commit it came from, and how many uncommitted files yours has."""
 
-TIER_DEFAULT = "a resumed thread's recorded tier while its isolation is unchanged, else `service_tier` in your config.toml for an isolated run"
+TIER_DEFAULT = "a resumed thread's recorded tier while its isolation is unchanged, otherwise `service_tier` from your config.toml, as for --model"
 
 
 class OneLinePerParagraph(argparse.HelpFormatter):
@@ -88,7 +88,7 @@ def add_run_options(p, *, kind):
         p.add_argument("--sandbox", choices=SANDBOX_MODES, help="change the thread's sandbox for this and later turns (default: the sandbox the thread recorded). Required for a thread this registry never recorded. A change is reported as `sandbox_changed_from`")
     else:
         p.add_argument("--sandbox", choices=SANDBOX_MODES, help="what the run may do to the filesystem (default: workspace-write" + ("; a resumed member keeps its thread's" if kind == "batch" else "") + "), recorded and re-asserted on every later turn of the thread")
-    p.add_argument("--model", help="model slug (default: what a resumed thread recorded, as long as --inherit-config does not change its isolation; else `model` in your config.toml for an isolated run; else the server's choice). Checked against `models` before spawning when the catalog can be read")
+    p.add_argument("--model", help="model slug (default: what a resumed thread recorded, as long as --inherit-config does not change its isolation; otherwise `model` from your config.toml — passed in for an isolated run, read by Codex itself under --inherit-config — and with none, the server's choice). Checked against `models` before spawning when the catalog can be read")
     p.add_argument("--effort", help="reasoning effort; which values a model accepts differs per model, and `models` lists them (default: as for --model, from `model_reasoning_effort`)")
     p.add_argument("--inherit-config", action="store_true", help="load your config.toml — MCP servers, plugins, agent roles, hooks — instead of running isolated (default: isolated for a new thread; a resume keeps the thread's choice). Auth comes from auth.json either way")
     tier = p.add_mutually_exclusive_group()
@@ -164,7 +164,7 @@ def build_parser():
     p.set_defaults(func=cmd_show)
 
     p = command("stop", "interrupt a run, a group, or every live run",
-                description="Interrupt runs through their recorded process groups, never by process name, and record them `interrupted`. One of --run, --group or --all is required. A running turn cannot be redirected; stop it, then `resume` the thread.")
+                description="Interrupt runs through their recorded process groups, never by process name. A run still in an active state is recorded `interrupted`; one that already recorded an outcome, or an orphaned one, keeps its state, and `state` in the reply says which. One of --run, --group or --all is required. A running turn cannot be redirected; stop it, then `resume` the thread.")
     add_common(p)
     p.add_argument("--run", action="append", metavar="REF", help="a run to interrupt; repeatable")
     p.add_argument("--group", help="every live member of a batch group")

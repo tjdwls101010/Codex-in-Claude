@@ -9,7 +9,7 @@
     {
       "name": "codex",
       "source": "./",
-      "description": "Run OpenAI Codex as a managed subagent from Claude Code — background runs with a handle, a filtered live event log, stop-and-redirect, thread resume, and schema-validated results. Re-asserts each run's sandbox on every turn, closing a silent escalation in the Codex CLI's own resume path.",
+      "description": "Run OpenAI Codex as a managed subagent from Claude Code — detached runs with a handle, a filtered live event log, stop-and-redirect, thread resume, batches addressed as one group, and schema-shaped results. Re-asserts each run's sandbox on every turn, closing a silent escalation in the Codex CLI's own resume path.",
       "category": "development",
       "keywords": [
         "codex",

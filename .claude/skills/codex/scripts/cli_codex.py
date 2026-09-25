@@ -42,10 +42,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
-    codex_version, config_scalars, model_catalog,
-    SANDBOX_MODES, THREAD_ID_WAIT, supervise,
-    user_defaults,
+    codex_version, model_catalog, SANDBOX_MODES, THREAD_ID_WAIT, supervise,
 )
+from codex.config import codex_home, config_scalars, user_defaults  # noqa: E402
 from _events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
     FOLLOW_INTERVAL, FULL_ITEM_BYTES, LEVELS, find_item, format_events,
@@ -66,7 +65,7 @@ from _run import (  # noqa: E402
     STALL_SECONDS, WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
 )
 from util import (  # noqa: E402
-    clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
+    clip, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
 )
 
 # `show --item` default cap. A silently truncated blob is worse than a loud one,

@@ -107,9 +107,3 @@ def git_toplevel(path: Path):
     except Exception:
         pass
     return None
-
-
-def codex_home() -> Path:
-    """CODEX_HOME when set, resolved — sessions, config and auth all move with it — else ~/.codex."""
-    v = os.environ.get("CODEX_HOME")
-    return Path(v).expanduser().resolve() if v else Path.home() / ".codex"

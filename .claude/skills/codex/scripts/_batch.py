@@ -40,7 +40,8 @@ from _registry import (
     meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
     still_writing, unreadable_runs,
 )
-from _codex import check_model_effort, model_catalog, user_defaults
+from _codex import check_model_effort, model_catalog
+from codex.config import user_defaults
 from _run import (
     WRITING_SANDBOXES, create_run, run_row,
 )

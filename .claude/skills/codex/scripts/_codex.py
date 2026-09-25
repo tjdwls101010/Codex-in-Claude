@@ -26,7 +26,7 @@ from pathlib import Path
 
 from _events import first_thread_id
 from _registry import read_meta, update_meta
-from util import codex_home, now_iso
+from util import now_iso
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 
@@ -46,69 +46,6 @@ def toml_cfg(key: str, value: str):
     """`-c` values are parsed as TOML, falling back to a raw string only if that
     fails — so a string value is emitted quoted. This is the canonical form."""
     return ["-c", f'{key}="{value}"']
-
-
-# -- the user's own defaults ------------------------------------------------
-# Isolation is the default and `--ignore-user-config` takes the whole file, so
-# for a year an unnamed run took Codex's *server* default rather than the model
-# the user had configured. Measured across 21 benchmark sessions: not one argv
-# carried a model or an effort.
-#
-# These three keys go back in. `sandbox_mode` is deliberately not among them —
-# it is the invariant this skill owns and re-asserts on every turn, and reading
-# it from a file the caller can edit is R24 arriving by another road. The
-# principle is not "the skill has defaults" but "the skill has none of its own
-# and respects the user's": policy lives in the user's file, and the edit path
-# is Codex's own `/model` and `/fast`.
-USER_DEFAULT_KEYS = ("model", "model_reasoning_effort", "service_tier")
-
-# `key = value` at the top level. A regex and not a TOML parser because
-# `tomllib` is 3.11 and this skill's floor is 3.10.
-_SCALAR_RE = re.compile(
-    r"""^([A-Za-z_][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s#]+))""")
-
-
-def config_scalars(keys, path=None):
-    """Named top-level scalars from `config.toml`, as strings.
-
-    The scan stops at the first `[table]` header, and that is the load-bearing
-    part rather than an optimisation: `model` under `[profiles.work]` is a
-    different setting from the top-level one, and Codex applies the top-level
-    value unless a profile is selected — which this wrapper never does. A
-    pattern that matched anywhere in the file would silently adopt a profile's
-    model for every run.
-
-    Every failure answers `{}`: an unreadable or absent config means there is
-    nothing to respect, not that a run should be refused.
-    """
-    path = Path(path) if path else codex_home() / "config.toml"
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return {}
-    out = {}
-    for line in text.splitlines():
-        s = line.strip()
-        if s.startswith("["):
-            break
-        m = _SCALAR_RE.match(s)
-        if not m or m.group(1) not in keys:
-            continue
-        out[m.group(1)] = next(g for g in m.groups()[1:] if g is not None)
-    return out
-
-
-def user_defaults():
-    """`{model, effort, service_tier}` from the user's `config.toml`.
-
-    Read fresh rather than cached: a `batch start` reads it once per member and
-    the file is a few hundred bytes, while a cache would mean the value a run
-    records depends on how long the process had been alive.
-    """
-    raw = config_scalars(USER_DEFAULT_KEYS)
-    return {"model": raw.get("model"),
-            "effort": raw.get("model_reasoning_effort"),
-            "service_tier": raw.get("service_tier")}
 
 
 # -- the model catalog ------------------------------------------------------

@@ -26,8 +26,9 @@ from pathlib import Path
 
 from _codex import (
     SANDBOX_MODES, THREAD_ID_WAIT, apply_preamble, build_argv,
-    check_model_effort, model_catalog, spawn_supervised, user_defaults,
+    check_model_effort, model_catalog, spawn_supervised,
 )
+from codex.config import user_defaults
 from _events import first_thread_id, scan_progress
 from _registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,

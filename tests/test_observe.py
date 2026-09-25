@@ -9,7 +9,8 @@ import signal
 import time
 import unittest
 
-from support.harness import BridgeCase, FIXTURES, alive, wait_until
+from support.harness import (BridgeCase, FIXTURES, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
+                             wait_until)
 
 
 def answer_fixture(path, text, thread="t-answer"):
@@ -49,7 +50,9 @@ class Result(BridgeCase):
         fixture = answer_fixture(self.tmp / "a.jsonl", '{"verdict": "ok", "count": 3}')
         out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_state(out["run_id"])
-        self.assertEqual(self.bridge("result", "--run", out["run_id"])["json"], {"verdict": "ok", "count": 3})
+        res = self.bridge("result", "--run", out["run_id"])
+        self.assertEqual(res["json"], {"verdict": "ok", "count": 3})
+        self.assertNotIn("message", res, "the parsed answer is not handed back twice")
 
     def test_a_schema_run_whose_answer_is_not_json_fails_loudly(self):
         schema = self.tmp / "s.json"
@@ -60,6 +63,7 @@ class Result(BridgeCase):
         res = self.bridge("result", "--run", out["run_id"], rc=1)
         self.assertIn("not valid JSON", res["error"])
         self.assertIn("parse_error", res)
+        self.assertEqual(res["message"], "Sure! {verdict: nope", "the unparsed answer is the only copy")
 
     def test_a_resumed_schema_thread_keeps_its_schema(self):
         schema = self.tmp / "s.json"
@@ -116,6 +120,18 @@ class StatusOfOneRun(BridgeCase):
 
 class Listing(BridgeCase):
 
+    def test_the_default_listing_is_one_summary_row_per_run(self):
+        fixture = answer_fixture(self.tmp / "a.jsonl", "x" * 1000)
+        out = self.bridge("start", "--label", "lbl", "x", env={"FAKE_CODEX_FIXTURE": fixture})
+        self.wait_state(out["run_id"])
+        row = self.bridge("status")["runs"][0]
+        self.assertEqual(set(row), {"run_id", "label", "state", "group", "idle_seconds", "last_agent_message"})
+        self.assertEqual((row["run_id"], row["label"], row["state"], row["group"]), (out["run_id"], "lbl", "completed", None))
+        self.assertTrue(row["last_agent_message"].endswith("…(+840 chars)"), row["last_agent_message"][-30:])
+        full = self.bridge("status", "--run", out["run_id"])["runs"][0]
+        self.assertIn("usage", full)
+        self.assertEqual(self.bridge("status", "--thread", out["thread_id"])["runs"][0].keys(), full.keys())
+
     def test_an_unreadable_run_is_counted_where_it_is_missing(self):
         keep = self.bridge("start", "keep")
         lose = self.bridge("start", "lose")
@@ -156,6 +172,40 @@ class Listing(BridgeCase):
         listing = self.bridge("status")
         self.assertEqual(listing["groups"], ["found-later"])
         self.assertEqual(self.row(out["runs"][0]["run_id"])["group"], "found-later")
+
+
+class AnOlderReleasesRegistry(BridgeCase):
+    """A registry written by 0.4–0.7 — a `review` run, a boolean `priority`, a batch member still `waiting` — is read by every view."""
+
+    def setUp(self):
+        super().setUp()
+        self.install_legacy_registry()
+
+    def test_the_views_read_it(self):
+        review = self.row(LEGACY_REVIEW)
+        self.assertEqual((review["kind"], review["state"], review["sandbox"]), ("review", "completed", "read-only"))
+        self.assertEqual(self.bridge("result", "--run", LEGACY_REVIEW)["message"], "no findings")
+        listing = self.bridge("status")
+        self.assertEqual({r["run_id"] for r in listing["runs"]}, {LEGACY_REVIEW, LEGACY_PREDECESSOR, LEGACY_WAITER})
+        self.assertEqual(listing["running"], [LEGACY_WAITER])
+        self.assertEqual(listing["groups"], ["p1", "p2"])
+        waiter = self.row(LEGACY_WAITER)
+        self.assertEqual((waiter["state"], waiter["waits_for"]), ("waiting", LEGACY_PREDECESSOR))
+        done = self.bridge("result", "--group", "p1")
+        self.assertEqual((done["group_state"], done["results"][0]["message"]), ("completed", "phase one done"))
+        self.assertEqual(self.bridge("result", "--group", "p2")["group_state"], "running")
+        rep = self.bridge("doctor")
+        self.assertEqual((rep["runs_dir_runs"], rep["runs_unreadable"]), (3, 0))
+
+    def test_a_finished_legacy_group_is_continued_and_cleaned(self):
+        self.bridge("stop", "--group", "p2")
+        self.wait_state(LEGACY_WAITER)
+        self.assertTrue(self.bridge("batch", "clean", "--group", "p2")["name_released"])
+        out = self.bridge("batch", "start", "--group", "p3", "--resume-from", "p1", "--task", "go on")
+        self.wait_all(out)
+        argv = self.last_argv()
+        self.assertEqual(argv[:3], ["exec", "resume", self.meta(LEGACY_PREDECESSOR)["thread_id"]])
+        self.assertEqual(self.config_values(argv)["service_tier"], '"priority"')
 
 
 class GroupResult(BridgeCase):

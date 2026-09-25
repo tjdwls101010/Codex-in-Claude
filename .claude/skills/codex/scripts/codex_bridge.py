@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _codex import (  # noqa: E402
     codex_version, config_scalars, model_catalog,
-    SANDBOX_MODES, THREAD_ID_WAIT, query_threads, state_db_path, supervise,
+    SANDBOX_MODES, THREAD_ID_WAIT, supervise,
     user_defaults,
 )
 from _events import (  # noqa: E402
@@ -63,8 +63,7 @@ from _registry import (  # noqa: E402
     unreadable_runs, update_meta_if,
 )
 from _run import (  # noqa: E402
-    STALL_SECONDS, WRITING_SANDBOXES, create_run, ordered_by_waiting,
-    resolve_implicit_run, run_row,
+    STALL_SECONDS, WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
 )
 from _util import (  # noqa: E402
     clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
@@ -73,15 +72,6 @@ from _util import (  # noqa: E402
 # `show --item` default cap. A silently truncated blob is worse than a loud one,
 # so truncation is always announced along with how much was withheld.
 SHOW_MAX_BYTES = 20000
-
-# `status --include-external` caps each thread's title. Codex stores the whole
-# prompt there, preamble included, and this listing returns up to fifty of them.
-# Measured on one project with sixteen external threads: the listing went
-# 19,293 B to 16,399 B, so the titles were about 2.9 KB of it. The rest is
-# structural — roughly 830 B per thread, mostly `sandbox_policy` and
-# `rollout_path` — which at the fifty-thread limit is around 40 KB, and is
-# the larger half of this cost rather than the part capped here.
-EXTERNAL_TITLE_CAP = 200
 
 
 # --------------------------------------------------------------------------
@@ -120,19 +110,11 @@ def cmd_resume(args):
         # one non-terminal run is unambiguous, zero falls back to the newest and
         # says so, two or more fails loud with the candidate list.
         candidates = [(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id")]
-        if candidates:
-            _, base, resolved_from = resolve_implicit_run(candidates)
-            thread_ref = base["thread_id"]
-        else:
-            # Nothing in the registry: fall back to Codex's own thread list for
-            # this directory, which is what lets Claude pick up a session the
-            # user started in the Codex TUI.
-            rows = query_threads(cwd_filter=str(project), limit=1)
-            if not rows:
-                fail("no previous run in this project's registry and no Codex thread "
-                     "recorded for this directory", project=str(project))
-            thread_ref = rows[0]["id"]
-            resolved_from = "Codex's own thread list (no registry entry)"
+        if not candidates:
+            fail("--last found no run with a thread in this project's registry; "
+                 "name the thread to resume", runs_dir=str(runs_dir))
+        _, base, resolved_from = resolve_implicit_run(candidates)
+        thread_ref = base["thread_id"]
     else:
         if not args.ref:
             fail("resume needs a run id, thread id, thread name, or --last")
@@ -229,6 +211,15 @@ def note_unreadable(out: dict, runs_dir):
     return out
 
 
+def summary_row(row):
+    """What the default listing shows of a run, from a row built with a 160-character excerpt. `--run`, `--thread` and `--group` return the whole row."""
+    out = {k: row.get(k) for k in ("run_id", "label", "state", "group", "idle_seconds")}
+    out["last_agent_message"] = row.get("last_agent_message")
+    if row.get("codex_still_running"):
+        out["codex_still_running"] = True
+    return out
+
+
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -242,15 +233,6 @@ def cmd_status(args):
     # branch order below answers `--run` and drops it, so a caller who named
     # both got one run's row where they asked for a thread's.
     refuse_competing_selectors(args, "status", "--run", "--thread", "--group")
-    if args.include_external and args.group:
-        # `--include-external` lists threads with *no* registry entry; a group
-        # is a registry construct. There is no run that is both, so the flag
-        # could only ever be a no-op here — and a no-op flag reads as an answer
-        # that considered it.
-        fail("--include-external and --group cannot be combined: a group's "
-             "members are registry entries and --include-external lists "
-             "threads that have none, so no run can be in both.",
-             group=args.group)
     # `--follow` only ever meant "--group --follow": the other branches emit a
     # snapshot and exit. Accepting it silently is the shape of mistake R13 was
     # about — the tool hands back an answer the caller reads as "I waited for
@@ -294,7 +276,7 @@ def cmd_status(args):
         for rd, m in iter_runs(runs_dir):
             if args.thread and m.get("thread_id") != args.thread:
                 continue
-            rows.append(run_row(rd, m, project))
+            rows.append(run_row(rd, m, project, excerpt=400 if args.thread else 160))
 
     # F3: derive every summary from the FULL list before truncating for
     # display. A phase gate is literally `len(running) == 0` — deriving it
@@ -310,7 +292,6 @@ def cmd_status(args):
     failed = [r["run_id"] for r in rows
               if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")
               and not r.get("codex_still_running")]
-    known = {r["thread_id"] for r in rows}
 
     display_rows = rows
     runs_truncated = 0
@@ -324,6 +305,8 @@ def cmd_status(args):
                      or r.get("codex_still_running")]
         display_rows = kept_live + tail
         runs_truncated = total_runs - len(display_rows)
+    if not (args.run or args.thread):
+        display_rows = [summary_row(r) for r in display_rows]
 
     # Groups are listed even when no run in the (truncated) view belongs to one:
     # discovering that this project has batches at all is the step that makes
@@ -333,22 +316,6 @@ def cmd_status(args):
            "total_runs": total_runs, "runs_truncated": runs_truncated,
            "groups": list_groups(runs_dir)}
     note_unreadable(out, runs_dir)
-    if args.include_external:
-        # `title` is whatever Codex stored, which is the whole prompt — and for
-        # a thread this skill started, that includes the preamble verbatim on
-        # every row. What a caller needs in order to pick a thread is the
-        # opening, so this is capped for the same reason `result --group` caps
-        # a member's message, and `clip` says how much it dropped. The numbers
-        # are on EXTERNAL_TITLE_CAP above; the cap is the smaller half of the
-        # cost, which is worth knowing before reaching for it again.
-        out["external_threads"] = [{**t, "title": clip(t.get("title") or "",
-                                                       EXTERNAL_TITLE_CAP)}
-                                   for t in query_threads(cwd_filter=str(project))
-                                   if t.get("id") not in known]
-        out["external_note"] = (
-            "Codex threads for this cwd with no registry entry — started outside this "
-            "skill. Resumable by id, but their original sandbox was never recorded "
-            "here, so pass --sandbox explicitly rather than inheriting a default.")
     emit(out)
 
 
@@ -649,8 +616,9 @@ def cmd_result(args):
             # Loud, not lenient: handing back a malformed object as though it
             # had the schema's shape is worse than failing here.
             fail("run used --schema but the final message is not valid JSON",
-                 run_id=meta["run_id"], parse_error=str(e),
-                 message_preview=clip(message, 400))
+                 run_id=meta["run_id"], parse_error=str(e), message=message)
+        # The parsed object is the answer; the same text again as `message` would double it.
+        del out["message"]
     emit(out)
 
 
@@ -849,18 +817,10 @@ def cmd_doctor(args):
         # already seen. Two implementations of one question is how they drift;
         # this is the second time that has cost something (R20).
         seen = set()
-        by_id = {m.get("run_id"): m for m in live}
         for i, m in enumerate(live):
             group = [m] + [o for j, o in enumerate(live) if j != i
                            and (is_within(o.get("cwd"), m.get("cwd"))
-                                or is_within(m.get("cwd"), o.get("cwd")))
-                           # A `--as-ready` member inherits its predecessor's
-                           # directory and sits non-terminal beside it, which is
-                           # exactly the shape this looks for — and is the one
-                           # pair that cannot be writing at once. Same exclusion
-                           # `concurrent_writers` makes at creation time; the two
-                           # have already drifted once (R20).
-                           and not ordered_by_waiting(m, o, by_id)]
+                                or is_within(m.get("cwd"), o.get("cwd")))]
             if len(group) < 2:
                 continue
             key = tuple(sorted(x.get("run_id") or "" for x in group))
@@ -893,15 +853,6 @@ def cmd_doctor(args):
                 f"holds its run's uncommitted results; `batch clean --group "
                 f"<name>` removes a group's once you have collected them.")
 
-    db = state_db_path()
-    report["thread_db"] = str(db) if db else None
-    report["thread_db_readable"] = bool(query_threads(limit=1)) if db else False
-    if db and not report["thread_db_readable"]:
-        warnings.append(
-            f"{db} exists but no threads could be read. The filename is "
-            "version-stamped, so a Codex upgrade may have changed its schema; "
-            "`--include-external` and a registry-less `--last` degrade, nothing else.")
-
     report["blockers"] = blockers
     report["warnings"] = warnings
     report["ok"] = not blockers
@@ -924,7 +875,8 @@ STATUS_EPILOG = """\
 The states, and what each one is telling you.
 
   starting    forked; the supervisor has not reported yet
-  waiting     an --as-ready batch member, behind the run it continues
+  waiting     left by releases before 0.8: a batch member queued behind the
+              run it continues. Live until its supervisor exits; `stop` ends it
   running     Codex has the turn
   stalled     running, with no events for %(stall)ds. Derived for display,
               never
@@ -955,8 +907,7 @@ you named the members.
 RUN_RETURN_EPILOG = """\
 When this returns. As soon as there is a handle to hand back; it does not wait
 for the turn to finish. The run is spawned under a supervisor process of its
-own, so it is not tied to this command's lifetime. --foreground is the other
-choice, and blocks for the whole turn.
+own, so it is not tied to this command's lifetime.
 
 The report waits up to %(wait)ds for the thread id to appear before it is
 written, so this can come back with `thread_id: null`. That is a normal return, not a failure — `status`
@@ -1082,7 +1033,7 @@ def add_common(p):
                         "itself when it is not a repository)")
 
 
-def add_run_options(p, *, kind, foreground=True):
+def add_run_options(p, *, kind):
     p.add_argument("--label",
                    help="short name for the run; appears in its run id and in "
                         "`status`. A resumed run inherits the label of the run "
@@ -1140,19 +1091,11 @@ def add_run_options(p, *, kind, foreground=True):
                         "`json` and fails loudly if the final message is not "
                         "valid JSON; `result --group` does not parse, so "
                         "collect a schema batch member by member.")
-    if foreground:
-        # Not offered on `batch start`. It was, and was then refused by the
-        # command — so its help string had to read "Refused on `batch start`",
-        # an option surface documenting a hole in itself. The refusal is
-        # argparse's now, and the help is honest by having nothing to say.
-        p.add_argument("--foreground", action="store_true",
-                       help="block until the turn ends instead of "
-                            "backgrounding it")
     p.add_argument("--timeout", type=float,
                    help="give the run this many seconds, then SIGINT its process "
                         "group and record state=timed_out — a state of its own, "
                         "so a deadline is never mistaken for a failure you "
-                        "should not retry. Works in background and foreground. "
+                        "should not retry. "
                         "No default: no flag, no deadline. The thread is "
                         "resumable across it only if a thread id was recorded "
                         "before the deadline; without one there is no "
@@ -1210,9 +1153,9 @@ def build_parser():
                         "Candidates are registry runs that recorded a thread "
                         "id: exactly one live run wins, none falls back to the "
                         "newest and says so, two or more is ambiguous and is "
-                        "refused with the candidates listed. Only when the "
-                        "registry has no candidate at all does it fall through "
-                        "to Codex's own thread list for this directory.")
+                        "refused with the candidates listed. Threads started "
+                        "outside this skill are never picked; name one to "
+                        "resume it.")
     p.add_argument("--force", action="store_true",
                    help="start a turn on a thread the concurrency check "
                         "objected to — one that already has a live turn, or one "
@@ -1224,8 +1167,7 @@ def build_parser():
                         "never seen — a thread id or name from the Codex TUI — "
                         "is passed through to Codex, but its original sandbox "
                         "was never recorded and there is nothing to re-assert, "
-                        "so it is refused without an explicit --sandbox. "
-                        "`status --include-external` lists those threads. A run "
+                        "so it is refused without an explicit --sandbox. A run "
                         "whose thread_id is still null has no conversation yet "
                         "and is refused too — wait for `status` to backfill it.")
     p.set_defaults(func=cmd_resume, cwd=None, add_dir=None, ref=None, prompt=None)
@@ -1235,8 +1177,9 @@ def build_parser():
         "status", formatter_class=HidesSuppressedCommands,
         help="is it alive, how far along, what it last said — registry state, not the event stream",
         description="State, never output. The default listing also carries this "
-                    "project's `groups` and gives every row its `group` and "
-                    "`worktree`, which is how a session that did not start a "
+                    "project's `groups` and gives every row its `group` (the "
+                    "full row, with `worktree`, is behind --run, --thread and "
+                    "--group), which is how a session that did not start a "
                     "batch finds it: the group name is the one thing about a "
                     "batch nobody can re-derive.",
         epilog=STATUS_EPILOG)
@@ -1253,14 +1196,6 @@ def build_parser():
                         "non-terminal run plus the 20 newest — so it can exceed "
                         "20 rows when older runs are still live — and reports "
                         "how many it withheld as runs_truncated.")
-    p.add_argument("--include-external", action="store_true",
-                   help="also list Codex threads for this directory that have "
-                        "no registry entry — ones started outside this skill. "
-                        "Their original sandbox was never recorded, so `resume` "
-                        "refuses one without an explicit --sandbox. Combines "
-                        "with the default listing only: refused with --group, "
-                        "and alongside --run or --thread it would label threads "
-                        "outside that filter as external.")
     p.add_argument("--follow", action="store_true",
                    help="requires --group: plain text rather than the one "
                         "JSON object `status --group` returns — a "
@@ -1379,12 +1314,7 @@ def build_parser():
                    help="a run to interrupt. Repeatable. No default target: one "
                         "of --run, --group or --all is required.")
     p.add_argument("--group",
-                   help="interrupt every member of a batch group, including one "
-                        "still waiting on its predecessor under --as-ready. "
-                        "Stopping a group that others are waiting on does the "
-                        "opposite of cancelling them: `interrupted` is a "
-                        "terminal state, so it releases every waiter into "
-                        "starting. Stop both groups to end a pipeline.")
+                   help="interrupt every live member of a batch group")
     p.add_argument("--all", action="store_true",
                    help="interrupt every run in this project's registry that "
                         "is still doing something — every non-terminal one, "
@@ -1435,7 +1365,7 @@ def build_parser():
     b = bsub.add_parser("start", help="start N runs as one addressable group",
                         formatter_class=HidesSuppressedCommands,
                         epilog=BATCH_START_EPILOG)
-    add_common(b); add_run_options(b, kind="batch", foreground=False)
+    add_common(b); add_run_options(b, kind="batch")
     b.add_argument("--group", required=True,
                    help="name for this group. Single-use per project until "
                         "`batch clean` releases it: reusing a live name would "
@@ -1481,16 +1411,6 @@ def build_parser():
                         "un-isolated. One task per started member, unless a "
                         "task names its own target with kind/resume, which "
                         "wins over its positional counterpart.")
-    b.add_argument("--as-ready", action="store_true",
-                   help="with --resume-from: start each member as soon as the "
-                        "member it continues is done, instead of refusing until "
-                        "every one of them is. A failed predecessor releases "
-                        "its successor too — `predecessor_state` says how it "
-                        "ended — but an orphaned one whose Codex is still "
-                        "writing does not, and neither does a predecessor still "
-                        "waiting on its own. The wait is unbounded: --timeout "
-                        "bounds the Codex turn and never the wait, and "
-                        "`stop --group` on this group ends one.")
     b.set_defaults(func=cmd_batch_start)
 
     b = bsub.add_parser("clean", formatter_class=HidesSuppressedCommands,
@@ -1541,17 +1461,13 @@ def build_parser():
                     "The warnings are things that work but are worth "
                     "knowing: a "
                     "config.toml set to danger-full-access, a project "
-                    "AGENTS.md, a thread database it could not read. Check auth "
+                    "AGENTS.md. Check auth "
                     "before anything else — an unauthenticated run fails in "
                     "ways that look like other problems. `codex_home` is "
                     "printed resolved, with `codex_home_from_env` saying "
                     "whether it was overridden; an override moves sessions, "
-                    "config.toml, auth.json and the thread database with it, so "
-                    "~/.codex is then someone else's state or nothing. "
-                    "`thread_db_readable: false` means no thread row could be "
-                    "read at all — the file may be absent, empty, or a schema "
-                    "this version cannot query. Only --include-external and a "
-                    "registry-less `resume --last` need it.")
+                    "config.toml and auth.json with it, so ~/.codex is then "
+                    "someone else's state or nothing.")
     add_common(p)
     p.set_defaults(func=cmd_doctor)
 

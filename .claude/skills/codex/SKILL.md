@@ -16,15 +16,13 @@ Call it as `python3 "${CLAUDE_SKILL_DIR}/scripts/cli_codex.py" <command> …`, w
 
 **`resume` or a fresh `start`.** A resumed thread brings what it already worked out and replays a transcript that grows every turn; a fresh start knows nothing. Continue when the new work builds on the old understanding; start fresh when it doesn't, because an unrelated task then pays to read past context it has no use for.
 
-**The prompt carries what the run cannot find out for itself:** the decision the work is for, facts from this conversation, what done looks like. It reads the repository, the project's `AGENTS.md` and a continued thread on its own.
-
 **A verification loop stops on a predicate the work can satisfy.** "Until nothing new comes back" never ends: each new look finds something, so that count comes from the examiner, not from the work. Stop on something the work runs out of — no finding reachable in ordinary use, a named property that holds, a `--schema` answer over a set you can bound. Continue the reviewer's thread when its earlier findings and the ones you rejected matter to the next round, since a fresh reviewer reopens what you closed; start fresh when they don't.
 
 **Against your own instruments:**
 
 | Yours | Here | Not available |
 |---|---|---|
-| `Agent` | `start`, a background `log --run <id> --follow`, then `result` | a message into a running turn: `stop`, then `resume` |
+| `Agent` | `start`, a background `log --run <id> --follow`, then `result` | — |
 | `Workflow` `parallel()` | `batch start` with several `--task` | runs calling or messaging each other |
 | a next stage | `batch start --resume-from <group>` once every member has finished | a stage that starts itself: each round is computed and started from your context |
 

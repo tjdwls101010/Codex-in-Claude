@@ -59,7 +59,7 @@ from core.registry import (  # noqa: E402
     read_meta, reap, resolve_project, resolve_runs_dir, still_writing,
     unreadable_runs,
 )
-from _run import WRITING_SANDBOXES, create_run, resolve_implicit_run  # noqa: E402
+from core.runs import WRITING_SANDBOXES, create_run, resolve_implicit_run  # noqa: E402
 from core.observe import STALL_SECONDS, group_snapshot, progress, row_is_live, run_row, turn_failed_excerpt  # noqa: E402
 from util import (  # noqa: E402
     clip, emit, fail, git_toplevel, is_within,

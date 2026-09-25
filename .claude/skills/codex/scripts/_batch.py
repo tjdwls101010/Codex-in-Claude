@@ -41,7 +41,7 @@ from core.registry import (
 from codex.catalog import check_model_effort, model_catalog
 from codex.config import user_defaults
 from core import settings
-from _run import WRITING_SANDBOXES, create_run
+from core.runs import WRITING_SANDBOXES, create_run
 from core.observe import group_snapshot, progress, run_row, turn_failed_excerpt
 from util import (
     BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,

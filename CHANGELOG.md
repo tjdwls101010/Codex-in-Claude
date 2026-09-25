@@ -2,6 +2,44 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-09-25
+
+The surface nobody used is gone, the engine is split into three layers with one implementation per question, `--help` is the one reference for flags, and `SKILL.md` keeps only the judgement no single `--help` can carry. Eight defects an audit reproduced are fixed on the way.
+
+**Read Removed and Changed before upgrading.** The entrypoint is renamed, three flags are refused, and several replies have a different shape.
+
+### Removed
+
+- **`--as-ready`, `start`/`resume --foreground` and `status --include-external` — BREAKING.** In 720 runs of real use `--as-ready` was used zero times, `--include-external` zero times, and `--foreground` 13 times, nearly all by this repository's own tests; together they were the most complex part of the engine (a waiting-run chain and two ways to place a process group). They are refused now (exit 2). **Migration:** start the next round with `batch start --resume-from <group>` once the group has finished; let a background `log --run <id> --follow` do what `--foreground` did; resume a thread started outside the registry by its id with `resume <id> --sandbox <mode>`.
+- **The Codex thread database lookup — BREAKING.** `resume --last` no longer falls back to Codex's own thread list when the registry has no candidate, and `doctor` drops `thread_db`/`thread_db_readable`.
+- **`batch start`'s `projected_cost`**, and the usage the supervisor copied into `meta.json` to compute it. It arrived after the spend it estimated.
+- **`models --project`/`--runs-dir`**, which did nothing. Refused now (exit 2).
+- **`docs/wiki/`.** It was a second copy of what `--help` and `SKILL.md` own, and it had drifted from both.
+
+`waiting` is still read as a live state, so a registry written by an older release, holding a run that waits on another, is stopped, reaped and protected as before.
+
+### Changed
+
+- **The entrypoint is `scripts/cli_codex.py` — BREAKING.** It was `scripts/codex_bridge.py`. A permission rule naming the old path no longer matches; see the README for the rule to use instead. `SKILL.md`'s `allowed-tools` now uses `${CLAUDE_SKILL_DIR}`, so a symlinked or project install is pre-approved the same way as the plugin — but Claude Code applies a skill's `allowed-tools` only when the user invokes the skill, so a skill Claude picks on its own still needs that rule.
+- **Output shapes — BREAKING.** `status` without `--run`/`--thread`/`--group` lists a summary row per run (`run_id`, `label`, `state`, `group`, `idle_seconds`, a `last_agent_message` excerpt, and a still-writing flag) instead of full rows. `result --run` on a `--schema` run returns only `json`; the raw `message` and the parse error come back only when the message is not JSON (`message_preview` is gone).
+- **`--priority` together with `--no-priority` is an argparse usage error (exit 2)** instead of a JSON error (exit 1), and a prompt that happens to contain `--no-priority` after `--` is no longer refused.
+- **`batch clean --force` cannot remove the checkout of a live run** — a live member, or another group's or a single run's work inside that checkout. The refusal names the runs in the way and the `stop` command that ends them; `forced_past.removed_under_live_runs` is gone and `kept[]` carries that `stop`.
+- **The engine is split into `cli/`, `core/` and `codex/`.** Settings precedence, liveness, the SIGINT → SIGTERM → SIGKILL ladder, atomic JSON writes, locking and follower timing each have one implementation, where several hand-written copies had disagreed with each other.
+- **Every `--help` is rewritten** as the reference the model reads: what a flag does, its default, what it refuses, and the clause that lets the rule be re-derived. The rendered help totals 27,330 bytes, from 50,354 in 0.7.0, and nine claims that were false are corrected. Error messages say the condition, the target and the way out, and no longer assert causes nobody established.
+- **`SKILL.md` is rewritten** to hold only judgement between commands — sandbox choice, `resume` against `start`, when a verification loop ends, isolation and rounds in a batch, how to wait and when a run is collected — and `--help` holds the rest (118 lines to 67). Its draft was compared against a control without that judgement in real headless sessions over four scenarios; the draft followed a detached run in the background and checked a claim before relaying it where the control blocked in the foreground and relayed it unchecked, and it cleaned a batch's worktrees where the control left them.
+
+### Fixed
+
+- **`batch start` accepted a group-level `--prompt-file` or `--image` and did nothing with it.** Refused now; the task fields `prompt` and `image` are unchanged.
+- **`result --group` counted a member whose supervisor had died while Codex was still writing as failed**, and reported the group `partial`. It now uses the same still-writing judgement as `status --group`.
+- **An `OSError` inside a locked block was swallowed as a lock failure**, surfacing as `generator didn't stop after throw()`.
+- **`--timeout` started counting only after the thread id arrived, and its last step killed only the child.** The deadline now runs from launch, and the whole process group gets SIGINT, then SIGTERM, then SIGKILL, with `timed_out` recorded first. Descendants still alive after Codex exits are swept, for `stop` as well.
+- **A relative `CODEX_HOME` meant the supervisor and Codex looked in different places.** It is made absolute at the entrypoint.
+- **`log --follow-timeout` without `--follow` was silently accepted**, and `--follow-timeout 0` silently meant "no limit". Both are refused.
+- **The shared-tree warning resolved a member's sandbox in a different order from the run itself.** Task field, then group flag, then the thread's record, as the run does.
+- **A `batch clean --force` on a member whose `meta.json` could not be read removed its worktree and released its name**; the checkout is now kept and reported. A checkout left half-built by a kill inside `git worktree add` is recovered, and reported removed only once the source repository confirms its registration is gone.
+- **A long `last_agent_message` was clipped twice in a summary row**, so the reported number of omitted characters was wrong.
+
 ## [0.7.0] — 2026-08-28
 
 One command is gone, and the paragraph that pointed at it is replaced by what this repository has actually measured about verification loops that do not end.

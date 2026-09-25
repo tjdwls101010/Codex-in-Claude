@@ -147,20 +147,25 @@ def thread_turn_lock(runs_dir: Path, thread_ref):
 
 @contextlib.contextmanager
 def _flock_path(lock: Path):
-    fh = None
+    """Hold an exclusive lock on `lock` for the body.
+
+    Failing to take the lock degrades to unlocked access; an error raised by the body is the body's and propagates.
+    """
     try:
         lock.parent.mkdir(parents=True, exist_ok=True)
         fh = lock.open("a+")
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        yield
     except OSError:
         yield
+        return
+    try:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
     finally:
-        if fh is not None:
-            with contextlib.suppress(Exception):
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            with contextlib.suppress(Exception):
-                fh.close()
+        with contextlib.suppress(Exception):
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        with contextlib.suppress(Exception):
+            fh.close()
 
 
 def read_meta(run_dir: Path):
@@ -180,7 +185,6 @@ def meta_unreadable(run_dir: Path) -> bool:
     return (run_dir / "meta.json").is_file() and read_meta(run_dir) is None
 
 
-@contextlib.contextmanager
 def _meta_lock(run_dir: Path):
     """Serialise read-modify-write on one run's meta.json.
 
@@ -190,24 +194,7 @@ def _meta_lock(run_dir: Path):
     meta.json on purpose: locking the file being replaced would leave each writer
     holding a lock on an inode that is no longer the current one.
     """
-    lock = run_dir / ".meta.lock"
-    fh = None
-    try:
-        fh = lock.open("a+")
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        yield
-    except OSError:
-        # A registry we cannot lock (read-only mount, exotic filesystem) must
-        # still be usable: fall back to unserialised access rather than failing
-        # the run outright. Unique tmp names below keep this from corrupting
-        # anything; the only loss is the merge guarantee.
-        yield
-    finally:
-        if fh is not None:
-            with contextlib.suppress(Exception):
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            with contextlib.suppress(Exception):
-                fh.close()
+    return _flock_path(run_dir / ".meta.lock")
 
 
 def write_meta(run_dir: Path, meta: dict):

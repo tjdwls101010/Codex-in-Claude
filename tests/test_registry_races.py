@@ -103,6 +103,35 @@ class AStaleReap(unittest.TestCase):
         self.assertEqual(self.registry.reap(self.run_dir, self.registry.read_meta(self.run_dir))["state"], "orphaned")
 
 
+class AFailureInsideALockIsReportedAsItself(BridgeCase):
+    """A registry that cannot be locked degrades to unlocked access, but an error raised while the lock is held is not a lock failure and has to surface as what it is."""
+
+    def test_a_meta_write_that_fails_under_the_lock(self):
+        sup = self.detached_process()
+        rid = "20990101-000000-locked-0001"
+        self.write_meta(rid, {"run_id": rid, "state": "running", "supervisor_pid": sup, "pgid": sup,
+                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project)})
+        run_dir = self.runs_dir / rid
+        (run_dir / ".meta.lock").touch()
+        os.chmod(run_dir, 0o500)
+        self.addCleanup(os.chmod, run_dir, 0o700)
+        out = self.bridge("stop", "--run", rid, rc=1)
+        self.assertIn("Permission denied", out["error"])
+        self.assertNotIn("generator", out["error"])
+
+    def test_a_publish_that_fails_under_the_thread_lock(self):
+        first = self.bridge("start", "seed")
+        self.wait_state(first["run_id"])
+        self.bridge("resume", first["run_id"], "warm the lock file")
+        for rid in self.run_dirs():
+            self.wait_state(rid)
+        os.chmod(self.runs_dir, 0o500)
+        self.addCleanup(os.chmod, self.runs_dir, 0o700)
+        out = self.bridge("resume", first["run_id"], "cannot claim a directory", rc=1)
+        self.assertIn("Permission denied", out["error"])
+        self.assertNotIn("generator", out["error"])
+
+
 class ManyRunsAtOnce(BridgeCase):
 
     def test_same_second_same_label_starts_all_get_their_own_run(self):

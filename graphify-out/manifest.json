@@ -18,16 +18,16 @@
     "semantic_hash": "d86ce5f05ea8e777a920aae592af344e"
   },
   ".claude/skills/codex/scripts/_batch.py": {
-    "mtime": 1787913512.534789,
-    "seen": 1788019097.7804852,
-    "ast_hash": "e014e3fd2018d69829d497bf697e3f7e",
-    "semantic_hash": "e014e3fd2018d69829d497bf697e3f7e"
+    "mtime": 1790335853.0986102,
+    "seen": 1790335854.589032,
+    "ast_hash": "c8a35a69f687ca1725fb21cc2fce5d9e",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/_codex.py": {
-    "mtime": 1787913512.5353634,
-    "seen": 1788019097.7804859,
-    "ast_hash": "e7626d13772097e036d30888466ec669",
-    "semantic_hash": "e7626d13772097e036d30888466ec669"
+    "mtime": 1790335853.0992482,
+    "seen": 1790335854.589033,
+    "ast_hash": "36df407b1473c58b0a5f0d5a94d1a785",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/_events.py": {
     "mtime": 1787767552.6865268,
@@ -36,10 +36,10 @@
     "semantic_hash": "e4b98c0ee69b0afd29e759818c258994"
   },
   ".claude/skills/codex/scripts/_registry.py": {
-    "mtime": 1786672294.394717,
-    "seen": 1788019097.7804859,
-    "ast_hash": "e19d35141261817d032fa059049ef4d9",
-    "semantic_hash": "e19d35141261817d032fa059049ef4d9"
+    "mtime": 1790335853.1000433,
+    "seen": 1790335854.589034,
+    "ast_hash": "59ae4b8e9ac7483b93d4b00231709278",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/_run.py": {
     "mtime": 1787913512.535702,
@@ -48,22 +48,22 @@
     "semantic_hash": "55da12278dbc11589cb4dbf8fe251cbe"
   },
   ".claude/skills/codex/scripts/_util.py": {
-    "mtime": 1785801960.9853377,
-    "seen": 1788019097.7804868,
-    "ast_hash": "6883f83301a9c9c6f0bf7e70bf9d803e",
-    "semantic_hash": "6883f83301a9c9c6f0bf7e70bf9d803e"
+    "mtime": 1790335853.1006262,
+    "seen": 1790335854.589035,
+    "ast_hash": "596cd5f545c56d5ea0c8d1e74e760794",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/_worktree.py": {
-    "mtime": 1787913512.536028,
-    "seen": 1788019097.7804868,
-    "ast_hash": "b1a9c1d3a6cf8440557c4619188842e7",
-    "semantic_hash": "b1a9c1d3a6cf8440557c4619188842e7"
+    "mtime": 1790335853.1013024,
+    "seen": 1790335854.589035,
+    "ast_hash": "fd7a9a66f184a7cd5bc1e4cbd93bb6eb",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex_bridge.py": {
-    "mtime": 1787913512.5363944,
-    "seen": 1788019097.780488,
-    "ast_hash": "43249c97e406feb1ad42ffaeb5bd8877",
-    "semantic_hash": "43249c97e406feb1ad42ffaeb5bd8877"
+    "mtime": 1790335853.1021926,
+    "seen": 1790335854.589035,
+    "ast_hash": "eb1393b18117c2337d81b5b12b72609a",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/SKILL.md": {
     "mtime": 1787913512.5343533,
@@ -120,9 +120,9 @@
     "semantic_hash": ""
   },
   "tests/support/fake_codex/codex": {
-    "mtime": 1790331852.8387053,
-    "seen": 1790331857.2153869,
-    "ast_hash": "5fa2c623db8508201da22d44c60b9b84",
+    "mtime": 1790335853.1028557,
+    "seen": 1790335854.589037,
+    "ast_hash": "b3c2c34598854bed3af27f2435d416b8",
     "semantic_hash": ""
   },
   "tests/support/harness.py": {
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "tests/test_batch.py": {
-    "mtime": 1790331852.842748,
-    "seen": 1790331857.215391,
-    "ast_hash": "8552bf6cfd4078a408341b226712b259",
+    "mtime": 1790335853.103484,
+    "seen": 1790335854.58904,
+    "ast_hash": "23ecce957ecefcc63e81d5eb5adc350d",
     "semantic_hash": ""
   },
   "tests/test_catalog.py": {
@@ -174,15 +174,15 @@
     "semantic_hash": ""
   },
   "tests/test_cli_contract.py": {
-    "mtime": 1790331852.843343,
-    "seen": 1790331857.215391,
-    "ast_hash": "9b4c79aed8810db4631e60a76282b075",
+    "mtime": 1790335853.1040378,
+    "seen": 1790335854.589042,
+    "ast_hash": "71b3e0bf8272b04b0942f5d0cd57aa15",
     "semantic_hash": ""
   },
   "tests/test_doctor.py": {
-    "mtime": 1790331852.8436239,
-    "seen": 1790331857.215392,
-    "ast_hash": "a6092fb87d941656786db2ba3bb42789",
+    "mtime": 1790335853.10449,
+    "seen": 1790335854.589042,
+    "ast_hash": "4ff62bfbe07d4e71933bf047aacefbf7",
     "semantic_hash": ""
   },
   "tests/test_events.py": {
@@ -198,15 +198,15 @@
     "semantic_hash": ""
   },
   "tests/test_observe.py": {
-    "mtime": 1790331852.8444853,
-    "seen": 1790331857.215393,
-    "ast_hash": "4c423287cb6aea5bea55ef03badfc392",
+    "mtime": 1790335853.1049848,
+    "seen": 1790335854.589043,
+    "ast_hash": "e012e3eb50efdd95d59cd00e6adeb75c",
     "semantic_hash": ""
   },
   "tests/test_registry_races.py": {
-    "mtime": 1790331852.8447757,
-    "seen": 1790331857.215393,
-    "ast_hash": "93bc6373fc05505d55e7bd972acb4e18",
+    "mtime": 1790335853.105422,
+    "seen": 1790335854.5890439,
+    "ast_hash": "c31da456e1c448f9173708a47b580c1a",
     "semantic_hash": ""
   },
   "tests/test_resume.py": {
@@ -216,15 +216,15 @@
     "semantic_hash": ""
   },
   "tests/test_run_lifecycle.py": {
-    "mtime": 1790331852.8457031,
-    "seen": 1790331857.215394,
-    "ast_hash": "9d01d7566d920e61d51d5621ad83da25",
+    "mtime": 1790335853.1059854,
+    "seen": 1790335854.589045,
+    "ast_hash": "4be3d57680859adb283aa9712aa01ccc",
     "semantic_hash": ""
   },
   "tests/test_worktree.py": {
-    "mtime": 1790331852.8459954,
-    "seen": 1790331857.215395,
-    "ast_hash": "123d8e1848ac5ff6ef0c91f2018d2177",
+    "mtime": 1790335853.1066163,
+    "seen": 1790335854.589045,
+    "ast_hash": "e01876a15fa94d95a78e9a21a2fa9e9f",
     "semantic_hash": ""
   },
   ".claude/plans/260925/codex-skill-rewrite.md": {

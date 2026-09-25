@@ -38,12 +38,12 @@ def spawn_supervised(run_dir: Path) -> int:
     return p.pid
 
 
-def end_group(pgid, *, grace, done, before_kill=None):
-    """SIGINT, then SIGTERM, then SIGKILL to a process group, stopping at the first rung after which `done()` holds; the group is then swept with SIGKILL, because a descendant can outlive Codex.
+def end_group(pgid, *, grace, done, before_kill=None, every_rung=False, sent=None):
+    """SIGINT, then SIGTERM, then SIGKILL to a process group, then a SIGKILL sweep, because a descendant can outlive Codex.
 
-    `before_kill` runs before any SIGKILL — a supervisor ending its own group records its outcome there. Returns the signals actually sent. PermissionError propagates.
+    Each rung waits up to its time for `done()`. By default the ladder stops at the first rung after which `done()` holds (a stop ends once the run's own processes are gone); with `every_rung` SIGTERM is sent even so, so leftovers get the chance to exit cleanly before SIGKILL. `before_kill` runs before any SIGKILL — a supervisor ending its own group records its outcome there. Signals actually sent are appended to `sent` (returned), which survives a PermissionError the caller catches.
     """
-    sent = []
+    sent = [] if sent is None else sent
     for sig, wait in ((signal.SIGINT, grace), (signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
         if sig == signal.SIGKILL and before_kill:
             before_kill()
@@ -55,7 +55,7 @@ def end_group(pgid, *, grace, done, before_kill=None):
         deadline = time.time() + wait
         while time.time() < deadline and not done():
             time.sleep(0.1)
-        if done():
+        if done() and (not every_rung or sig == signal.SIGTERM):
             break
     if sent[-1] != "SIGKILL":
         if before_kill:
@@ -72,11 +72,12 @@ def stop_run(run_dir: Path, meta: dict, grace: float = DEFAULT_GRACE):
     result = {"run_id": meta.get("run_id"), "pgid": pgid}
     if not pgid:
         return {**result, "signalled": False, "reason": "no process group recorded", "state": meta.get("state")}
+    sent = []
     try:
-        sent = end_group(pgid, grace=grace,
-                         done=lambda: not pid_alive(meta.get("supervisor_pid")) and not pid_alive(meta.get("codex_pid")))
+        end_group(pgid, grace=grace, sent=sent,
+                  done=lambda: not pid_alive(meta.get("supervisor_pid")) and not pid_alive(meta.get("codex_pid")))
     except PermissionError:
-        sent, result["error"] = [], f"not permitted to signal process group {pgid}"
+        result["error"] = f"not permitted to signal process group {pgid}"
     result["signals_sent"] = sent
     result["signalled"] = bool(sent)
     m = update_meta_if(run_dir, ACTIVE_STATES, state="interrupted", ended_at=now_iso())
@@ -150,7 +151,8 @@ def supervise(run_dir: Path) -> int:
             code = proc.poll()
             update_meta(run_dir, exit_code=code if code is not None else -signal.SIGKILL, **fields)
 
-        end_group(pgid or proc.pid, grace=DEFAULT_GRACE, done=lambda: proc.poll() is not None, before_kill=record)
+        end_group(pgid or proc.pid, grace=DEFAULT_GRACE, done=lambda: proc.poll() is not None, before_kill=record,
+                  every_rung=True)
         rc = proc.wait()
         update_meta(run_dir, exit_code=rc, **fields)
         return rc

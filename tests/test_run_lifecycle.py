@@ -85,6 +85,14 @@ class TerminalStates(BridgeCase):
                 self.assertTrue(wait_until(lambda: not alive(grandchild), timeout=5), "a process of the run outlived its deadline")
                 self.assertFalse(alive(self.meta(out["run_id"])["codex_pid"]))
 
+    def test_a_deadline_gives_leftover_descendants_sigterm_before_sigkill(self):
+        pidfile, mark = self.tmp / "grandchild.pid", self.tmp / "got-term"
+        out = self.bridge("start", "--timeout", 1, "x", env={"FAKE_CODEX_HANG": 60, "FAKE_CODEX_GRANDCHILD": pidfile,
+                                                             "FAKE_CODEX_GRANDCHILD_TERM_MARK": mark})
+        self.grandchild(pidfile)
+        self.assertEqual(self.wait_state(out["run_id"], timeout=40)["state"], "timed_out")
+        self.assertTrue(wait_until(mark.exists, timeout=5), "a descendant that outlived SIGINT never got SIGTERM")
+
     def test_stop_ends_a_descendant_its_codex_left_behind(self):
         pidfile = self.tmp / "grandchild.pid"
         out, _m = self.running("x", FAKE_CODEX_GRANDCHILD=pidfile)

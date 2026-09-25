@@ -1,4 +1,4 @@
-"""Talking to the Codex CLI: argv composition, spawning, and its thread database.
+"""Talking to the Codex CLI: argv composition, the model catalog, and spawning.
 
 Two invariants live in this module and unify the whole bridge. Both are forced
 by Codex's flag surface differing per subcommand — `exec` has `-s` and `-C`;
@@ -19,18 +19,14 @@ import os
 import re
 import shutil
 import signal
-import sqlite3
 import subprocess
 import sys
 import time
-import unicodedata
 from pathlib import Path
 
 from _events import final_usage, first_thread_id
-from _registry import (
-    TERMINAL_STATES, read_meta, reap, still_writing, update_meta,
-)
-from _util import codex_home, nfc, now_iso
+from _registry import read_meta, update_meta
+from _util import codex_home, now_iso
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 
@@ -446,133 +442,13 @@ def spawn_supervised(run_dir: Path) -> int:
     return p.pid
 
 
-# How often a waiting supervisor asks whether its predecessor is done. A whole
-# turn is minutes; the cost of a slower tick is latency nobody notices, and the
-# cost of a faster one is a poll loop reading meta.json many times a second for
-# the entire length of somebody else's turn.
-WAIT_POLL = 0.5
-
-# How far a chain is followed before the walk gives up. `waits_for` is a field
-# on disk like any other, so a hand-edited or half-written cycle must exhaust a
-# bound rather than hang the supervisor. Matches `_run.wait_chain`'s limit,
-# which is the same walk made by the guard that let this run be created.
-WAIT_CHAIN_LIMIT = 64
-
-
-def await_predecessor(run_dir: Path, meta: dict, interrupted: dict):
-    """Block until the run this one is chained behind reaches a terminal state.
-
-    Returns the refreshed meta, or None if the wait was interrupted.
-
-    The waiting happens here, inside a supervisor that already exists, rather
-    than in a queue that some other process drains. That is what keeps
-    `--as-ready` clear of D34, where a queued run with no supervisor of its own
-    was branded `orphaned` within thirty seconds of being queued.
-
-    `supervisor_pid` and `pgid` are recorded BEFORE the wait, not after Codex
-    spawns as they are on the ordinary path. Everything that judges whether a
-    run is still alive asks those two fields, and a wait is unbounded — leaving
-    them null until Codex starts would make every waiter look like a run whose
-    supervisor had died, and make `stop` unable to signal it. `pgid` is valid
-    this early because `spawn_supervised` starts this process with
-    `start_new_session=True`, so it is already its own process-group leader and
-    Codex will join that same group.
-    """
-    runs_dir = run_dir.parent
-    update_meta(run_dir, state="waiting", supervisor_pid=os.getpid(),
-                pgid=os.getpgid(os.getpid()))
-    while True:
-        if interrupted["flag"]:
-            update_meta(run_dir, state="interrupted", ended_at=now_iso(),
-                        error="interrupted while waiting for "
-                              f"{meta['waits_for']} to finish")
-            return None
-        # The WHOLE chain, not just the direct predecessor. `create_run` was let
-        # past the concurrent-turn guard on the promise that everything ahead of
-        # this run finishes first, and watching one link does not keep it: a
-        # middle waiter whose supervisor is killed is `orphaned` — terminal — the
-        # moment this loop reaps it, so this run would start its turn while its
-        # *grandparent* was still running one on the same thread. Two turns on
-        # one rollout file is the F4 corruption the guard exists to prevent, and
-        # the chain exemption is what opened the door to it: without that
-        # exemption this run could not have been created at all.
-        pending, unreadable, cyclic = [], None, False
-        seen, cur = set(), meta["waits_for"]
-        while cur and len(seen) < WAIT_CHAIN_LIMIT:
-            if cur in seen:
-                # `waits_for` is a field on disk, so a hand-edited or
-                # half-written cycle is possible — and a cycle can never
-                # resolve, because every run in it is waiting for another run in
-                # it. Bounding the walk keeps this tick finite; saying so is
-                # what keeps the run from waiting forever on an answer that
-                # cannot arrive, which is the failure `reap` refuses.
-                cyclic = True
-                break
-            seen.add(cur)
-            pmeta = read_meta(runs_dir / cur)
-            if pmeta is None:
-                unreadable = cur
-                break
-            # `reap`, not `read_meta` alone: a predecessor whose supervisor died
-            # mid-turn says `running` until something calls `reap` on that
-            # specific run, and nothing else here ever would. `status --group`
-            # resolves only its own group's members, so a caller following phase
-            # 2 never touches phase 1 — and every waiter behind it would block
-            # forever.
-            pmeta = reap(runs_dir / cur, pmeta)
-            # A live Codex counts as pending whatever the state says. A link
-            # whose supervisor died keeps its `codex exec` — Unix does not
-            # cascade-kill children — and `reap` correctly calls that
-            # `orphaned`, meaning "nobody is recording this", not "nothing is
-            # running". Releasing on that would put this run's turn onto a
-            # rollout file the other process is still appending to.
-            if (pmeta.get("state") not in TERMINAL_STATES
-                    or still_writing(pmeta)):
-                pending.append(cur)
-            cur = pmeta.get("waits_for")
-        if cyclic:
-            update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
-                        error="the chain of runs this one waits for loops back "
-                              "on itself, so it can never finish")
-            return None
-        if unreadable is not None:
-            # Its directory is gone, or its meta will not parse. Either way this
-            # supervisor can no longer learn when the turn it is chained behind
-            # ends, and blocking forever on a question that can never be answered
-            # is the failure `reap` exists to refuse.
-            update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
-                        predecessor_state="unreadable",
-                        error=f"a run this one waits for ({unreadable}) can no "
-                              f"longer be read, so there is nothing left to "
-                              f"wait for")
-            return None
-        if not pending:
-            # Re-checked here, not only at the top of the loop. A stop landing
-            # between the two would otherwise be swallowed: the wait ends, the
-            # caller's signal is never consulted again, and `supervise` spawns
-            # Codex for a full un-signalled turn. That is worse than the
-            # already-accepted race where a turn is nearly done, because here
-            # nothing has started yet and the stop was entirely in time.
-            if interrupted["flag"]:
-                update_meta(run_dir, state="interrupted", ended_at=now_iso(),
-                            error="interrupted just as the wait ended")
-                return None
-            direct = read_meta(runs_dir / meta["waits_for"]) or {}
-            update_meta(run_dir, predecessor_state=direct.get("state"))
-            return read_meta(run_dir) or meta
-        time.sleep(WAIT_POLL)
-
-
-def supervise(run_dir: Path, timeout=None) -> int:
+def supervise(run_dir: Path) -> int:
     """Spawn Codex, record what happened, exit. Runs as its own process."""
     meta = read_meta(run_dir)
     if not meta:
         return 1
-    if timeout is None:
-        # A background run re-execs `__supervise --run-dir`, so nothing can be
-        # handed to it on the command line. meta.json is the only channel that
-        # survives that hop, which is why the deadline is recorded there.
-        timeout = meta.get("timeout_seconds")
+    # The supervisor is a re-exec of `__supervise --run-dir`, so meta.json is the only channel the deadline survives.
+    timeout = meta.get("timeout_seconds")
     interrupted = {"flag": False}
 
     def on_signal(signum, _frame):
@@ -587,40 +463,12 @@ def supervise(run_dir: Path, timeout=None) -> int:
         except ValueError:
             pass
 
-    if meta.get("waits_for"):
-        meta = await_predecessor(run_dir, meta, interrupted)
-        if meta is None:
-            return 130
-
     events_path = run_dir / "events.jsonl"
     out = events_path.open("ab")
     err = (run_dir / "stderr.log").open("ab")
-    kwargs = {}
-    if meta.get("foreground"):
-        # Foreground only: the supervisor *is* the caller's process here, so
-        # Codex needs its own group — for a timeout to kill the tree without
-        # killing the caller, and equally so that the `pgid` this run records
-        # is its own. Gated on `timeout is not None` until measured, which meant
-        # a foreground run without one recorded the *caller's* process group and
-        # a later `stop --run` would have signalled the caller. A run's recorded
-        # pgid has to belong to the run whatever else is true of it.
-        #
-        # Doing the same in the background would be a silent bug rather than a
-        # nicety. There the supervisor is already a session leader, and Codex
-        # shares its group — which is what lets `stop`'s killpg reach the
-        # supervisor, whose handler records `interrupted`. Split them and the
-        # signal reaches only Codex, the handler never fires, and a deliberately
-        # stopped run is recorded `failed`. Since batch members routinely carry
-        # --timeout, that would surface as intermittent lifecycle-test failures
-        # that read as flakiness.
-        kwargs["start_new_session"] = True
     if not Path(meta["cwd"]).is_dir():
         # `Popen` raises the same FileNotFoundError for a missing cwd as for a
-        # missing executable, and the handler below reported both as "codex not
-        # found on PATH". The window between recording a cwd and using it was
-        # milliseconds until `--as-ready` made it as long as somebody else's
-        # turn — long enough for `batch clean --force` to remove the worktree a
-        # waiter is chained into — so the two have to be told apart.
+        # missing executable, so the two have to be told apart here.
         update_meta(run_dir, state="failed", exit_code=1, ended_at=now_iso(),
                     error=f"the working directory recorded for this run is gone: "
                           f"{meta['cwd']}")
@@ -630,7 +478,7 @@ def supervise(run_dir: Path, timeout=None) -> int:
     try:
         proc = subprocess.Popen(
             meta["argv"], cwd=meta["cwd"], stdout=out, stderr=err,
-            stdin=subprocess.DEVNULL, **kwargs)
+            stdin=subprocess.DEVNULL)
     except FileNotFoundError:
         update_meta(run_dir, state="failed", exit_code=127, ended_at=now_iso(),
                     error="codex not found on PATH")
@@ -639,6 +487,7 @@ def supervise(run_dir: Path, timeout=None) -> int:
         out.close()
         err.close()
 
+    # Codex stays in this supervisor's process group (the supervisor is a session leader), which is what lets `stop`'s killpg reach the supervisor, whose handler records `interrupted`.
     # The deadline counts from launch: the thread-id wait below is part of the time the run was given.
     ends_at = time.time() + timeout if timeout is not None else None
     try:
@@ -680,13 +529,10 @@ def supervise(run_dir: Path, timeout=None) -> int:
                 rc = proc.wait(timeout=wait)
             except subprocess.TimeoutExpired:
                 pass
-        # In the background this supervisor is in the group it is about to SIGKILL, so the outcome is written first.
+        # This supervisor is in the group it is about to SIGKILL, so the outcome is written first.
         update_meta(run_dir, exit_code=rc if rc is not None else -signal.SIGKILL, **fields)
         with contextlib.suppress(ProcessLookupError):
             os.killpg(group, signal.SIGKILL)
-        if rc is None:
-            rc = proc.wait()
-            update_meta(run_dir, exit_code=rc)
         return rc
 
     if not tid:
@@ -695,69 +541,9 @@ def supervise(run_dir: Path, timeout=None) -> int:
     fields = {"state": state, "exit_code": rc, "ended_at": now_iso()}
     if tid:
         fields["thread_id"] = tid
-    # Copy final usage into meta. It is already in events.jsonl, but leaving it
-    # there means anything wanting the number has to scan the whole stream —
-    # and `batch start`'s projected_cost wants it for several past runs at once,
-    # before spawning anything. The supervisor is the one place that pays this
-    # scan exactly once, at a point where the stream is complete.
+    # `batch start`'s projected_cost reads final usage from meta for several past runs at once.
     usage = final_usage(events_path)
     if usage:
         fields["usage"] = usage
     update_meta(run_dir, **fields)
     return rc
-
-
-# -- Codex's own thread database --------------------------------------------
-# The filename is version-stamped (state_5.sqlite today), so the schema WILL
-# change. Every access here is defensive: introspect the columns, select only
-# what exists, and return nothing rather than raising. A Codex upgrade must
-# degrade this feature, never break the skill outright.
-
-def state_db_path():
-    home = codex_home()
-    cands = list(home.glob("state_*.sqlite"))
-    if cands:
-        def version(p):
-            m = re.search(r"state_(\d+)\.sqlite$", p.name)
-            return int(m.group(1)) if m else -1
-        return sorted(cands, key=version)[-1]
-    legacy = home / "state.sqlite"
-    return legacy if legacy.exists() else None
-
-
-def query_threads(cwd_filter=None, limit=50):
-    """Threads Codex knows about, including ones this skill never started.
-
-    This is what lets Claude continue a session the user began in the Codex TUI.
-    """
-    db = state_db_path()
-    if not db or not db.exists():
-        return []
-    want = ["id", "rollout_path", "cwd", "title", "source", "model",
-            "reasoning_effort", "sandbox_policy", "approval_mode",
-            "cli_version", "updated_at"]
-    try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2.0)
-        try:
-            cols = {r[1] for r in con.execute("PRAGMA table_info(threads)")}
-            sel = [c for c in want if c in cols]
-            if not sel or "id" not in sel:
-                return []
-            order = " ORDER BY updated_at DESC" if "updated_at" in cols else ""
-            params = [limit]
-            where = ""
-            if cwd_filter and "cwd" in cols:
-                # macOS stores non-ASCII filenames as NFD while argv/JSON carry
-                # NFC, so a Korean cwd never string-equals its own column value
-                # unless both normal forms are tried.
-                where = " WHERE cwd = ? OR cwd = ?"
-                params = [nfc(str(cwd_filter)),
-                          unicodedata.normalize("NFD", str(cwd_filter))] + params
-            rows = con.execute(
-                f"SELECT {','.join(sel)} FROM threads{where}{order} LIMIT ?",
-                params).fetchall()
-        finally:
-            con.close()
-    except Exception:
-        return []
-    return [dict(zip(sel, row)) for row in rows]

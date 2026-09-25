@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import unittest
 
 from support.harness import BridgeCase, FIXTURES
@@ -209,6 +210,32 @@ class WhatReachesCodex(BridgeCase):
             with self.subTest(args=args):
                 self.bridge("start", *args, "x", rc=1)
         self.assertEqual(self.runs_invoked(), [])
+
+
+class RemovedSurface(BridgeCase):
+    """Flags nothing used, removed from the parser rather than left to accept and do nothing."""
+
+    def test_each_is_refused_by_the_parser_before_anything_is_claimed(self):
+        for args in (("start", "--foreground", "x"), ("resume", "--foreground", "r", "x"),
+                     ("status", "--include-external"),
+                     ("batch", "start", "--group", "g", "--resume-from", "p", "--as-ready", "--task", "x")):
+            with self.subTest(args=args):
+                p = self.bridge_raw(*args)
+                self.assertEqual(p.returncode, 2, p.stdout)
+                self.assertIn("unrecognized arguments", p.stderr)
+        self.assertFalse(self.runs_dir.exists())
+
+    def test_last_never_reaches_past_the_registry(self):
+        con = sqlite3.connect(self.codex_home / "state_5.sqlite")
+        con.execute("CREATE TABLE threads (id TEXT, cwd TEXT, title TEXT, updated_at INTEGER)")
+        con.execute("INSERT INTO threads VALUES ('019f0000-0000-7000-8000-0000000000aa', ?, 't', 1)",
+                    (str(self.project),))
+        con.commit()
+        con.close()
+        refused = self.bridge("resume", "--last", "--sandbox", "read-only", "go on", rc=1)
+        self.assertIn("error", refused)
+        self.assertEqual(self.runs_invoked(), [])
+        self.assertNotIn("thread_db", self.bridge("doctor"))
 
 
 class TheRegistryGoesWhereItIsTold(BridgeCase):

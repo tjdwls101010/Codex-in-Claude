@@ -136,7 +136,7 @@ def thread_turn_lock(runs_dir: Path, thread_ref):
     the project before it can answer, so it widens with the registry.
 
     Held only across check-and-publish, never across the run itself — a
-    foreground turn would otherwise hold it for minutes and turn a loud refusal
+    turn would otherwise hold it for minutes and turn a loud refusal
     into a silent wait. A registry that cannot be locked degrades to the old
     check-then-act rather than refusing to run, same as `_meta_lock`.
     """

@@ -607,8 +607,7 @@ def plan_worktrees(tasks, args, project, runs_dir):
     return eligible, base, None
 
 
-def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
-                       as_ready=False):
+def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     """Turn each task into a resume of the corresponding member of `previous`.
 
     The pairing is positional against the manifest's member list, and that is
@@ -686,17 +685,9 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
         if (reaped.get("state") not in TERMINAL_STATES
                 or still_writing(reaped)):
             live.append({"run_id": m["run_id"], "state": reaped.get("state")})
-    unreadable = [m for m in live if m.get("state") == "unreadable"]
-    if live and not force and not as_ready:
+    if live and not force:
         fail(f"group {previous!r} still has members running; resuming a thread "
              f"mid-turn would run two turns on it at once", running=live)
-    if as_ready and unreadable:
-        # `--as-ready` waits for a predecessor to reach a terminal state, and a
-        # member whose meta will not parse can never be observed reaching one.
-        # Its waiter would block forever on a question that has no answer, so
-        # this is the one liveness case the flag cannot absorb.
-        fail(f"group {previous!r} has member(s) whose meta.json will not parse, "
-             f"so nothing can wait for them to finish", unreadable=unreadable)
 
     paired = []
     for slot, (task, prev) in enumerate(zip(tasks, prior)):
@@ -711,49 +702,9 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False,
                  f"that target or drop the 'resume' field to be paired with "
                  f"{prev['run_id']}")
         if named:
-            # A task that names its own target keeps it — and under
-            # `--as-ready` it waits for THAT target, not for the member it was
-            # positionally paired with. Leaving `waits_for` unset reported the
-            # task as paired while it started immediately, so the one shape the
-            # flag promises to order was the one it did not.
-            #
-            # Resolved to a run id here, not passed through: `resume` accepts a
-            # run id, a thread id or a run-id prefix, while `waits_for` is
-            # joined to the runs directory as a name and keyed on `run_id`. A
-            # thread id stored raw made the supervisor report the target
-            # "can no longer be read" while `status` showed it completed and
-            # perfectly readable. A ref outside the registry can never be
-            # observed reaching a terminal state at all, which is the same
-            # reason an unreadable member is refused above.
-            if as_ready:
-                _rd, resolved = find_run(runs_dir, named)
-                if not resolved:
-                    # Unreadable and absent are different answers with
-                    # different remedies, and `find_run` returns the same
-                    # `None` for both. This is the sixth site to make that
-                    # mistake — `refuse_unresolved_run` exists because of the
-                    # first five, and `pair_with_previous` already gets it
-                    # right fifty lines above.
-                    if _rd is not None and meta_unreadable(_rd):
-                        fail(f"task {slot} names {named!r} to resume, and "
-                             f"--as-ready has to watch it reach a terminal "
-                             f"state — but that run's meta.json will not parse, "
-                             f"so its state cannot be read",
-                             task=slot, resume=named, run_dir=str(_rd),
-                             events=str(_rd / "events.jsonl"))
-                    fail(f"task {slot} names {named!r} to resume, and "
-                         f"--as-ready has to watch it reach a terminal state — "
-                         f"but this project's registry has no such run, so "
-                         f"nothing can be observed about it",
-                         task=slot, resume=named)
-                paired.append({**task, "waits_for": resolved["run_id"]})
-            else:
-                paired.append(task)
+            paired.append(task)
             continue
-        entry = {**task, "kind": "resume", "resume": prev["run_id"]}
-        if as_ready:
-            entry["waits_for"] = prev["run_id"]
-        paired.append(entry)
+        paired.append({**task, "kind": "resume", "resume": prev["run_id"]})
     return paired, [m["run_id"] for m in prior]
 
 
@@ -773,24 +724,6 @@ def cmd_batch_start(args):
              "--worktree here, so nothing would use it. Members share the "
              "caller's tree, which is whatever is checked out in it now.",
              base=args.base)
-    # `--foreground` used to be accepted here and refused below. The parser no
-    # longer offers it, so argparse refuses it first and this command never sees
-    # it. Why it can never work is unchanged: `task_args` copies the caller's
-    # whole namespace onto each member and `create_run` supervises synchronously
-    # whenever it sees it, so the spawn loop waits out each member's entire turn
-    # before starting the next — a batch of three two-second members takes six
-    # seconds and reports the same shape it would have concurrently.
-    # Both refusals sit here, above `claim_group`, for the reason the two above
-    # them do: a combination that silently means nothing is worse than an error,
-    # and refusing after the claim would burn a single-use group name on a typo.
-    if getattr(args, "as_ready", False) and not getattr(args, "resume_from", None):
-        fail("--as-ready says when each member may start: as soon as the member "
-             "it continues has finished. Without --resume-from there is nothing "
-             "for any member to continue, so the flag would decide nothing.")
-    if getattr(args, "as_ready", False) and getattr(args, "force", False):
-        fail("--as-ready and --force are opposite answers to the same question. "
-             "--force starts a member while its predecessor's turn is still "
-             "running; --as-ready waits for that turn to end. Pass one.")
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args, runs_dir)
@@ -798,8 +731,7 @@ def cmd_batch_start(args):
     previous = getattr(args, "resume_from", None)
     if previous:
         tasks, paired_with = pair_with_previous(
-            tasks, runs_dir, previous, force=getattr(args, "force", False),
-            as_ready=getattr(args, "as_ready", False))
+            tasks, runs_dir, previous, force=getattr(args, "force", False))
 
     # Claim the name before spawning anything. D36: a reused group name would
     # make "the members of p1" ambiguous, and --resume-from pairs positionally
@@ -931,19 +863,14 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
     kind = item["kind"]
     if kind == "resume":
         rd, base = find_run(runs_dir, item["resume"])
-        # Only `pair_with_previous` knows which member this task was paired
-        # with, and it is the only thing that can: a run records the group it
-        # belongs to, never its slot in one. Carried on the task itself so the
-        # supervisor has it in meta.json before it starts waiting.
-        waits_for = item.get("waits_for")
         if not base:
             # Not in the registry: it may still be a real Codex thread started
             # outside this skill, so pass the ref through rather than refusing.
             return create_run(ns, kind="resume", thread_ref=item["resume"],
-                              group=group, batch=batch, waits_for=waits_for)
+                              group=group, batch=batch)
         return create_run(ns, kind="resume", base=base,
                           thread_ref=base.get("thread_id"), group=group,
-                          batch=batch, waits_for=waits_for)
+                          batch=batch)
     return create_run(ns, kind="start", group=group, batch=batch,
                       worktree_base=worktree_base)
 

@@ -89,30 +89,38 @@ class TheSkillTextPointsAtRealThings(unittest.TestCase):
 
     def test_every_command_and_flag_named_exists(self):
         commands = {" ".join(path) for path in self.flags if path}
+        groups = {path[0] for path in self.flags if len(path) > 1}
         all_flags = set().union(*self.flags.values())
         missing = []
         for span in re.findall(r"`([^`]+)`", self.body):
             words = span.split()
             if not words:
                 continue
+            if words[0] in groups and len(words) > 1 and not words[1].startswith("-") and " ".join(words[:2]) not in commands:
+                missing.append(f"{span}: no such subcommand")
+                continue
             path = tuple(words[:2]) if " ".join(words[:2]) in commands else tuple(words[:1])
             if " ".join(path) in commands:
                 for flag in (w for w in words if w.startswith("--")):
                     if flag not in self.flags[path]:
                         missing.append(f"{span}: {flag}")
+            elif any(w.startswith("--") for w in words) and not words[0].startswith(("--", "<")):
+                missing.append(f"{span}: no such command")
             else:
                 for flag in (w for w in words if w.startswith("--") and w != "--help"):
                     if flag not in all_flags:
                         missing.append(f"{span}: {flag}")
         self.assertEqual(missing, [])
 
-    def test_every_reply_field_named_is_one_the_code_writes(self):
+    def test_every_field_named_is_a_key_the_code_writes(self):
+        # Catches a renamed or misspelt field; a key the code writes only into its own records would still pass.
         code = "\n".join(p.read_text() for p in SCRIPTS.rglob("*.py"))
         # Names Codex owns rather than this skill's replies.
         codex_owned = {"turn_context"}
-        fields = {span for span in re.findall(r"`([a-z]+_[a-z_]+)`", self.body)} - codex_owned
+        commands = {path[0] for path in self.flags if path}
+        fields = set(re.findall(r"`([a-z][a-z_]*)`", self.body)) - codex_owned - commands
         self.assertTrue(fields, "the check found no field names to check")
-        self.assertEqual(sorted(f for f in fields if f'"{f}"' not in code), [])
+        self.assertEqual(sorted(f for f in fields if not re.search(rf'"{f}"\s*:|\["{f}"\]', code)), [])
 
     def test_no_provenance(self):
         self.assertEqual(re.findall(r"\b[Mm]easured\b|\b[RDBFC][0-9]{1,2}\b|\bV-[0-9]+\b|\baudit\b|\bfield report\b|\b[0-9]+ sessions\b", self.text), [])

@@ -44,8 +44,16 @@ def control_text(draft: str) -> str:
     return f"{front}\n---\n\n# Codex as a managed subagent\n\n{call}\n"
 
 
+def stop_runs(repo: Path):
+    """Detached runs outlive the session that started them; stop them so none keeps writing into this repo or into its replacement on a rerun."""
+    if (repo / ".codex-runs").exists():
+        subprocess.run(["python3", str(SKILL / "scripts" / "cli_codex.py"), "stop", "--project", str(repo), "--all"],
+                       capture_output=True, text=True)
+
+
 def setup(out: Path, scenario: int, variant: str):
     if out.exists():
+        stop_runs(out / "repo")
         shutil.rmtree(out)
     plugin = out / "plugin"
     (plugin / ".claude-plugin").mkdir(parents=True)
@@ -159,19 +167,23 @@ def main():
     ap.add_argument("--idle", type=float, default=240, help="stream hosts: seconds of quiet after a result before stdin is closed (default: 240)")
     ap.add_argument("--cap", type=float, default=1800, help="stream hosts: longest a session may run, in seconds (default: 1800)")
     args = ap.parse_args()
-    out = args.out / f"{args.scenario}-{args.variant}"
+    # the session runs with the repo as its cwd, so every path handed to it must be absolute
+    out = args.out.resolve() / f"{args.scenario}-{args.variant}"
     plugin, repo, home, settings = setup(out, args.scenario, args.variant)
     env = {**os.environ, "CODEX_HOME": str(home)}
     cmd = base_cmd(plugin, settings, args.model)
     prompts = PROMPTS[args.scenario]
     host = HOST[args.scenario]
-    if host == "stream":
-        run_stream(cmd, repo, env, prompts[0], out / "transcript.jsonl", args.idle, args.cap)
-    elif host == "print":
-        run_print(cmd, repo, env, prompts[0], out / "transcript.jsonl")
-    else:
-        session = run_print(cmd, repo, env, prompts[0], out / "transcript-1.jsonl")
-        run_print(cmd, repo, env, prompts[1], out / "transcript-2.jsonl", resume=session)
+    try:
+        if host == "stream":
+            run_stream(cmd, repo, env, prompts[0], out / "transcript.jsonl", args.idle, args.cap)
+        elif host == "print":
+            run_print(cmd, repo, env, prompts[0], out / "transcript.jsonl")
+        else:
+            session = run_print(cmd, repo, env, prompts[0], out / "transcript-1.jsonl")
+            run_print(cmd, repo, env, prompts[1], out / "transcript-2.jsonl", resume=session)
+    finally:
+        stop_runs(repo)
     print("\n".join(digest(out)))
 
 

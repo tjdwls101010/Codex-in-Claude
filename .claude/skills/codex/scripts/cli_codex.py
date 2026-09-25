@@ -41,9 +41,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _codex import (  # noqa: E402
-    SANDBOX_MODES, THREAD_ID_WAIT, supervise,
-)
+from _codex import THREAD_ID_WAIT, supervise  # noqa: E402
+from codex.argv import SANDBOX_MODES  # noqa: E402
 from codex.catalog import codex_version, model_catalog  # noqa: E402
 from codex.config import codex_home, config_scalars, user_defaults  # noqa: E402
 from codex.events import (  # noqa: E402

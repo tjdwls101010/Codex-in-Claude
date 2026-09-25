@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from cli.guards import note_unreadable, refuse_competing_selectors, refuse_unresolved_run, refuse_unusable_heartbeat
+from cli.guards import note_unreadable, refuse_competing_selectors, refuse_unresolved_run, refuse_unusable_follow_options
 from codex.events import CursorOutOfRange, FOLLOW_INTERVAL, find_item, format_events, read_events, strip_wrapper
 from core.groups import (
     changed_paths, list_groups, member_result, overlaps, read_group, resolve_group, unstarted_members,
@@ -73,9 +73,7 @@ def cmd_status(args):
     refuse_competing_selectors(args, "status", "--run", "--thread", "--group")
     if args.follow and not args.group:
         fail("--follow requires --group; to follow one run use `log --run <id> --follow`", run=args.run)
-    if args.follow_timeout is not None and not args.follow:
-        fail("--follow-timeout requires --follow")
-    refuse_unusable_heartbeat(args)
+    refuse_unusable_follow_options(args)
     if args.group:
         return follow_group(args, project, runs_dir) if args.follow else status_group(args, project, runs_dir)
 
@@ -155,9 +153,7 @@ def follow_group(args, project, runs_dir):
 def cmd_log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
-    refuse_unusable_heartbeat(args)
-    if args.follow_timeout is not None and not args.follow:
-        fail("--follow-timeout requires --follow")
+    refuse_unusable_follow_options(args)
     if args.group:
         if args.since is not None:
             fail("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`", group=args.group)

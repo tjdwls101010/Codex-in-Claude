@@ -107,7 +107,7 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
     blind = [name for name in unreadable_runs(runs_dir)
              if thread_of_unreadable(runs_dir / name) in (None, thread_id)]
     if blind:
-        fail("cannot tell whether this thread is free: the runs in `unreadable_runs` have a meta.json that will not parse and no readable thread id; repair or remove them, or pass --force",
+        fail("cannot tell whether this thread is free: the runs in `unreadable_runs` have a meta.json that will not parse and may be on this thread; repair or remove them, or pass --force",
              thread_id=thread_id,
              unreadable_runs=[{"run_id": name, "run_dir": str(runs_dir / name)} for name in blind])
 

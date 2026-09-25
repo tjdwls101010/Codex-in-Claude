@@ -533,7 +533,7 @@ def _check_liftable_guards(runs_dir, name, *, force, lost_manifest, unknown):
          lambda: {"running": unknown}, unknown),
         # `--resume-from` puts phase 2 in phase 1's worktrees. One hop only, which is why the removal asks the registry again.
         ("derived_groups", bool(children),
-         f"group {name!r} was continued by another group (--resume-from), whose members work in these worktrees; --force removes them anyway",
+         f"group {name!r} was continued by another group (--resume-from), whose members work in these worktrees; --force lifts this refusal, but a worktree a live run still works in is kept",
          lambda: {"derived_groups": children}, children),
     ]
     overrode = {}

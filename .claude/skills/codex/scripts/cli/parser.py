@@ -51,7 +51,7 @@ Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt wh
 Without --worktree, members work in your tree as they go and none can tell another member's edit from its own; the reply says so when two or more writers share a directory.
 Each member is told the group's name and size; a member with a checkout is also told it is not your tree, which commit it came from, and how many uncommitted files yours has."""
 
-TIER_DEFAULT = "a resumed thread's recorded tier, else `service_tier` in your config.toml for an isolated run"
+TIER_DEFAULT = "a resumed thread's recorded tier while its isolation is unchanged, else `service_tier` in your config.toml for an isolated run"
 
 
 class OneLinePerParagraph(argparse.HelpFormatter):
@@ -76,7 +76,7 @@ def add_common(p):
 
 def add_follow_options(p, *, closing):
     p.add_argument("--follow-timeout", type=float, metavar="SEC",
-                   help=f"stop following after SEC seconds with {closing} (default: follow until the end). Requires --follow")
+                   help=f"stop following after SEC seconds with {closing} (default: follow until the end). Requires --follow; SEC must be positive")
     p.add_argument("--heartbeat", type=float, metavar="SEC",
                    help="print `still-running elapsed=<s> running=<n>` on the first poll at or after every SEC seconds of following (default: off). Requires --follow; SEC must be positive")
 
@@ -87,8 +87,8 @@ def add_run_options(p, *, kind):
     if kind == "resume":
         p.add_argument("--sandbox", choices=SANDBOX_MODES, help="change the thread's sandbox for this and later turns (default: the sandbox the thread recorded). Required for a thread this registry never recorded. A change is reported as `sandbox_changed_from`")
     else:
-        p.add_argument("--sandbox", choices=SANDBOX_MODES, help="what the run may do to the filesystem (default: workspace-write), recorded and re-asserted on every later turn of the thread")
-    p.add_argument("--model", help="model slug (default: what a resumed thread recorded, else `model` in your config.toml for an isolated run, else the server's choice). Checked against `models` before spawning when the catalog can be read")
+        p.add_argument("--sandbox", choices=SANDBOX_MODES, help="what the run may do to the filesystem (default: workspace-write" + ("; a resumed member keeps its thread's" if kind == "batch" else "") + "), recorded and re-asserted on every later turn of the thread")
+    p.add_argument("--model", help="model slug (default: what a resumed thread recorded, as long as --inherit-config does not change its isolation; else `model` in your config.toml for an isolated run; else the server's choice). Checked against `models` before spawning when the catalog can be read")
     p.add_argument("--effort", help="reasoning effort; which values a model accepts differs per model, and `models` lists them (default: as for --model, from `model_reasoning_effort`)")
     p.add_argument("--inherit-config", action="store_true", help="load your config.toml — MCP servers, plugins, agent roles, hooks — instead of running isolated (default: isolated for a new thread; a resume keeps the thread's choice). Auth comes from auth.json either way")
     tier = p.add_mutually_exclusive_group()
@@ -102,7 +102,7 @@ def add_run_options(p, *, kind):
     if kind == "start":
         p.add_argument("--cwd", help="directory the run works in (default: the project root)")
     if kind == "batch":
-        p.add_argument("--cwd", help="directory every member without a `cwd` of its own works in (default: the project root); such members never get a worktree")
+        p.add_argument("--cwd", help="directory every member without a `cwd` of its own works in, a resumed member included (default: the project root, and a resumed member keeps its thread's directory). A member given a cwd never gets a worktree")
     if kind != "resume":
         p.add_argument("--add-dir", action="append", help="extra writable directory beyond the run's cwd; repeatable. `codex exec` only, so a resume cannot add one")
 
@@ -148,11 +148,11 @@ def build_parser():
     add_common(p)
     target = p.add_mutually_exclusive_group()
     target.add_argument("--run", metavar="REF", help="a run id, thread id or run-id prefix (newest match wins). Omitted: the project's one live run, else its newest run; refused when two or more are live")
-    target.add_argument("--group", metavar="NAME", help="every member of a batch group, interleaved: a `group.members group=<name> 0=<run_id>[:<label>] …` header, each event line prefixed `[<index>:<label>]` or `[<index>]`, then the group's closing line as `status --group --follow` prints it (for a live group without --follow, `group.running`)")
+    target.add_argument("--group", metavar="NAME", help="every member of a batch group, interleaved: a `group.members group=<name> 0=<run_id>[:<label>] …` header, each event line prefixed `[<index>:<label>]` or `[<index>]`, then the group's closing line as `status --group --follow` prints it (for a live group without --follow, `group.running`); no cursor trailer")
     p.add_argument("--since", type=int, default=None, metavar="CURSOR", help="print only events after this byte offset from a previous `# cursor=<n>` trailer (default: the whole log). Refused unless it is a line boundary of this run's file, and with --group")
     p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL, help=f"how much of each event to print (default: {DEFAULT_LEVEL}). Every level prints the lifecycle, the agent's messages in full, each command line with its exit code and output size, changed paths, errors, searches, MCP calls and usage. compact: nothing more. normal: a {FAIL_HEAD_BYTES} B head and tail of the output of commands that exited non-zero, and todo lists. full: a {FULL_ITEM_BYTES} B excerpt of every command's output, and reasoning. raw: every event parsed and re-serialised, one JSON object per line")
-    p.add_argument("--follow", action="store_true", help="keep printing events as they arrive, then one closing line — `run.<state> run=<id> exit=<n>` for every terminal state — and the cursor trailer. A run whose Codex is still writing has not ended")
-    add_follow_options(p, closing="`run.still-running run=<id> state=<state>` and the cursor trailer")
+    p.add_argument("--follow", action="store_true", help="keep printing events as they arrive until the end: for a run, one closing `run.<state> run=<id> exit=<n>` line for every terminal state and the cursor trailer; for a group, its closing line. A run whose Codex is still writing has not ended")
+    add_follow_options(p, closing="`run.still-running run=<id> state=<state>` and the cursor trailer for a run, or `group.still-running group=<name> running=N done=N failed=N` for a group")
     p.set_defaults(func=cmd_log)
 
     p = command("show", "one item of a run in full: a command's output or a file change's paths",
@@ -174,7 +174,7 @@ def build_parser():
 
     p = command("result", "what a run or a group concluded", description="One of --run or --group is required.")
     add_common(p)
-    p.add_argument("--run", metavar="REF", help="one run's whole final message, usage and counts; while the run is live, what it has said so far, marked partial. A --schema run returns `json` instead of `message`")
+    p.add_argument("--run", metavar="REF", help="one run's whole final message, usage and counts; while the run is live, what it has said so far, marked partial. A --schema run returns `json` instead of `message`, and fails while its final message is missing or not JSON")
     p.add_argument("--group", help=f"every member's message (capped at {GROUP_MESSAGE_CAP} B each, full size stated), usage totals, and `overlaps`: the paths more than one member wrote. Members that never started are listed under `unstarted`")
     p.set_defaults(func=cmd_result)
 
@@ -184,13 +184,13 @@ def build_parser():
     b = bsub.add_parser("start", help="start N runs as one group", formatter_class=OneLinePerParagraph, epilog=BATCH_START_EPILOG)
     add_common(b)
     add_run_options(b, kind="batch")
-    b.add_argument("--group", required=True, help="name for the group: letters, digits, `.`, `_` and `-`; refused while the name is reserved")
+    b.add_argument("--group", required=True, help="name for the group: 1–64 characters, ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit; refused while the name is reserved")
     b.add_argument("--task", action="append", help="a prompt; repeatable, ordered before --tasks-file entries")
     b.add_argument("--tasks-file", help="JSONL, one task object per line, for per-task settings: " + ", ".join(TASK_FIELDS) + ". An unknown field or a wrongly typed value refuses the batch before anything starts")
     b.add_argument("--force", action="store_true", help="with --resume-from, continue members whose turn is still live")
     b.add_argument("--worktree", action="store_true", help="give each eligible member its own git checkout (default: members share your tree); eligibility is below")
     b.add_argument("--base", help="commit the worktrees are cut from (default: HEAD). Requires --worktree")
-    b.add_argument("--resume-from", metavar="GROUP", help="continue an earlier group: task i resumes member i in start order, in the directory that member's thread already uses, its worktree included. A task naming its own `resume` target keeps it. Refused, before anything is claimed, unless every started member has recorded a thread and finished (see --force) and the task count matches")
+    b.add_argument("--resume-from", metavar="GROUP", help="continue an earlier group: task i resumes member i in start order, in the directory that member's thread already uses, its worktree included, unless --cwd or the task's `cwd` names another. A task naming its own `resume` target keeps it. Refused, before anything is claimed, unless every started member has recorded a thread and finished (see --force) and the task count matches")
     b.set_defaults(func=cmd_batch_start)
 
     b = bsub.add_parser("clean", help="remove a group's worktrees and release its name", formatter_class=OneLinePerParagraph,

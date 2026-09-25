@@ -26,15 +26,16 @@ def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
     fail(f"no such run: {ref}", runs_dir=str(runs_dir))
 
 
-def refuse_unusable_heartbeat(args):
-    """`--heartbeat` only means something to a follower, at a positive interval; accepted otherwise it would read as obeyed."""
-    beat = getattr(args, "heartbeat", None)
-    if beat is None:
-        return
-    if not args.follow:
-        fail("--heartbeat requires --follow")
-    if beat <= 0:
-        fail("--heartbeat must be a positive number of seconds", heartbeat=beat)
+def refuse_unusable_follow_options(args):
+    """`--follow-timeout` and `--heartbeat` only mean something to a follower, at a positive number of seconds; accepted otherwise they would read as obeyed."""
+    for flag in ("--follow-timeout", "--heartbeat"):
+        value = getattr(args, flag[2:].replace("-", "_"), None)
+        if value is None:
+            continue
+        if not args.follow:
+            fail(f"{flag} requires --follow")
+        if value <= 0:
+            fail(f"{flag} must be a positive number of seconds", **{flag[2:].replace("-", "_"): value})
 
 
 def note_unreadable(out: dict, runs_dir):

@@ -12,7 +12,7 @@ from util import emit, fail
 
 def cmd_batch_start(args):
     if not valid_name(args.group):
-        fail("group name must be letters, digits, `.`, `_` or `-`, with no path separators", got=args.group)
+        fail("group name must be 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a letter or digit (no path separators)", got=args.group)
     if getattr(args, "base", None) and not getattr(args, "worktree", False):
         # Refused before the claim, so a typo does not burn the name.
         fail("--base requires --worktree", base=args.base)

@@ -46,22 +46,21 @@ from codex.config import codex_home, config_scalars, user_defaults  # noqa: E402
 from codex.events import (  # noqa: E402
     CursorOutOfRange, DEFAULT_LEVEL, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES,
     FOLLOW_INTERVAL, FULL_ITEM_BYTES, LEVELS, find_item, format_events,
-    read_events, scan_progress, strip_wrapper,
+    read_events, strip_wrapper,
 )
 from _batch import (  # noqa: E402
     TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
-    follow_group_log, group_snapshot, heartbeat_due, list_groups, resolve_group,
+    follow_group_log, heartbeat_due, list_groups, resolve_group,
     unstarted_members, vanished_members,
 )
 from worktree import registered as worktrees_registered  # noqa: E402
 from core.registry import (  # noqa: E402
-    ACTIVE_STATES, TERMINAL_STATES, find_run, iter_runs, meta_unreadable,
+    TERMINAL_STATES, find_run, is_live, iter_runs, meta_unreadable,
     read_meta, reap, resolve_project, resolve_runs_dir, still_writing,
     unreadable_runs,
 )
-from _run import (  # noqa: E402
-    STALL_SECONDS, WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
-)
+from _run import WRITING_SANDBOXES, create_run, resolve_implicit_run  # noqa: E402
+from core.observe import STALL_SECONDS, group_snapshot, progress, row_is_live, run_row, turn_failed_excerpt  # noqa: E402
 from util import (  # noqa: E402
     clip, emit, fail, git_toplevel, is_within,
 )
@@ -283,12 +282,7 @@ def cmd_status(args):
     by_thread = {}
     for r in rows:
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
-    running = [r["run_id"] for r in rows
-               if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
-    done = [r["run_id"] for r in rows if r["state"] == "completed"]
-    failed = [r["run_id"] for r in rows
-              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")
-              and not r.get("codex_still_running")]
+    running, done, failed, _ = group_snapshot(rows)
 
     display_rows = rows
     runs_truncated = 0
@@ -297,9 +291,7 @@ def cmd_status(args):
         # Truncate the display list only — a non-terminal row must survive
         # truncation no matter how old, or `running` above and `runs` below
         # would disagree about which runs are still alive.
-        kept_live = [r for r in rows[:-20]
-                     if r["state"] not in TERMINAL_STATES
-                     or r.get("codex_still_running")]
+        kept_live = [r for r in rows[:-20] if row_is_live(r)]
         display_rows = kept_live + tail
         runs_truncated = total_runs - len(display_rows)
     if not (args.run or args.thread):
@@ -411,7 +403,7 @@ def cmd_log(args):
         # a background watcher is armed on. A run whose supervisor died is
         # terminal while its codex keeps emitting events, so printing it here
         # ends the stream in the middle of the stream.
-        if st in TERMINAL_STATES and not still_writing(m):
+        if not is_live(m):
             cursor = dump(cursor)
             sys.stdout.write(f"run.{st} run={m.get('run_id')} exit={m.get('exit_code')}\n")
             sys.stdout.write(f"# cursor={cursor} run={run_id}\n")
@@ -491,13 +483,13 @@ def cmd_stop(args):
         targets = []
         for rd, m in resolve_group(runs_dir, args.group):
             m = reap(rd, m)
-            if m.get("state") in ACTIVE_STATES or still_writing(m):
+            if is_live(m):
                 targets.append((rd, m))
     elif args.all:
         targets = []
         for rd, m in iter_runs(runs_dir):
             m = reap(rd, m)
-            if m.get("state") in ACTIVE_STATES or still_writing(m):
+            if is_live(m):
                 targets.append((rd, m))
     else:
         fail("stop needs --run <id> (repeatable), --group <name>, or --all")
@@ -520,9 +512,7 @@ def cmd_result(args):
     rd, meta = find_run(runs_dir, args.run)
     refuse_unresolved_run(args.run, rd, meta, runs_dir)
     meta = reap(rd, meta)
-    info = scan_progress(rd / "events.jsonl",
-                         terminal=(meta.get("state") in TERMINAL_STATES
-                                   and not still_writing(meta)))
+    info = progress(rd, meta)
 
     msg_path = rd / "last-message.txt"
     message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()
@@ -534,8 +524,7 @@ def cmd_result(args):
            "message": message, "usage": usage,
            # F8: same clipped `turn.failed` error as `run_row`, so `result`
            # doesn't force a second `log` call to learn why a run failed.
-           "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
-                          if info["turn_failed"] else None),
+           "turn_failed": turn_failed_excerpt(info),
            "files_changed": info["files_changed"], "commands": info["commands"]}
     if info["unparsed_events"]:
         out["unparsed_events"] = info["unparsed_events"]
@@ -749,7 +738,7 @@ def cmd_doctor(args):
             # a caller consults precisely when they suspect something is stuck,
             # which is exactly when stale state is most likely.
             m = reap(rd, m)
-            if m.get("state") in TERMINAL_STATES and not still_writing(m):
+            if not is_live(m):
                 continue
             live.append(m)
         # Overlap, not string equality. `concurrent_writers` — the same check,

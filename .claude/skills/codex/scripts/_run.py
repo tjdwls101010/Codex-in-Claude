@@ -17,11 +17,9 @@ the entrypoint back.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 from core.supervisor import THREAD_ID_WAIT, spawn_supervised
@@ -29,9 +27,9 @@ from codex.argv import SANDBOX_MODES, apply_preamble, build_argv
 from codex.catalog import check_model_effort, model_catalog
 from codex.config import user_defaults
 from core import settings
-from codex.events import first_thread_id, scan_progress
+from codex.events import first_thread_id
 from core.registry import (
-    TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
+    TERMINAL_STATES, claim_run_dir, ensure_runs_dir, is_live, iter_runs, read_meta, reap,
     resolve_project, resolve_runs_dir, still_writing, thread_turn_lock,
     unreadable_runs, write_meta,
 )
@@ -71,7 +69,7 @@ def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
         # it. Reaped only for the few candidates that already matched the
         # directory and the sandbox, so this is not a registry-wide write.
         m = reap(rd, m)
-        if m.get("state") in TERMINAL_STATES and not still_writing(m):
+        if not is_live(m):
             continue
         out.append({"run_id": m.get("run_id"), "state": m.get("state"),
                     "sandbox": m.get("sandbox"), "group": m.get("group"),
@@ -81,11 +79,6 @@ from worktree import (
     add as worktree_add, uncommitted_count as worktree_uncommitted,
 )
 
-# Advisory only. `idle_seconds` is always reported alongside it, so this number
-# never decides anything by itself: one long `command_execution` is legitimately
-# silent, which is why silence alone is not failure — silence plus no
-# in-progress item is.
-STALL_SECONDS = 300
 
 
 def read_prompt(args) -> str:
@@ -119,7 +112,7 @@ def resolve_implicit_run(candidates):
     """
     reaped = [(rd, reap(rd, m)) for rd, m in candidates]
     non_terminal = [(rd, m) for rd, m in reaped
-                    if m.get("state") not in TERMINAL_STATES or still_writing(m)]
+                    if is_live(m)]
     if len(non_terminal) == 1:
         rd, m = non_terminal[0]
         return rd, m, "the only non-terminal run"
@@ -181,7 +174,7 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
     live = [{"run_id": m.get("run_id"), "state": m.get("state"),
              **({"codex_still_running": True} if still_writing(m) else {})}
             for m in live
-            if m.get("state") not in TERMINAL_STATES or still_writing(m)]
+            if is_live(m)]
     if live:
         fail("thread already has a live turn; pass --force to run a second turn "
              "concurrently", thread_id=thread_id, live_runs=live)
@@ -483,126 +476,3 @@ def create_run(args, *, kind: str, base=None, thread_ref=None,
                 "it already lives in, so runs already under way can no longer "
                 "be separated.")
     return out
-
-
-def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
-    meta = reap(run_dir, meta)
-    events_path = run_dir / "events.jsonl"
-    info = scan_progress(events_path,
-                          terminal=(meta.get("state") in TERMINAL_STATES
-                                    and not still_writing(meta)))
-    now = time.time()
-
-    def stamp(field):
-        try:
-            return datetime.fromisoformat(
-                meta[field].replace("Z", "+00:00")).timestamp()
-        except Exception:
-            return None
-
-    elapsed = None
-    t0 = stamp("started_at")
-    if t0 is not None:
-        elapsed = int(now - t0)
-    # How long the turn has taken, as distinct from how long the run has existed
-    # (they differ for a legacy member that waited). Measured to `ended_at`
-    # where there is one, so a finished turn's duration stops growing.
-    codex_elapsed = None
-    t1 = stamp("codex_started_at")
-    if t1 is not None:
-        # `ended_at` on a still-writing run is whatever moment an unrelated
-        # caller's `reap` happened to stamp, not when the turn ended — freezing
-        # the duration there reports a turn as over while it runs.
-        end = None if still_writing(meta) else stamp("ended_at")
-        codex_elapsed = int((end if end is not None else now) - t1)
-    idle = None
-    if events_path.exists() and events_path.stat().st_size > 0:
-        idle = int(now - events_path.stat().st_mtime)
-
-    state = meta.get("state")
-    if state == "running" and idle is not None and idle >= STALL_SECONDS:
-        state = "stalled"
-
-    stderr_tail = None
-    sp = run_dir / "stderr.log"
-    if sp.exists() and sp.stat().st_size:
-        txt = sp.read_text(encoding="utf-8", errors="replace")
-        # Codex always writes `Reading additional input from stdin...` here when
-        # stdin is not a TTY. It is normal output, not failure; surfacing it as
-        # an error would train the reader to ignore this field entirely.
-        txt = "\n".join(l for l in txt.splitlines()
-                        if l.strip() and "Reading additional input from stdin" not in l)
-        stderr_tail = txt[-800:] or None
-
-    usage = info["usage"]
-
-    row = {
-        "run_id": meta.get("run_id"),
-        "thread_id": meta.get("thread_id") or info["thread_id"],
-        "parent_run_id": meta.get("parent_run_id"), "kind": meta.get("kind"),
-        "label": meta.get("label"), "state": state,
-        "codex_pid": meta.get("codex_pid"), "pgid": meta.get("pgid"),
-        "started_at": meta.get("started_at"), "ended_at": meta.get("ended_at"),
-        "elapsed_seconds": elapsed, "codex_elapsed_seconds": codex_elapsed,
-        "idle_seconds": idle,
-        "exit_code": meta.get("exit_code"), "sandbox": meta.get("sandbox"),
-        "model": meta.get("model"), "effort": meta.get("effort"),
-        "isolated": meta.get("isolated"),
-        # The one recorded setting that costs money, so it is read back rather
-        # than only written. Its value is the tier's own name — the config
-        # file's spelling, passed through — not a boolean, so `fast` and
-        # `priority` show as what they are: two advertised names, both measured
-        # to run clean over `-c`.
-        "service_tier": meta.get("service_tier"),
-        "cwd": meta.get("cwd"),
-        "usage": usage,
-        "turns_completed": info["turns_completed"], "commands": info["commands"],
-        "files_changed": info["files_changed"], "config_error_events": info["errors"],
-        "in_progress_item": info["in_progress_item"],
-        "last_agent_message": clip(info["last_agent_message"] or "", excerpt) or None,
-        # F8: `turn.failed` was parsed by _events.py and never surfaced, so a
-        # failed run showed `message: null` and the reason needed a second
-        # `log` call. Clipped like the neighbouring `turn.failed` log line.
-        "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
-                        if info["turn_failed"] else None),
-        "events": str(events_path),
-    }
-    if still_writing(meta):
-        # Terminal states answer "is anyone recording this". Every consumer of a
-        # row that asks "is this still going" — the status buckets,
-        # `group_snapshot`, and through it `--follow`'s exit — needs the other
-        # question answered too, and only the row can carry it to them.
-        row["codex_still_running"] = True
-    if info["unparsed_events"]:
-        # Only when there are some. Every row carrying a zero would put the
-        # field in front of a caller a thousand times for each time it means
-        # anything, which is how a field stops being read.
-        row["unparsed_events"] = info["unparsed_events"]
-    if meta.get("waits_for"):
-        row["waits_for"] = meta["waits_for"]
-    if meta.get("predecessor_state"):
-        row["predecessor_state"] = meta["predecessor_state"]
-    if meta.get("codex_started_at"):
-        # Distinct from `started_at` only for a member that waited, but always
-        # reported: anything comparing turns across runs has to use this one.
-        row["codex_started_at"] = meta["codex_started_at"]
-    if meta.get("group"):
-        # A run's group is the one fact a later session cannot re-derive.
-        # `create_run` records it here precisely so `status` can answer it, and
-        # for a while `status` did not: a session recovering a batch it did not
-        # start saw N unrelated runs, concluded they were individual `start`s,
-        # and had no group name to give `--resume-from`. Measured in an e2e
-        # session, which then reasoned correctly from that false premise and
-        # continued three writers into one shared directory.
-        row["group"] = meta["group"]
-    if meta.get("worktree"):
-        row["worktree"] = meta["worktree"]["path"]
-    if meta.get("sandbox_changed_from"):
-        row["sandbox_changed_from"] = meta["sandbox_changed_from"]
-    if stderr_tail:
-        row["stderr_tail"] = stderr_tail
-    if meta.get("error"):
-        row["error"] = meta["error"]
-    return row
-
-

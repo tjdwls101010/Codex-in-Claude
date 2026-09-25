@@ -33,19 +33,16 @@ import time
 import uuid
 from pathlib import Path
 
-from codex.events import (FOLLOW_INTERVAL, format_events, read_events,
-                     scan_progress)
+from codex.events import FOLLOW_INTERVAL, format_events, read_events
 from core.registry import (
-    ACTIVE_STATES, TERMINAL_STATES, ensure_runs_dir, find_run, iter_runs,
-    meta_unreadable, read_meta, reap, resolve_project, resolve_runs_dir,
-    still_writing, unreadable_runs,
+    ensure_runs_dir, find_run, is_live, iter_runs, meta_unreadable, read_meta, reap,
+    resolve_project, resolve_runs_dir, still_writing, unreadable_runs,
 )
 from codex.catalog import check_model_effort, model_catalog
 from codex.config import user_defaults
 from core import settings
-from _run import (
-    WRITING_SANDBOXES, create_run, run_row,
-)
+from _run import WRITING_SANDBOXES, create_run
+from core.observe import group_snapshot, progress, run_row, turn_failed_excerpt
 from util import (
     BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,
     now_iso,
@@ -590,8 +587,7 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
                                        "its turn has finished cannot be determined"})
             continue
         reaped = reap(rd, meta)
-        if (reaped.get("state") not in TERMINAL_STATES
-                or still_writing(reaped)):
+        if is_live(reaped):
             live.append({"run_id": m["run_id"], "state": reaped.get("state")})
     if live and not force:
         fail(f"group {previous!r} still has members running; resuming a thread "
@@ -842,7 +838,7 @@ def cmd_batch_clean(args):
         # note 1 below — "a live member is still writing into the very
         # directory being removed" — and a run whose supervisor died is
         # terminal while its codex keeps writing into exactly that directory.
-        if meta.get("state") not in TERMINAL_STATES or still_writing(meta):
+        if is_live(meta):
             live.append({"run_id": rid, "state": meta.get("state"), "group": meta.get("group"),
                          **({"codex_still_running": True} if still_writing(meta) else {})})
 
@@ -935,8 +931,7 @@ def cmd_batch_clean(args):
         # p2, and p1 looks unreferenced while p3 is still running in p1's
         # worktree. A run's own recorded cwd cannot go stale that way.
         occupants = [m for _rd, m in iter_runs(runs_dir)
-                     if (m.get("state") not in TERMINAL_STATES
-                         or still_writing(m))
+                     if is_live(m)
                      and m.get("run_id") != rid
                      and is_within(m.get("cwd"), path)]
         if occupants:
@@ -1082,37 +1077,6 @@ def vanished_members(runs_dir: Path, name: str):
                                if present else
                                "its run directory is no longer in the registry")})
     return gone
-
-
-def group_snapshot(rows, unstarted=0):
-    """The one place group state is derived, so `status --group` and
-    `--follow`'s exit line can never disagree about whether a group is done.
-
-    `unstarted` is the count of manifest members that never got a run id. They
-    have to be counted here rather than only in `batch start`'s own reply,
-    because every later view of the group resolves membership through run ids
-    and would otherwise be blind to them — a batch asked for three and given
-    one would report `completed`, which is the group-level form of the failure
-    a terminal `--follow` line exists to prevent.
-    """
-    running = [r["run_id"] for r in rows
-               if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
-    done = [r["run_id"] for r in rows if r["state"] == "completed"]
-    failed = [r["run_id"] for r in rows
-              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")
-              and not r.get("codex_still_running")]
-    if running:
-        state = "running"
-    elif failed or unstarted or not rows:
-        # `partial` covers "a member failed", "the user stopped it" and "a member
-        # timed out" alike. It means "this group did not all succeed", not
-        # "Codex broke" — worth stating, because a --follow exit line saying
-        # `group.partial` after a deliberate `stop --group` otherwise reads as
-        # an error.
-        state = "partial"
-    else:
-        state = "completed"
-    return running, done, failed, state
 
 
 def follow_group(args, project, runs_dir):
@@ -1346,9 +1310,7 @@ def cmd_result_group(args, project, runs_dir):
     results, per_run_paths, totals = [], {}, {"input_tokens": 0, "output_tokens": 0}
     for rd, meta in members:
         meta = reap(rd, meta)
-        info = scan_progress(rd / "events.jsonl",
-                             terminal=(meta.get("state") in TERMINAL_STATES
-                                       and not still_writing(meta)))
+        info = progress(rd, meta)
         msg_path = rd / "last-message.txt"
         message = (msg_path.read_text(encoding="utf-8") if msg_path.exists()
                    else info["last_agent_message"]) or ""
@@ -1373,8 +1335,7 @@ def cmd_result_group(args, project, runs_dir):
                "message_truncated": truncated,
                "usage": info["usage"],
                "files_changed": info["files_changed"],
-               "turn_failed": (clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400)
-                               if info["turn_failed"] else None)}
+               "turn_failed": turn_failed_excerpt(info)}
         if info["unparsed_events"]:
             row["unparsed_events"] = info["unparsed_events"]
         if still_writing(meta):

@@ -92,8 +92,9 @@ class TheSkillTextPointsAtRealThings(unittest.TestCase):
         groups = {path[0] for path in self.flags if len(path) > 1}
         all_flags = set().union(*self.flags.values())
         missing = []
+        call = self.allowed[0][:-2]
         for span in re.findall(r"`([^`]+)`", self.body):
-            words = span.split()
+            words = span.removeprefix(call).split()
             if not words:
                 continue
             if words[0] in groups and len(words) > 1 and not words[1].startswith("-") and " ".join(words[:2]) not in commands:
@@ -104,7 +105,7 @@ class TheSkillTextPointsAtRealThings(unittest.TestCase):
                 for flag in (w for w in words if w.startswith("--")):
                     if flag not in self.flags[path]:
                         missing.append(f"{span}: {flag}")
-            elif any(w.startswith("--") for w in words) and not words[0].startswith(("--", "<")):
+            elif any(w.startswith(("--", "<")) for w in words[1:]) and not words[0].startswith(("--", "<")):
                 missing.append(f"{span}: no such command")
             else:
                 for flag in (w for w in words if w.startswith("--") and w != "--help"):

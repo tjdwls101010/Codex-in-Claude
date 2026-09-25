@@ -215,7 +215,7 @@ class OneTurnPerThread(ResumeCase):
         first = self.bridge("start", "seed")
         self.wait_state(first["run_id"])
         self.race(first["run_id"], "next", n=3)
-        runs = [r for r in self.bridge("status", "--all")["runs"] if r["thread_id"] == first["thread_id"]]
+        runs = self.bridge("status", "--thread", first["thread_id"])["runs"]
         self.assertEqual(len(runs), 2, "the seed and exactly one winner")
         self.assertEqual(len([r for r in self.runs_invoked() if r["argv"][1] == "resume"]), 1)
 

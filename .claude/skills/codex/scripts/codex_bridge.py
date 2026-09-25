@@ -211,6 +211,15 @@ def note_unreadable(out: dict, runs_dir):
     return out
 
 
+def summary_row(row):
+    """What the default listing shows of a run. `--run`, `--thread` and `--group` return the whole row."""
+    out = {k: row.get(k) for k in ("run_id", "label", "state", "group", "idle_seconds")}
+    out["last_agent_message"] = clip(row.get("last_agent_message") or "", 160) or None
+    if row.get("codex_still_running"):
+        out["codex_still_running"] = True
+    return out
+
+
 def cmd_status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
@@ -296,6 +305,8 @@ def cmd_status(args):
                      or r.get("codex_still_running")]
         display_rows = kept_live + tail
         runs_truncated = total_runs - len(display_rows)
+    if not (args.run or args.thread):
+        display_rows = [summary_row(r) for r in display_rows]
 
     # Groups are listed even when no run in the (truncated) view belongs to one:
     # discovering that this project has batches at all is the step that makes

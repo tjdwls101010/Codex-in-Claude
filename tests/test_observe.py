@@ -116,6 +116,18 @@ class StatusOfOneRun(BridgeCase):
 
 class Listing(BridgeCase):
 
+    def test_the_default_listing_is_one_summary_row_per_run(self):
+        fixture = answer_fixture(self.tmp / "a.jsonl", "word " * 200)
+        out = self.bridge("start", "--label", "lbl", "x", env={"FAKE_CODEX_FIXTURE": fixture})
+        self.wait_state(out["run_id"])
+        row = self.bridge("status")["runs"][0]
+        self.assertEqual(set(row), {"run_id", "label", "state", "group", "idle_seconds", "last_agent_message"})
+        self.assertEqual((row["run_id"], row["label"], row["state"], row["group"]), (out["run_id"], "lbl", "completed", None))
+        self.assertLess(len(row["last_agent_message"]), 250)
+        full = self.bridge("status", "--run", out["run_id"])["runs"][0]
+        self.assertIn("usage", full)
+        self.assertEqual(self.bridge("status", "--thread", out["thread_id"])["runs"][0].keys(), full.keys())
+
     def test_an_unreadable_run_is_counted_where_it_is_missing(self):
         keep = self.bridge("start", "keep")
         lose = self.bridge("start", "lose")

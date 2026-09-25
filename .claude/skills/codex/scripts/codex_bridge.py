@@ -378,6 +378,8 @@ def cmd_log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     refuse_unusable_heartbeat(args)
+    if args.follow_timeout is not None and not args.follow:
+        fail("--follow-timeout requires --follow")
     if args.group:
         if args.since is not None:
             # Refused rather than given some collapsed meaning: every member has

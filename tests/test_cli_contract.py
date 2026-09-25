@@ -93,6 +93,7 @@ class FlagsThatWouldDecideNothing(BridgeCase):
         cases = [("status", "--follow"),
                  ("status", "--group", "g", "--follow-timeout", "5"),
                  ("log", "--run", out["run_id"], "--heartbeat", "5"),
+                 ("log", "--run", out["run_id"], "--follow-timeout", "5"),
                  ("log", "--run", out["run_id"], "--follow", "--heartbeat", "0"),
                  ("log", "--group", "g", "--since", "0"),
                  ("batch", "start", "--group", "h", "--base", "HEAD", "--task", "x")]

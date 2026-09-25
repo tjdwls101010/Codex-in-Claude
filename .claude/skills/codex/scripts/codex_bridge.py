@@ -1107,7 +1107,8 @@ def add_run_options(p, *, kind, foreground=True):
                         "fresh run is isolated, and a resumed one keeps "
                         "whatever its thread recorded. Auth is unaffected "
                         "either way, coming from auth.json.")
-    p.add_argument("--priority", dest="priority", action="store_true", default=None,
+    tier = p.add_mutually_exclusive_group()
+    tier.add_argument("--priority", dest="priority", action="store_true", default=None,
                    help="force service_tier=\"priority\" — the tier Codex "
                         "labels \"Fast mode\" and its config.toml spells "
                         "\"fast\"; both names are advertised and both were "
@@ -1115,7 +1116,7 @@ def add_run_options(p, *, kind, foreground=True):
                         "unset, an isolated run already takes whatever "
                         "service_tier your config.toml sets, and a resumed one "
                         "carries forward what its thread recorded.")
-    p.add_argument("--no-priority", dest="priority", action="store_false",
+    tier.add_argument("--no-priority", dest="priority", action="store_false",
                    help="send no service_tier at all, and record that choice "
                         "so later turns on the thread do not re-add Fast "
                         "mode. That "
@@ -1554,13 +1555,6 @@ def build_parser():
 
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
-    if "--priority" in raw and "--no-priority" in raw:
-        # The two share one dest, so argparse's answer to both is "whichever
-        # came last" — and nothing downstream records which that was. Whether a
-        # run paid for the priority tier is a cost the caller cannot see again
-        # afterwards, which makes a silent coin toss the wrong answer. Checked
-        # on argv because by the time argparse is done the pair is one boolean.
-        fail("--priority and --no-priority contradict each other; pass one")
     ap = build_parser()
     # `resume` is the only subcommand with two optional positionals
     # (`[REF] PROMPT`). Plain argparse binds them in groups split by any option

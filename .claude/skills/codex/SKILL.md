@@ -14,19 +14,19 @@ description: >-
   background Bash — those are Claude doing the work itself. Not for Codex Cloud or
   `codex mcp-server` / `app-server`.
 allowed-tools:
-  - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/.claude/skills/codex/scripts/codex_bridge.py" *)
+  - Bash(python3 "${CLAUDE_SKILL_DIR}/scripts/cli_codex.py" *)
 
 ---
 
 # Codex as a managed subagent
 
-One CLI wraps the whole surface. Your context already carries a line reading **`Base directory for this skill: <dir>`** — the bridge is `<dir>/scripts/codex_bridge.py`. Use that absolute path, double-quoted, in every call:
+One CLI wraps the whole surface. Your context already carries a line reading **`Base directory for this skill: <dir>`** — the bridge is `<dir>/scripts/cli_codex.py`. Use that absolute path, double-quoted, in every call:
 
 ```bash
-python3 "<base directory>/scripts/codex_bridge.py" status
+python3 "<base directory>/scripts/cli_codex.py" status
 ```
 
-Below, `$CODEX` is shorthand for that literal `python3 "<base directory>/scripts/codex_bridge.py"` — write it out in full when you run it.
+Below, `$CODEX` is shorthand for that literal `python3 "<base directory>/scripts/cli_codex.py"` — write it out in full when you run it.
 
 **The pre-approved permission pattern matches the command *text*, so two ways of writing a correct call are refused.** A path built from a variable — `$CLAUDE_PLUGIN_ROOT` and `$CLAUDE_SKILL_DIR` are both empty in the Bash environment anyway, even for a plugin install, because the former is expanded in permission rules rather than in the process — raises an approval prompt every time, which is what makes background work unusable. And a command broken across lines with a trailing `\` does not match either. That second one bites where it is least convenient: `batch start` with several `--task` flags is long, long commands invite continuations, and a refused `batch start` is the whole batch.
 

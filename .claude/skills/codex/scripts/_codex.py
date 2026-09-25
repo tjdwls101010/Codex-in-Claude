@@ -432,7 +432,7 @@ def spawn_supervised(run_dir: Path) -> int:
     log = (run_dir / "supervisor.log").open("ab")
     try:
         p = subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve().parent / "codex_bridge.py"),
+            [sys.executable, str(Path(__file__).resolve().parent / "cli_codex.py"),
              "__supervise", "--run-dir", str(run_dir)],
             stdout=log, stderr=log, stdin=subprocess.DEVNULL,
             start_new_session=True, cwd=str(run_dir),

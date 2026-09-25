@@ -1119,7 +1119,7 @@ def add_run_options(p, *, kind):
 
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="codex_bridge.py",
+        prog="cli_codex.py",
         formatter_class=HidesSuppressedCommands,
         description="Drive the OpenAI Codex CLI as a managed subagent.",
         epilog=OUTPUT_CONTRACT)

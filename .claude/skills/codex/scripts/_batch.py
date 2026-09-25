@@ -49,7 +49,7 @@ from util import (
     BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,
     now_iso,
 )
-from _worktree import (
+from worktree import (
     ignored_entries as worktree_ignored_entries, is_dirty as worktree_dirty,
     missing_at_base as worktree_missing_at_base, prune as worktree_prune,
     remove as worktree_remove, repo_identity,

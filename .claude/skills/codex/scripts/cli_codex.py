@@ -55,7 +55,7 @@ from _batch import (  # noqa: E402
     follow_group_log, group_snapshot, heartbeat_due, list_groups, resolve_group,
     unstarted_members, vanished_members,
 )
-from _worktree import registered as worktrees_registered  # noqa: E402
+from worktree import registered as worktrees_registered  # noqa: E402
 from _registry import (  # noqa: E402
     ACTIVE_STATES, TERMINAL_STATES, find_run, iter_runs, meta_unreadable,
     read_meta, reap, resolve_project, resolve_runs_dir, still_writing,

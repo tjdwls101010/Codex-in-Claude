@@ -76,7 +76,7 @@ def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
                     "sandbox": m.get("sandbox"), "group": m.get("group"),
                     **({"codex_still_running": True} if still_writing(m) else {})})
     return out
-from _worktree import (
+from worktree import (
     add as worktree_add, uncommitted_count as worktree_uncommitted,
 )
 

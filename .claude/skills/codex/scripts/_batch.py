@@ -1112,7 +1112,8 @@ def cmd_batch_clean(args):
                          "stop": stop_commands(occupants, runs_dir, explicit)})
             continue
         dirty = worktree_dirty(path)
-        ok, err = worktree_remove(project, path, force=args.force)
+        source = Path((wt or {}).get("source") or project)
+        ok, err = worktree_remove(source, path, force=args.force, owned=path == rd / "wt")
         if ok and dirty and args.force:
             overrode.setdefault("discarded_uncommitted", []).append(str(path))
         (removed if ok else kept).append(

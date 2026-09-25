@@ -296,6 +296,18 @@ class Clean(WorktreeCase):
         self.assertFalse(half.exists())
         self.assertEqual(self.registered_worktrees(), [])
 
+    def test_force_never_deletes_a_recorded_path_that_is_not_the_runs_own_checkout(self):
+        out = self.finished(n=1)
+        rid = out["runs"][0]["run_id"]
+        stranger = self.tmp / "not-a-checkout"
+        stranger.mkdir()
+        (stranger / "keep.txt").write_text("mine")
+        m = self.meta(rid)
+        self.write_meta(rid, {**m, "worktree": {**m["worktree"], "path": str(stranger)}})
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual([k["path"] for k in res["kept"]], [str(stranger)])
+        self.assertEqual((stranger / "keep.txt").read_text(), "mine")
+
     def test_a_checkout_removed_by_hand_is_not_reported_as_removed(self):
         out = self.finished()
         gone = out["runs"][0]["worktree"]

@@ -10,7 +10,7 @@ import signal
 import time
 import unittest
 
-from support.harness import (BridgeCase, FIXTURES, LEGACY_PREDECESSOR, LEGACY_WAITER, alive,
+from support.harness import (BridgeCase, FIXTURES, LEGACY_PREDECESSOR, LEGACY_WAITER, alive, engine,
                              wait_until)
 
 
@@ -85,14 +85,6 @@ class TerminalStates(BridgeCase):
                 self.assertTrue(wait_until(lambda: not alive(grandchild), timeout=5), "a process of the run outlived its deadline")
                 self.assertFalse(alive(self.meta(out["run_id"])["codex_pid"]))
 
-    def test_a_deadline_gives_leftover_descendants_sigterm_before_sigkill(self):
-        pidfile, mark = self.tmp / "grandchild.pid", self.tmp / "got-term"
-        out = self.bridge("start", "--timeout", 1, "x", env={"FAKE_CODEX_HANG": 60, "FAKE_CODEX_GRANDCHILD": pidfile,
-                                                             "FAKE_CODEX_GRANDCHILD_TERM_MARK": mark})
-        self.grandchild(pidfile)
-        self.assertEqual(self.wait_state(out["run_id"], timeout=40)["state"], "timed_out")
-        self.assertTrue(wait_until(mark.exists, timeout=5), "a descendant that outlived SIGINT never got SIGTERM")
-
     def test_stop_ends_a_descendant_its_codex_left_behind(self):
         pidfile = self.tmp / "grandchild.pid"
         out, _m = self.running("x", FAKE_CODEX_GRANDCHILD=pidfile)
@@ -117,6 +109,35 @@ class TerminalStates(BridgeCase):
         out, m = self.running("x")
         os.kill(int(m["codex_pid"]), signal.SIGKILL)
         self.assertEqual(self.wait_state(out["run_id"])["state"], "failed")
+
+
+class TheLadderOrder(unittest.TestCase):
+    """`core.supervisor.end_group`'s order of signals, observed at `os.killpg` — the only place the order is visible."""
+
+    def ladder(self, **kw):
+        supervisor = engine("core.supervisor")
+        calls = []
+        real = supervisor.os.killpg
+        supervisor.os.killpg = lambda pgid, sig: calls.append(signal.Signals(sig).name)
+        try:
+            sent = supervisor.end_group(4242, grace=0, before_kill=lambda: calls.append("record"), **kw)
+        finally:
+            supervisor.os.killpg = real
+        return calls, sent
+
+    def test_a_deadline_sends_sigterm_even_after_codex_has_exited(self):
+        calls, sent = self.ladder(done=lambda: True, every_rung=True)
+        self.assertEqual(calls, ["SIGINT", "SIGTERM", "record", "SIGKILL"])
+        self.assertEqual(sent, ["SIGINT", "SIGTERM", "SIGKILL"])
+
+    def test_a_stop_ends_at_the_first_rung_that_suffices_then_sweeps(self):
+        calls, _ = self.ladder(done=lambda: True)
+        self.assertEqual(calls, ["SIGINT", "record", "SIGKILL"])
+
+    def test_nothing_done_climbs_every_rung_once(self):
+        calls, sent = self.ladder(done=lambda: False)
+        self.assertEqual(calls, ["SIGINT", "SIGTERM", "record", "SIGKILL"])
+        self.assertEqual(sent, ["SIGINT", "SIGTERM", "SIGKILL"])
 
 
 class StopLadder(BridgeCase):

@@ -277,7 +277,7 @@ class Clean(WorktreeCase):
         for rid in self.run_dirs():
             self.wait_state(rid)
         # The crash can also land between `git worktree add` and the meta.json write that records the path. Staged once the member has stopped writing its own meta.
-        self.write_meta(orphans[0], {**self.meta(orphans[0]), "worktree": None})
+        self.write_meta(orphans[0], {**self.meta(orphans[0]), "worktree": None, "cwd": str(self.project)})
         status = self.bridge("status", "--group", "p1")
         self.assertEqual(len(status["runs"]) + len(status["unstarted"]), 3)
         res = self.bridge("batch", "clean", "--group", "p1", "--force")

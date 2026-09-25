@@ -15,7 +15,7 @@ import time
 import unittest
 from pathlib import Path
 
-from support.harness import BridgeCase, engine, wait_until
+from support.harness import ENGINE_MODULES, ENTRY, BridgeCase, engine, wait_until
 
 
 def _write_own_key(run_dir, writer, rounds, errors):
@@ -83,7 +83,7 @@ class AStaleReap(unittest.TestCase):
                         "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
                         "import importlib; r = importlib.import_module(sys.argv[2]); "
                         "r.update_meta(Path(sys.argv[3]), state='completed', exit_code=0, ended_at='T')",
-                        str(Path(self.registry.__file__).parent), self.registry.__name__, str(self.run_dir)],
+                        str(ENTRY.parent), ENGINE_MODULES["registry"], str(self.run_dir)],
                        check=True)
         out = self.registry.reap(self.run_dir, stale)
         self.assertEqual((out["state"], out["exit_code"], out["ended_at"]), ("completed", 0, "T"))

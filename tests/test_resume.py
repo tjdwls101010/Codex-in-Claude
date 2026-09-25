@@ -200,7 +200,8 @@ class OneTurnPerThread(ResumeCase):
     """Two turns on one thread append to one rollout file. The check and the new run's publication share one per-thread lock, so a race has exactly one winner."""
 
     def race(self, *args, n=2):
-        procs = [self.spawn("resume", *args) for _ in range(n)]
+        # The winner's turn has to outlast the race, or a loser scheduled late finds the thread free again.
+        procs = [self.spawn("resume", *args, env={"FAKE_CODEX_HANG": 30}) for _ in range(n)]
         outs = [p.communicate(timeout=60)[0] for p in procs]
         results = [(p.returncode, out) for p, out in zip(procs, outs)]
         codes = sorted(rc for rc, _ in results)
@@ -216,6 +217,7 @@ class OneTurnPerThread(ResumeCase):
         self.race(first["run_id"], "next", n=3)
         runs = [r for r in self.bridge("status", "--all")["runs"] if r["thread_id"] == first["thread_id"]]
         self.assertEqual(len(runs), 2, "the seed and exactly one winner")
+        self.assertEqual(len([r for r in self.runs_invoked() if r["argv"][1] == "resume"]), 1)
 
     def test_simultaneous_resumes_of_an_unknown_ref_have_one_winner(self):
         self.race("019fc000-0000-7000-8000-000000000abc", "--sandbox", "read-only", "go")

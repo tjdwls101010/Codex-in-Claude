@@ -227,6 +227,31 @@ class Clean(WorktreeCase):
         self.bridge("batch", "clean", "--group", "p1", "--force")
         self.assertEqual(self.registered_worktrees(), [])
 
+    def test_checkouts_cut_by_a_batch_killed_mid_spawn_are_still_cleaned(self):
+        p = self.spawn("batch", "start", "--group", "p1", "--worktree", "--task", "one", "--task", "two",
+                       "--task", "three", env={"FAKE_CODEX_PRE_DELAY": 6})
+        manifest = self.runs_dir / ".groups" / "p1.json"
+
+        def cut_but_unrecorded():
+            if not manifest.exists():
+                return None
+            recorded = {m["run_id"] for m in json.loads(manifest.read_text())["members"] if m.get("run_id")}
+            orphans = [d for d in self.run_dirs() if d not in recorded and (self.runs_dir / d / "wt").exists()]
+            return orphans or None
+
+        orphans = wait_until(cut_but_unrecorded, timeout=40, interval=0.02)
+        self.assertTrue(orphans, "never saw a checkout the manifest had not recorded")
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        # The crash can also land between `git worktree add` and the meta.json write that records the path.
+        self.write_meta(orphans[0], {**self.meta(orphans[0]), "worktree": None})
+        for rid in self.run_dirs():
+            self.wait_state(rid)
+        status = self.bridge("status", "--group", "p1")
+        self.assertEqual(len(status["runs"]) + len(status["unstarted"]), 3)
+        self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual(self.registered_worktrees(), [])
+
     def test_a_checkout_removed_by_hand_is_not_reported_as_removed(self):
         out = self.finished()
         gone = out["runs"][0]["worktree"]

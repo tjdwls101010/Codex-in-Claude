@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import unittest
 
@@ -197,6 +198,14 @@ class ResumeFrom(BatchCase):
         refused = self.refused("x", "y")
         self.assertIn("thread id", refused["error"])
         self.assertEqual(sorted(refused["members"]), sorted(r["run_id"] for r in one["runs"]))
+
+    def test_a_member_whose_run_directory_is_gone(self):
+        one = self.phase_one()
+        self.wait_all(one)
+        shutil.rmtree(self.runs_dir / one["runs"][1]["run_id"])
+        before = len(self.runs_invoked())
+        self.assertIn("thread id", self.refused("x", "y")["error"])
+        self.assertEqual(len(self.runs_invoked()), before, "no member of phase two may start")
 
     def test_a_count_mismatch(self):
         self.wait_all(self.phase_one())

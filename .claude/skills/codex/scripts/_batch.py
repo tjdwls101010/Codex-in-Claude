@@ -1240,7 +1240,8 @@ def group_snapshot(rows, unstarted=0):
                if r["state"] in ACTIVE_STATES or r.get("codex_still_running")]
     done = [r["run_id"] for r in rows if r["state"] == "completed"]
     failed = [r["run_id"] for r in rows
-              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")]
+              if r["state"] in ("failed", "interrupted", "orphaned", "timed_out")
+              and not r.get("codex_still_running")]
     if running:
         state = "running"
     elif failed or unstarted or not rows:
@@ -1517,6 +1518,8 @@ def cmd_result_group(args, project, runs_dir):
                                if info["turn_failed"] else None)}
         if info["unparsed_events"]:
             row["unparsed_events"] = info["unparsed_events"]
+        if still_writing(meta):
+            row["codex_still_running"] = True
         if meta.get("worktree"):
             row["worktree"] = meta["worktree"]
         results.append(row)
@@ -1546,7 +1549,7 @@ def cmd_result_group(args, project, runs_dir):
     never = unstarted_members(runs_dir, args.group)
     gone = vanished_members(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(
-        [{"run_id": r["run_id"], "state": r["state"]} for r in results],
+        results,
         len(never) + len(gone))
     out = {"group": args.group, "project": str(project), "results": results,
            "overlaps": overlaps, "totals": totals,

@@ -1,8 +1,4 @@
-"""Primitives shared by every module in the bridge.
-
-Nothing here knows about runs, events, or Codex — it is the bottom of the
-dependency graph and imports nothing from its siblings.
-"""
+"""Primitives with no knowledge of runs, events or Codex: time, text, paths, JSON output, process liveness."""
 
 from __future__ import annotations
 
@@ -19,23 +15,13 @@ from pathlib import Path
 
 
 def now_iso() -> str:
-    """Millisecond precision, deliberately.
-
-    Run ids carry a one-second stamp because they are read by humans, so two
-    runs started in the same second are indistinguishable by id — and "newest
-    wins" would then be decided by the random suffix. `started_at` is what
-    actually orders runs, so it needs finer resolution than the id does.
-    """
+    """UTC with millisecond precision: run ids carry a one-second stamp, so `started_at` is what orders runs started in the same second."""
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def nfc(s):
-    """Normalise to NFC.
-
-    APFS hands back NFD for non-ASCII filenames while argv and JSON carry NFC,
-    so a Korean path compares unequal to itself unless both sides are
-    normalised. Applied at every boundary where a path becomes a string.
-    """
+    """APFS hands back NFD for non-ASCII filenames while argv and JSON carry NFC, so every path that becomes a string is normalised."""
+    # 성진: folding to NFC assumes a normalisation-insensitive filesystem such as APFS; change the comparison if a supported filesystem can hold NFC and NFD names as two files.
     return unicodedata.normalize("NFC", s) if isinstance(s, str) else s
 
 
@@ -62,22 +48,15 @@ class BridgeError(Exception):
         self.msg = msg
         self.extra = extra
 
-    def as_dict(self) -> dict:
-        return {"error": self.msg, **self.extra}
-
 
 _FAIL_RAISES = False
 
 
 @contextlib.contextmanager
 def failures_raise():
-    """Inside this block, `fail()` raises `BridgeError` instead of printing and
-    exiting.
+    """Inside this block `fail()` raises `BridgeError` instead of printing and exiting.
 
-    `batch start` needs it: one member failing to spawn must not take the other
-    members with it (D11), and it must not print a second line of JSON either,
-    since the one-line-per-invocation contract is what every caller parses
-    against. Reentrant so a nested helper cannot switch it back off.
+    `batch start` needs it: one member failing to spawn must neither take the others with it nor print a second line of JSON. Reentrant.
     """
     global _FAIL_RAISES
     prev = _FAIL_RAISES
@@ -89,8 +68,7 @@ def failures_raise():
 
 
 def fail(msg: str, **extra):
-    """Errors are JSON too — the caller parses stdout either way, and a plain
-    text error would force it to branch on whether parsing worked."""
+    """Errors are JSON on stdout too, so the caller parses one shape whatever happened."""
     if _FAIL_RAISES:
         raise BridgeError(msg, extra)
     emit({"error": msg, **extra}, code=1)
@@ -109,17 +87,8 @@ def pid_alive(pid) -> bool:
         return False
 
 
-def codex_home() -> Path:
-    """Never hardcode ~/.codex: CODEX_HOME is overridden on some machines and
-    then sessions, config and auth all live somewhere else entirely."""
-    v = os.environ.get("CODEX_HOME")
-    return Path(v).expanduser().resolve() if v else Path.home() / ".codex"
-
-
 def is_within(path, parent) -> bool:
-    """Whether `path` is `parent` or lives inside it. NFC-normalised on both
-    sides, because macOS stores non-ASCII filenames as NFD while argv and JSON
-    carry NFC — a Korean path never equals itself across that boundary."""
+    """Whether `path` is `parent` or lives inside it, compared in NFC."""
     if not path:
         return False
     try:
@@ -131,10 +100,8 @@ def is_within(path, parent) -> bool:
 
 def git_toplevel(path: Path):
     try:
-        r = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=10,
-        )
+        r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and r.stdout.strip():
             return Path(nfc(r.stdout.strip())).resolve()
     except Exception:

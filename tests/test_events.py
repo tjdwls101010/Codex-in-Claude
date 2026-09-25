@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 
-from support.harness import BridgeCase, FIXTURES
+from support.harness import BridgeCase, FIXTURES, engine
 
 MIXED = FIXTURES / "mixed-bigout-and-failure.jsonl"
 
@@ -190,6 +191,49 @@ class Show(BridgeCase):
         self.assertEqual(self.bridge("show", "--run", out["run_id"], "--item", "item_0")["changes"], changes)
         body, _ = self.log("--run", out["run_id"])
         self.assertIn("file add f0.py", body, "paths are shown relative to the run's cwd")
+
+
+class FormatEvents(unittest.TestCase):
+    """`codex.events.format_events` on events built by hand, one kind at a time."""
+
+    def setUp(self):
+        self.events = engine("codex.events")
+
+    def lines(self, level, *events, project=None):
+        return self.events.format_events(list(events), level, project)
+
+    def test_turn_lines(self):
+        usage = {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 2, "reasoning_output_tokens": 1}
+        self.assertEqual(self.lines("compact", {"type": "thread.started", "thread_id": "t1"}, {"type": "turn.started"},
+                                    {"type": "turn.completed", "usage": usage}),
+                         ["thread t1", "turn.started", "turn.completed in=10 cached=4 out=2 reasoning=1"])
+
+    def test_a_started_command_is_shown_so_a_long_one_is_not_silence(self):
+        item = {"id": "item_3", "type": "command_execution", "command": "/bin/zsh -lc 'make test'"}
+        self.assertEqual(self.lines("compact", {"type": "item.started", "item": item}), ["cmd.start[item_3] make test"])
+
+    def test_items_that_only_higher_levels_show(self):
+        todo = {"type": "item.completed", "item": {"id": "i", "type": "todo_list", "items": [{"text": "a"}]}}
+        reasoning = {"type": "item.completed", "item": {"id": "r", "type": "reasoning", "text": "thinking"}}
+        self.assertEqual(self.lines("compact", todo, reasoning), [])
+        self.assertEqual(len(self.lines("normal", todo, reasoning)), 1)
+        self.assertEqual(self.lines("full", todo, reasoning)[1], "reasoning thinking")
+
+    def test_other_kinds_are_one_line_each(self):
+        evs = [{"type": "item.completed", "item": {"id": "e", "type": "error", "message": "bad config"}},
+               {"type": "item.completed", "item": {"id": "w", "type": "web_search", "query": "q"}},
+               {"type": "item.completed", "item": {"id": "m", "type": "mcp_tool_call", "server": "s", "tool": "t",
+                                                    "status": "completed"}},
+               {"type": "_unparsed", "raw": "{ broken"},
+               {"type": "something.new", "x": 1}]
+        self.assertEqual(self.lines("compact", *evs),
+                         ["error bad config", "search q", "mcp[m] s/t status=completed", "unparsed { broken",
+                          'something.new {"x": 1}'])
+
+    def test_a_file_change_is_paths_relative_to_the_run(self):
+        ev = {"type": "item.completed", "item": {"id": "f", "type": "file_change",
+                                                 "changes": [{"path": "/p/src/a.py", "kind": "update"}]}}
+        self.assertEqual(self.lines("compact", ev, project=Path("/p")), ["file update src/a.py"])
 
 
 if __name__ == "__main__":

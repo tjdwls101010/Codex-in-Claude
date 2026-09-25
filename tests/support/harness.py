@@ -20,20 +20,20 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO / ".claude" / "skills" / "codex"
 # The one place the entrypoint is named. CODEX_BRIDGE_ENTRY points the whole suite at another copy of the scripts, which is how a deliberately broken engine is checked to turn tests red without touching the real one.
-ENTRY = Path(os.environ.get("CODEX_BRIDGE_ENTRY") or SKILL_DIR / "scripts" / "codex_bridge.py")
+ENTRY = Path(os.environ.get("CODEX_BRIDGE_ENTRY") or SKILL_DIR / "scripts" / "cli_codex.py")
 SUPPORT = Path(__file__).resolve().parent
 FAKE_CODEX_DIR = SUPPORT / "fake_codex"
 FIXTURES = SUPPORT / "fixtures"
 LEGACY_REGISTRY = SUPPORT / "legacy_registry"
 
-# The engine module each name maps to. Races that have to be staged below the CLI (a stale snapshot racing a completion, many writers on one meta.json) import through `engine()`, so this is the one place a test learns a module's name.
-ENGINE_MODULES = {"registry": "_registry"}
+SCRIPTS = ENTRY.parent
 
 
-def engine(name):
-    if str(ENTRY.parent) not in sys.path:
-        sys.path.insert(0, str(ENTRY.parent))
-    return importlib.import_module(ENGINE_MODULES[name])
+def engine(module):
+    """Import an engine module (`"core.settings"`, `"codex.argv"`, …) from the scripts under test, for the pure functions and the races that are tested below the CLI."""
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    return importlib.import_module(module)
 
 
 TERMINAL = ("completed", "failed", "interrupted", "orphaned", "timed_out")

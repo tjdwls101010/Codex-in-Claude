@@ -1112,7 +1112,8 @@ def cmd_batch_clean(args):
                          "stop": stop_commands(occupants, runs_dir, explicit)})
             continue
         dirty = worktree_dirty(path)
-        source = Path((wt or {}).get("source") or project)
+        # The repository the checkout was cut from: recorded with the worktree, or — when `git worktree add` never returned — the cwd the run was published with.
+        source = Path((wt or {}).get("source") or meta.get("cwd") or project)
         ok, err = worktree_remove(source, path, force=args.force, owned=path == rd / "wt")
         if ok and dirty and args.force:
             overrode.setdefault("discarded_uncommitted", []).append(str(path))

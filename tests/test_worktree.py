@@ -296,6 +296,20 @@ class Clean(WorktreeCase):
         self.assertFalse(half.exists())
         self.assertEqual(self.registered_worktrees(), [])
 
+    def test_a_half_built_checkout_is_cleaned_in_its_own_repository_from_anywhere(self):
+        out = self.finished(n=1)
+        rid, half = out["runs"][0]["run_id"], Path(out["runs"][0]["worktree"])
+        # Killed inside `git worktree add`: the path was never recorded and the checkout has no .git file.
+        self.write_meta(rid, {**self.meta(rid), "worktree": None, "cwd": str(self.project)})
+        self.git("worktree", "lock", "--reason", "initializing", half)
+        (half / ".git").unlink()
+        other = self.tmp / "other-repo"
+        other.mkdir()
+        self.git("init", "-q", cwd=other)
+        res = self.bridge("batch", "clean", "--group", "p1", "--force", "--runs-dir", self.runs_dir, cwd=other)
+        self.assertTrue(res["name_released"], res)
+        self.assertEqual(self.registered_worktrees(), [])
+
     def test_force_never_deletes_a_recorded_path_that_is_not_the_runs_own_checkout(self):
         out = self.finished(n=1)
         rid = out["runs"][0]["run_id"]

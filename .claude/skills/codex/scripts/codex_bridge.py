@@ -1154,7 +1154,7 @@ def add_run_options(p, *, kind, foreground=True):
         p.add_argument("--prompt-file",
                        help="read the prompt from this file instead of the "
                             "positional argument")
-    if kind == "start":
+    if kind in ("start", "batch"):
         p.add_argument("--cwd",
                        help="directory the run works in (default: the project "
                             "root)")
@@ -1425,7 +1425,7 @@ def build_parser():
     b = bsub.add_parser("start", help="start N runs as one addressable group",
                         formatter_class=HidesSuppressedCommands,
                         epilog=BATCH_START_EPILOG)
-    add_common(b); add_run_options(b, kind="start", foreground=False)
+    add_common(b); add_run_options(b, kind="batch", foreground=False)
     b.add_argument("--group", required=True,
                    help="name for this group. Single-use per project until "
                         "`batch clean` releases it: reusing a live name would "

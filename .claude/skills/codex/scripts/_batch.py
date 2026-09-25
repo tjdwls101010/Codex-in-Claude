@@ -42,6 +42,7 @@ from core.registry import (
 )
 from codex.catalog import check_model_effort, model_catalog
 from codex.config import user_defaults
+from core import settings
 from _run import (
     WRITING_SANDBOXES, create_run, run_row,
 )
@@ -314,74 +315,27 @@ def load_tasks(args, runs_dir=None):
     if not tasks:
         fail("batch start needs at least one --task or a --tasks-file")
 
-    # Checked here as well as in `create_run`, for the reason the type checks
-    # above give: read the whole file before starting anything. `create_run`
-    # would catch the same typo, but one member at a time — a bad effort in the
-    # eighth task would be found with seven runs already spawned, which is the
-    # cost this function exists to avoid. One catalog lookup covers every task.
-    group_model = getattr(args, "model", None)
-    group_effort = getattr(args, "effort", None)
-    # C10 put a third source under those two, and it was reaching validation
-    # one member at a time inside `resolve_settings` — after the group name was
-    # claimed and earlier members had already spawned. Measured: config effort
-    # `ultra` with a task naming `fake-small` produced `spawned: 1` of 2, which
-    # is the half-started batch this whole block exists to prevent.
-    #
-    # Not for a phase that continues threads: those members take their model
-    # from what each thread recorded, so holding them to a `config.toml` that
-    # has gone stale since would refuse the continuation `resume` exists for —
-    # the rule `resolve_settings` states for one run, at group scale.
-    # `--resume-from` is decided here rather than per item because this runs
-    # before `pair_with_previous`: every task is still `kind: start` at this
-    # point and will be rewritten into a resume, so asking each one would get
-    # the wrong answer for all of them.
-    user = ({} if getattr(args, "resume_from", None)
-            or getattr(args, "inherit_config", False) else user_defaults())
-
-    def inherits(item):
-        """Whether this member will take its model from a thread rather than
-        from the config. `resolve_settings` decides it by whether the run being
-        resumed is in this registry — a task naming an external Codex thread
-        resolves to nothing, so the config's values do reach it, and skipping
-        them here found a stale `config.toml` only after `claim_group`."""
-        if item["kind"] != "resume":
-            return False
-        if not runs_dir or not item.get("resume"):
-            return True
-        _rd, meta = find_run(runs_dir, item["resume"])
-        return bool(meta)
-
-    def defaults_for(item):
-        if inherits(item):
-            return group_model, group_effort
-        return (group_model or user.get("model"),
-                group_effort or user.get("effort"))
-
-    named = [t for t in tasks if t.get("model") or t.get("effort")]
-    fresh_defaults = any(defaults_for(t) != (None, None) for t in tasks)
-    catalog = model_catalog() if named or fresh_defaults else None
-    if catalog:
-        for n, item in enumerate(tasks, 1):
-            dm, de = defaults_for(item)
-            model, effort = item.get("model") or dm, item.get("effort") or de
-            if not (model or effort):
-                continue
-
-            def fail_at(msg, _n=n, **extra):
-                fail(f"task {_n}: {msg}", **extra)
-
-            # The task's own fields over the group's, matching `task_args` —
-            # checking the pair that will actually be used is the whole point.
-            # A value the caller did not type is named as such, because "your
-            # config.toml says ultra" and "you passed --effort ultra" send the
-            # reader to two different files.
-            check_model_effort(
-                model, effort, catalog=catalog, fail=fail_at,
-                model_source=None if (item.get("model") or group_model)
-                else "config.toml",
-                effort_source=None if (item.get("effort") or group_effort)
-                else "config.toml")
     return tasks
+
+
+def check_task_settings(tasks, args, runs_dir):
+    """Refuse a model or effort any task would adopt, before the group name is claimed and with one catalog lookup, rather than at the eighth member with seven already running."""
+    user = user_defaults()
+    adopted = []
+    for n, item in enumerate(tasks, 1):
+        ns = task_args(args, item)
+        base = find_run(runs_dir, item["resume"])[1] if item["kind"] == "resume" else None
+        adopted.append((n, settings.resolve(
+            sandbox=ns.sandbox, model=ns.model, effort=ns.effort, priority=getattr(ns, "priority", None),
+            inherit_config=getattr(ns, "inherit_config", False), base=base, user=user)["adopted"]))
+    if not any(a["model"] or a["effort"] for _n, a in adopted):
+        return
+    catalog = model_catalog()
+    for n, a in adopted:
+        if a["model"] or a["effort"]:
+            check_model_effort(a["model"], a["effort"], catalog=catalog,
+                               fail=lambda msg, _n=n, **extra: fail(f"task {_n}: {msg}", **extra),
+                               model_source=a["model_source"], effort_source=a["effort_source"])
 
 
 def task_args(base_args, item):
@@ -441,17 +395,13 @@ def writers_by_directory(tasks, args, project, runs_dir):
     """
     dirs = {}
     for i, item in enumerate(tasks):
-        parent = {}
+        parent = None
         if item["kind"] == "resume" and item.get("resume"):
             _rd, parent = find_run(runs_dir, item["resume"])
-            parent = parent or {}
-        # The order `resolve_settings` uses: the task's own field, then the group's flag, then what the resumed thread recorded.
-        sandbox = (item.get("sandbox") or args.sandbox or parent.get("sandbox")
-                   or "workspace-write")
-        if sandbox not in WRITING_SANDBOXES:
-            continue
-        where = item.get("cwd") or getattr(args, "cwd", None) or parent.get("cwd")
-        dirs.setdefault(str(where or project), []).append(i)
+        ns = task_args(args, item)
+        r = settings.resolve(sandbox=ns.sandbox, cwd=getattr(ns, "cwd", None), base=parent)
+        if r["sandbox"] in WRITING_SANDBOXES:
+            dirs.setdefault(str(r["cwd"] or project), []).append(i)
     return dirs
 
 
@@ -690,6 +640,8 @@ def cmd_batch_start(args):
     if previous:
         tasks, paired_with = pair_with_previous(
             tasks, runs_dir, previous, force=getattr(args, "force", False))
+
+    check_task_settings(tasks, args, runs_dir)
 
     # Claim the name before spawning anything. D36: a reused group name would
     # make "the members of p1" ambiguous, and --resume-from pairs positionally

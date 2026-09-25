@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import unittest
@@ -214,9 +215,12 @@ class OneTurnPerThread(ResumeCase):
     def test_simultaneous_resumes_of_a_known_thread_have_one_winner(self):
         first = self.bridge("start", "seed")
         self.wait_state(first["run_id"])
-        self.race(first["run_id"], "next", n=3)
+        results = self.race(first["run_id"], "next", n=3)
         runs = self.bridge("status", "--thread", first["thread_id"])["runs"]
         self.assertEqual(len(runs), 2, "the seed and exactly one winner")
+        winner = next(json.loads(out)["run_id"] for rc, out in results if rc == 0)
+        # A resume's handle comes back before its supervisor has launched codex.
+        self.wait_state(winner, ("running",))
         self.assertEqual(len([r for r in self.runs_invoked() if r["argv"][1] == "resume"]), 1)
 
     def test_simultaneous_resumes_of_an_unknown_ref_have_one_winner(self):

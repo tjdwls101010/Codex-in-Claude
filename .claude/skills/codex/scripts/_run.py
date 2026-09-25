@@ -28,6 +28,7 @@ from _codex import THREAD_ID_WAIT, spawn_supervised
 from codex.argv import SANDBOX_MODES, apply_preamble, build_argv
 from codex.catalog import check_model_effort, model_catalog
 from codex.config import user_defaults
+from core import settings
 from codex.events import first_thread_id, scan_progress
 from core.registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, iter_runs, read_meta, reap,
@@ -248,74 +249,19 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
              "is no conversation to continue",
              run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
-    # Isolated unless the caller asks for their config. `--isolate` used to
-    # state the default explicitly and was retired for saying nothing on a fresh
-    # run and too much on a resumed one — it re-asserted a recorded choice with
-    # no way to take it back.
-    isolated = base["isolated"] if base else True
-    if getattr(args, "inherit_config", False):
-        isolated = False
+    r = settings.resolve(sandbox=args.sandbox, model=args.model, effort=args.effort,
+                         priority=getattr(args, "priority", None),
+                         inherit_config=getattr(args, "inherit_config", False),
+                         base=base, user=user_defaults())
+    # Checked here, before anything is written or claimed, so a refusal costs nothing. Guarded because the catalog lookup is a subprocess.
+    adopted = r["adopted"]
+    if adopted["model"] or adopted["effort"]:
+        check_model_effort(adopted["model"], adopted["effort"], catalog=model_catalog(), fail=fail,
+                           model_source=adopted["model_source"], effort_source=adopted["effort_source"])
 
-    sandbox = args.sandbox or (base["sandbox"] if base else "workspace-write")
-
-    # Model, effort and service tier, in four steps: an explicit flag, then
-    # whatever the thread recorded if its isolation has not changed, then the
-    # user's `config.toml`, then whatever the server does with silence.
-    #
-    # Step two is the one worth naming. An empty record is a record: a thread
-    # that ran on the server's default keeps running on it, whatever
-    # `config.toml` says by the time it is resumed. That is B3's stability
-    # rule, and it is why this is not an `or` chain — `or` cannot tell
-    # "recorded nothing" from "has nothing recorded yet".
-    #
-    # `user_defaults` is consulted only under isolation, exactly as the tier
-    # always has been: `--ignore-user-config` is what removed those values, and
-    # under `--inherit-config` Codex reads the same file itself, so putting
-    # them back would be this wrapper restating what it chose not to suppress.
-    inherits = bool(base) and isolated == base["isolated"]
-    user = {} if inherits or not isolated else user_defaults()
-    model = args.model or (base.get("model") if inherits else user.get("model"))
-    effort = args.effort or (base.get("effort") if inherits else user.get("effort"))
-    if getattr(args, "priority", None) is True:
-        tier = "priority"
-    elif getattr(args, "priority", None) is False:
-        tier = None
-    elif inherits:
-        # `service_tier` replaced a boolean `priority` in the same release that
-        # started reading the tier from config.toml. A thread recorded under
-        # the old one holds the boolean and not the key, so reading only the
-        # key drops Fast mode from the rest of that conversation — silently,
-        # and on exactly the threads that had asked for it. The key is checked
-        # for presence rather than truth, because a new record whose tier is
-        # None is a choice this must not overwrite.
-        tier = (base["service_tier"] if "service_tier" in base
-                else ("priority" if base.get("priority") else None))
-    else:
-        tier = user.get("service_tier")
-
-    # D38's catalog check, and it follows the *value* rather than the flag.
-    # What must never be re-checked is a value inherited from the thread being
-    # resumed — a model retired upstream would otherwise turn every resume of
-    # that thread into a refusal, breaking the continuity `resume` exists for.
-    # Everything else is being adopted here for the first time, and a
-    # `config.toml` nobody has edited in a year is exactly where a retired
-    # model sits waiting.
-    #
-    # Guarded rather than left to `check_model_effort`'s own early return,
-    # because the catalog argument is evaluated first: calling it
-    # unconditionally spawns a `codex debug models` subprocess on the critical
-    # path of every run, including the ones that pin nothing.
-    fresh_model = args.model or user.get("model")
-    fresh_effort = args.effort or user.get("effort")
-    if fresh_model or fresh_effort:
-        check_model_effort(
-            fresh_model, fresh_effort, catalog=model_catalog(), fail=fail,
-            model_source=None if args.model else "config.toml",
-            effort_source=None if args.effort else "config.toml")
-
-    return {"cwd": cwd, "prompt": prompt, "isolated": isolated,
-            "sandbox": sandbox, "model": model, "effort": effort,
-            "service_tier": tier}
+    return {"cwd": cwd, "prompt": prompt, "isolated": r["isolated"],
+            "sandbox": r["sandbox"], "model": r["model"], "effort": r["effort"],
+            "service_tier": r["service_tier"]}
 
 
 def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):

@@ -44,7 +44,7 @@ from _codex import check_model_effort, model_catalog, user_defaults
 from _run import (
     WRITING_SANDBOXES, create_run, run_row,
 )
-from _util import (
+from util import (
     BridgeError, clip, emit, fail, failures_raise, git_toplevel, is_within, nfc,
     now_iso,
 )

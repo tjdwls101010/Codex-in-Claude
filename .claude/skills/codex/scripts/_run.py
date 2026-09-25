@@ -34,7 +34,7 @@ from _registry import (
     resolve_project, resolve_runs_dir, still_writing, thread_turn_lock,
     unreadable_runs, write_meta,
 )
-from _util import clip, fail, git_toplevel, is_within, now_iso
+from util import clip, fail, git_toplevel, is_within, now_iso
 
 WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
 

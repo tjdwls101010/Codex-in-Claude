@@ -26,7 +26,7 @@ from pathlib import Path
 
 from _events import first_thread_id
 from _registry import read_meta, update_meta
-from _util import codex_home, now_iso
+from util import codex_home, now_iso
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 

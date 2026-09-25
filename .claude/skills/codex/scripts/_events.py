@@ -21,7 +21,7 @@ import json
 import re
 from pathlib import Path
 
-from _util import clip, nfc
+from util import clip, nfc
 
 LEVELS = ("compact", "normal", "full", "raw")
 

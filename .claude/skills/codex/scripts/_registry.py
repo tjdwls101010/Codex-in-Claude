@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from _util import git_toplevel, nfc, now_iso, pid_alive
+from util import git_toplevel, nfc, now_iso, pid_alive
 
 TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned", "timed_out")
 

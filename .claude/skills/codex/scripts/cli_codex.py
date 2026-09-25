@@ -65,7 +65,7 @@ from _registry import (  # noqa: E402
 from _run import (  # noqa: E402
     STALL_SECONDS, WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
 )
-from _util import (  # noqa: E402
+from util import (  # noqa: E402
     clip, codex_home, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
 )
 

@@ -5,12 +5,16 @@ A user-level install is `~/.claude/skills/codex -> <checkout>`, so the path the 
 
 from __future__ import annotations
 
+import argparse
 import json
+import re
 import subprocess
 import sys
 import unittest
 
-from support.harness import BridgeCase, ENTRY, alive, wait_until
+from support.harness import SCRIPTS, BridgeCase, ENTRY, alive, engine, wait_until
+
+SKILL_MD = ENTRY.parent.parent / "SKILL.md"
 
 
 class ThroughASymlink(BridgeCase):
@@ -53,6 +57,74 @@ class ThroughASymlink(BridgeCase):
         rep = json.loads(p.stdout)
         self.assertEqual(rep["project"], str(self.project))
         self.assertEqual(rep["skill_dir"], str(ENTRY.parent.parent.resolve()))
+
+
+class TheSkillTextPointsAtRealThings(unittest.TestCase):
+    """SKILL.md may name commands, flags and reply fields; each has to exist, and the pre-approval has to match the call it shows."""
+
+    def setUp(self):
+        self.text = SKILL_MD.read_text()
+        front, self.body = self.text.split("\n---\n", 1)
+        self.allowed = re.findall(r"^\s+- Bash\((.*)\)$", front, re.M)
+        parser = engine("cli.parser").build_parser()
+        self.flags = {}
+
+        def walk(p, path):
+            for a in p._actions:
+                if isinstance(a, argparse._SubParsersAction):
+                    for name, sp in a.choices.items():
+                        walk(sp, path + (name,))
+                else:
+                    self.flags.setdefault(path, set()).update(a.option_strings)
+        walk(parser, ())
+
+    def test_the_pre_approval_matches_the_call_line_and_the_entrypoint(self):
+        self.assertEqual(len(self.allowed), 1)
+        pattern = self.allowed[0]
+        self.assertTrue(pattern.endswith(" *"))
+        prefix = pattern[:-2]
+        self.assertIn(f"`{prefix} <command>", self.body, "the call the text teaches is the one pre-approved")
+        self.assertEqual(prefix, f'python3 "${{CLAUDE_SKILL_DIR}}/scripts/{ENTRY.name}"')
+        self.assertTrue((SKILL_MD.parent / "scripts" / ENTRY.name).is_file())
+
+    def test_every_command_and_flag_named_exists(self):
+        commands = {" ".join(path) for path in self.flags if path}
+        groups = {path[0] for path in self.flags if len(path) > 1}
+        all_flags = set().union(*self.flags.values())
+        missing = []
+        call = self.allowed[0][:-2]
+        for span in re.findall(r"`([^`]+)`", self.body):
+            words = span.removeprefix(call).split()
+            if not words:
+                continue
+            if words[0] in groups and len(words) > 1 and not words[1].startswith("-") and " ".join(words[:2]) not in commands:
+                missing.append(f"{span}: no such subcommand")
+                continue
+            path = tuple(words[:2]) if " ".join(words[:2]) in commands else tuple(words[:1])
+            if " ".join(path) in commands:
+                for flag in (w for w in words if w.startswith("--")):
+                    if flag not in self.flags[path]:
+                        missing.append(f"{span}: {flag}")
+            elif any(w.startswith(("--", "<")) for w in words[1:]) and not words[0].startswith(("--", "<")):
+                missing.append(f"{span}: no such command")
+            else:
+                for flag in (w for w in words if w.startswith("--") and w != "--help"):
+                    if flag not in all_flags:
+                        missing.append(f"{span}: {flag}")
+        self.assertEqual(missing, [])
+
+    def test_every_field_named_is_a_key_the_code_writes(self):
+        # Catches a renamed or misspelt field; a key the code writes only into its own records would still pass.
+        code = "\n".join(p.read_text() for p in SCRIPTS.rglob("*.py"))
+        # Names Codex owns rather than this skill's replies.
+        codex_owned = {"turn_context"}
+        commands = {path[0] for path in self.flags if path}
+        fields = set(re.findall(r"`([a-z][a-z_]*)`", self.body)) - codex_owned - commands
+        self.assertTrue(fields, "the check found no field names to check")
+        self.assertEqual(sorted(f for f in fields if not re.search(rf'"{f}"\s*:|\["{f}"\]', code)), [])
+
+    def test_no_provenance(self):
+        self.assertEqual(re.findall(r"\b[Mm]easured\b|\b[RDBFC][0-9]{1,2}\b|\bV-[0-9]+\b|\baudit\b|\bfield report\b|\b[0-9]+ sessions\b", self.text), [])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+# S6 scenarios
+
+Each scenario runs a Claude session with only this skill loaded (a plugin copy whose SKILL.md is either the draft or a control with no judgement text — frontmatter and the call paragraph only), in a throwaway git repository, under a Bash sandbox that confines writes to that repository, a temporary CODEX_HOME and the session temp directory. The bridge alone runs outside that sandbox, because Codex applies its own `sandbox-exec`, which cannot nest; it is pre-approved on the command line the way a user's permission rule would approve it, since a skill's `allowed-tools` covers only a user-typed `/codex:codex`. `run_e2e.py` sets this up and saves the transcript and a digest of every tool call.
+
+A session whose failure comes from a permission denial or the environment is not evidence either way; rerun it.
+
+| # | Host | Prompt (abridged) | Passes when |
+|---|---|---|---|
+| 1 | stream-json, stdin held open so a background task can wake the session | Have Codex review `src/calc.py` for bugs; don't change files yourself. | `--sandbox read-only`; `log --run <id> --follow` put in a background Bash call right after `start`; `result` taken after the notification; at least one reported bug checked against the code before it is relayed; no polling while waiting (no repeated `status`/`log --since`, no `sleep`). |
+| 2 | stream-json, as 1 | Three independent changes to `src/app.py`, one Codex run each, at the same time; bring the results into this tree. | `batch start --worktree`; the group followed with `status --group … --follow` or `log --group … --follow` in the background; `result --group`; the changes moved from the worktrees into the tree (or the session says it must be done and why not); `batch clean` or a stated reason to keep the worktrees. |
+| 3 | `-p`, then `-p --resume` of the same session | Turn 1: have Codex add type hints to `src/util.py`, don't wait. Turn 2: change of plan, also add docstrings. | Turn 2 stops the live run and resumes the same thread (`stop`, then `resume <id>`), or resumes it directly if it had already ended — not a fresh `start`. |
+| 4 | one `-p` turn | Ask Codex for a short summary of the repository; there is no later turn. | A foreground `log --follow` with the Bash call's timeout set above `--follow-timeout`, then `result`; or, if the time runs out, the run id handed back and the work reported unfinished. Not a background follower that nothing will wake. |

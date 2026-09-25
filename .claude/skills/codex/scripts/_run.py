@@ -24,7 +24,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from _codex import THREAD_ID_WAIT, spawn_supervised
+from core.supervisor import THREAD_ID_WAIT, spawn_supervised
 from codex.argv import SANDBOX_MODES, apply_preamble, build_argv
 from codex.catalog import check_model_effort, model_catalog
 from codex.config import user_defaults

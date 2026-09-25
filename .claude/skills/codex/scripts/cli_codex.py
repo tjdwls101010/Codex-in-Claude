@@ -28,12 +28,10 @@ and `_events.py` for "what reaches my context".
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -41,7 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _codex import THREAD_ID_WAIT, supervise  # noqa: E402
+from core.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, stop_run, supervise  # noqa: E402
 from codex.argv import SANDBOX_MODES  # noqa: E402
 from codex.catalog import codex_version, model_catalog  # noqa: E402
 from codex.config import codex_home, config_scalars, user_defaults  # noqa: E402
@@ -59,13 +57,13 @@ from worktree import registered as worktrees_registered  # noqa: E402
 from core.registry import (  # noqa: E402
     ACTIVE_STATES, TERMINAL_STATES, find_run, iter_runs, meta_unreadable,
     read_meta, reap, resolve_project, resolve_runs_dir, still_writing,
-    unreadable_runs, update_meta_if,
+    unreadable_runs,
 )
 from _run import (  # noqa: E402
     STALL_SECONDS, WRITING_SANDBOXES, create_run, resolve_implicit_run, run_row,
 )
 from util import (  # noqa: E402
-    clip, emit, fail, git_toplevel, is_within, now_iso, pid_alive,
+    clip, emit, fail, git_toplevel, is_within,
 )
 
 # `show --item` default cap. A silently truncated blob is worse than a loud one,
@@ -473,59 +471,6 @@ def cmd_show(args):
 # stop
 # --------------------------------------------------------------------------
 
-def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
-    """SIGINT, then SIGTERM, then SIGKILL — to the process group.
-
-    SIGINT first because Codex flushes its rollout and leaves the thread
-    resumable: measured, it exits ~0.3 s later and the resumed turn still knows
-    what the interrupted turn had finished. Signalling the group, never a
-    process name, is what keeps concurrent runs independent — name matching
-    would kill every Codex on the machine, including other people's.
-    """
-    pgid = meta.get("pgid")
-    result = {"run_id": meta.get("run_id"), "pgid": pgid}
-    if not pgid:
-        return {**result, "signalled": False, "reason": "no process group recorded",
-                "state": meta.get("state")}
-
-    sent = []
-    for sig, wait in ((signal.SIGINT, grace), (signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
-        try:
-            os.killpg(int(pgid), sig)
-            sent.append(sig.name)
-        except ProcessLookupError:
-            break
-        except PermissionError:
-            result["error"] = f"not permitted to signal process group {pgid}"
-            break
-        deadline = time.time() + wait
-        gone = False
-        while time.time() < deadline:
-            if not pid_alive(meta.get("supervisor_pid")) and not pid_alive(meta.get("codex_pid")):
-                gone = True
-                break
-            time.sleep(0.1)
-        if gone:
-            break
-    if sent and "error" not in result:
-        # A descendant can outlive both Codex and the supervisor in the run's group; once they are gone the group holds nothing else of value.
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(int(pgid), signal.SIGKILL)
-            if sent[-1] != "SIGKILL":
-                sent.append("SIGKILL")
-
-    result["signals_sent"] = sent
-    result["signalled"] = bool(sent)
-    # Compare-and-set, not a plain write: the supervisor may have recorded its
-    # own outcome (`completed`, or `timed_out` if its deadline fired) between
-    # the last signal and this line, and that outcome is the true one.
-    m = update_meta_if(run_dir, ACTIVE_STATES,
-                       state="interrupted", ended_at=now_iso())
-    result["state"] = m.get("state")
-    result["thread_id"] = m.get("thread_id")
-    return result
-
-
 def cmd_stop(args):
     refuse_competing_selectors(args, "stop", "--run", "--group", "--all")
     project = resolve_project(args.project)
@@ -556,7 +501,7 @@ def cmd_stop(args):
                 targets.append((rd, m))
     else:
         fail("stop needs --run <id> (repeatable), --group <name>, or --all")
-    emit({"stopped": [signal_run(rd, m, grace=args.grace) for rd, m in targets],
+    emit({"stopped": [stop_run(rd, m, grace=args.grace) for rd, m in targets],
           "claude_session_id": session})
 
 
@@ -1318,7 +1263,7 @@ def build_parser():
                    help="interrupt every run in this project's registry that "
                         "is still doing something — every non-terminal one, "
                         "plus an orphaned run whose Codex is still writing")
-    p.add_argument("--grace", type=float, default=5.0,
+    p.add_argument("--grace", type=float, default=DEFAULT_GRACE,
                    help="seconds to wait after SIGINT before SIGTERM, then 3s "
                         "before SIGKILL (default: 5.0). Signals go to the run's "
                         "recorded process group, never to a matched process "

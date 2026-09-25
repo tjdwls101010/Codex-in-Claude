@@ -17,7 +17,8 @@ through the environment so the bridge cannot tell it from the real CLI:
   FAKE_CODEX_LOGIN_OUT  what `login status` prints
   FAKE_CODEX_THREAD_ID  thread id to put in `thread.started`
   FAKE_CODEX_IGNORE_SIGINT  sit through SIGINT so a signal ladder has to escalate
-  FAKE_CODEX_GRANDCHILD  start a child that also ignores SIGINT, in codex's process group, and write its pid to this path
+  FAKE_CODEX_IGNORE_SIGTERM  sit through SIGTERM too
+  FAKE_CODEX_GRANDCHILD  start a child in codex's process group that ignores SIGINT (and SIGTERM when codex does); it writes its own pid to this path once its handlers are installed
 """
 
 import json
@@ -143,12 +144,17 @@ def main():
 
     signal.signal(signal.SIGINT, on_int)
 
+    if os.environ.get("FAKE_CODEX_IGNORE_SIGTERM"):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     if os.environ.get("FAKE_CODEX_GRANDCHILD"):
         import subprocess
-        child = subprocess.Popen([sys.executable, "-c", "import signal, time; "
-                                  "signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(120)"])
-        with open(os.environ["FAKE_CODEX_GRANDCHILD"], "w") as fh:
-            fh.write(str(child.pid))
+        ignore = "signal.SIGINT" + (", signal.SIGTERM" if os.environ.get("FAKE_CODEX_IGNORE_SIGTERM") else "")
+        subprocess.Popen([sys.executable, "-c",
+                          "import os, signal, sys, time\n"
+                          f"for s in ({ignore},): signal.signal(s, signal.SIG_IGN)\n"
+                          "open(sys.argv[1] + '.tmp', 'w').write(str(os.getpid()))\n"
+                          "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
+                          "time.sleep(120)", os.environ["FAKE_CODEX_GRANDCHILD"]])
 
     fixture = os.environ.get("FAKE_CODEX_FIXTURE")
     if fixture:

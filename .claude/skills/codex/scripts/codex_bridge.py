@@ -28,6 +28,7 @@ and `_events.py` for "what reaches my context".
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -540,6 +541,10 @@ def signal_run(run_dir: Path, meta: dict, grace: float = 5.0):
             time.sleep(0.1)
         if gone:
             break
+    if sent and "error" not in result:
+        # A descendant can outlive both Codex and the supervisor in the run's group; once they are gone the group holds nothing else of value.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(int(pgid), signal.SIGKILL)
 
     result["signals_sent"] = sent
     result["signalled"] = bool(sent)
@@ -1499,9 +1504,11 @@ def build_parser():
                         "worktree git will not discard uncommitted changes from "
                         "is kept.")
     b.add_argument("--force", action="store_true",
-                   help="lift every refusal except the live-run ones at once, "
-                        "not only the one you hit, including a manifest that "
-                        "will not parse. The result says what it overrode. "
+                   help="lift every refusal at once, not only the one you "
+                        "hit, including a manifest that will not parse — except "
+                        "that a worktree whose run is live, or whose meta.json "
+                        "will not parse, is always kept. The result says what "
+                        "it overrode. "
                         "Where a worktree held uncommitted changes, that work "
                         "had no other copy.")
     b.set_defaults(func=cmd_batch_clean)

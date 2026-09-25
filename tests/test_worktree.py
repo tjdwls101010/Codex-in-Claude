@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import unicodedata
@@ -290,6 +291,28 @@ class Clean(WorktreeCase):
         self.assertEqual([r["path"] for r in res["removed"]], [out["runs"][1]["worktree"]])
         self.assertEqual(self.registered_worktrees(), [])
         self.assertTrue(res["name_released"])
+
+    def test_force_keeps_the_worktree_of_a_member_whose_state_cannot_be_read(self):
+        out = self.group("--worktree", env={"FAKE_CODEX_HANG": 60})
+        victim, other = out["runs"][0], out["runs"][1]
+        self.wait_state(victim["run_id"], ("running",))
+        self.bridge("stop", "--run", other["run_id"])
+        self.wait_state(other["run_id"])
+        (self.runs_dir / victim["run_id"] / "meta.json").write_text("{ truncated")
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual([r["run_id"] for r in res["removed"]], [other["run_id"]])
+        self.assertEqual([k["run_id"] for k in res["kept"]], [victim["run_id"]])
+        self.assertFalse(res["name_released"])
+        self.assertTrue(Path(victim["worktree"]).exists())
+
+    def test_the_stop_command_it_returns_works_from_anywhere(self):
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        out = self.group("--worktree", "--project", self.project, cwd=elsewhere, env={"FAKE_CODEX_HANG": 60})
+        res = self.bridge("batch", "clean", "--group", "p1", "--project", self.project, rc=1, cwd=elsewhere)
+        self.assertEqual(len(res["stop"]), 1)
+        stopped = self.bridge(*shlex.split(res["stop"][0]), cwd=elsewhere)["stopped"]
+        self.assertEqual(sorted(s["run_id"] for s in stopped), sorted(r["run_id"] for r in out["runs"]))
 
     def test_a_member_whose_meta_will_not_parse_is_not_presumed_dead(self):
         out = self.finished()

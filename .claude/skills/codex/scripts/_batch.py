@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import uuid
@@ -947,13 +948,17 @@ def spawn_task(ns, item, *, group, runs_dir, project, batch=None,
                       worktree_base=worktree_base)
 
 
-def stop_commands(runs, runs_dir):
-    """The `stop` calls that end these runs: the group's when the run is one of its recorded members, since that one call ends them all, else the run's own."""
+def stop_commands(runs, runs_dir, explicit_registry=False):
+    """The `stop` calls that end these runs: the group's when the run is one of its recorded members, since that one call ends them all, else the run's own.
+
+    A registry the caller named explicitly is named in the command too, or it would resolve against whatever directory it is run from.
+    """
+    where = f" --runs-dir {shlex.quote(str(runs_dir))}" if explicit_registry else ""
     out = []
     for m in runs:
         g = m.get("group")
         cmd = (f"stop --group {g}" if g and m["run_id"] in (member_run_ids(runs_dir, g) or [])
-               else f"stop --run {m['run_id']}")
+               else f"stop --run {m['run_id']}") + where
         if cmd not in out:
             out.append(cmd)
     return out
@@ -975,6 +980,7 @@ def cmd_batch_clean(args):
     """
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
+    explicit = bool(args.project or args.runs_dir)
     manifest = read_group(runs_dir, args.group)
     lost_manifest = manifest is None and group_unreadable(runs_dir, args.group)
     if manifest is None and not lost_manifest:
@@ -1007,7 +1013,7 @@ def cmd_batch_clean(args):
     if live:
         # Not liftable by --force: a live member is still writing into the very directory being removed.
         fail(f"group {args.group!r} still has running members; stop them first",
-             running=live, stop=stop_commands(live, runs_dir))
+             running=live, stop=stop_commands(live, runs_dir, explicit))
 
     children = derived_groups(runs_dir, args.group)
     # The liftable refusals in one list, in check order, because one flag lifts
@@ -1072,6 +1078,15 @@ def cmd_batch_clean(args):
         path = Path(wt["path"]) if wt else rd / "wt"
         if not path.exists():
             continue
+        if meta is None:
+            # Liveness unknown is not dead: the checkout stays until its run can be read, --force or not.
+            kept.append({"run_id": rid, "path": str(path),
+                         "reason": "its meta.json will not parse, so whether it "
+                                   "is still running cannot be determined; "
+                                   "repair or remove the run directory to "
+                                   "release this worktree",
+                         "run_dir": str(rd)})
+            continue
         # The fourth refusal, and the one this code does not perform: `git
         # worktree remove` declines a dirty tree by itself (measured, V-13) and
         # git's definition of dirty is the correct one, so its refusal is
@@ -1094,7 +1109,7 @@ def cmd_batch_clean(args):
                          "reason": "another run is still working in this "
                                    "worktree",
                          "occupied_by": [m["run_id"] for m in occupants],
-                         "stop": stop_commands(occupants, runs_dir)})
+                         "stop": stop_commands(occupants, runs_dir, explicit)})
             continue
         dirty = worktree_dirty(path)
         ok, err = worktree_remove(project, path, force=args.force)
@@ -1120,10 +1135,11 @@ def cmd_batch_clean(args):
     # never released. The remedy that does work is the one the message omitted.
     if released:
         note = None
-    elif any(k.get("stop") for k in kept):
-        note = ("live runs are working in some of these worktrees; stop them "
-                "with the commands in kept[].stop, then clean again. The group "
-                "name stays claimed until nothing is left.")
+    elif any(k.get("stop") or k.get("run_dir") for k in kept):
+        note = ("some of these worktrees belong to runs that are live or whose "
+                "state cannot be read; kept[].reason says which, and kept[].stop "
+                "how to end a live one. The group name stays claimed until "
+                "nothing is left.")
     else:
         note = ("these worktrees hold uncommitted changes — collect them, or "
                 "pass --force to discard. The group name stays claimed until "

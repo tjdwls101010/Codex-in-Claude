@@ -672,21 +672,21 @@ def supervise(run_dir: Path, timeout=None) -> int:
         # intact.
         fields = {"state": "timed_out", "ended_at": now_iso(), "error": f"timed out after {timeout}s"}
         rc, group = None, pgid or proc.pid
+        # SIGINT lets Codex flush its rollout. Every rung is sent even after Codex exits, because a descendant of it can outlive it in the same group.
         for sig, wait in ((signal.SIGINT, DEADLINE_GRACE), (signal.SIGTERM, 3.0)):
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(group, sig)
             try:
                 rc = proc.wait(timeout=wait)
-                break
             except subprocess.TimeoutExpired:
-                continue
+                pass
+        # In the background this supervisor is in the group it is about to SIGKILL, so the outcome is written first.
+        update_meta(run_dir, exit_code=rc if rc is not None else -signal.SIGKILL, **fields)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(group, signal.SIGKILL)
         if rc is None:
-            # In the background this supervisor is in the group it is about to SIGKILL, so the outcome is written first.
-            update_meta(run_dir, exit_code=-signal.SIGKILL, **fields)
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(group, signal.SIGKILL)
             rc = proc.wait()
-        update_meta(run_dir, exit_code=rc, **fields)
+            update_meta(run_dir, exit_code=rc)
         return rc
 
     if not tid:

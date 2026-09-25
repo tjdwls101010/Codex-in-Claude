@@ -161,10 +161,12 @@ class WhatReachesCodex(BridgeCase):
                          [str(self.tmp / "a.png"), str(self.tmp / "b.png")])
         self.assertTrue(rec["argv"][-1].endswith("compare them"))
 
-    def test_the_tier_flags_are_one_choice_and_a_prompt_after_the_terminator_is_only_a_prompt(self):
+    def test_the_tier_flags_are_one_choice(self):
         p = self.bridge_raw("start", "--priority", "--no-priority", "x")
         self.assertEqual(p.returncode, 2)
         self.assertIn("not allowed with", p.stderr)
+
+    def test_a_prompt_after_the_terminator_is_only_a_prompt(self):
         out, rec = self.started("--priority", "--", "--no-priority")
         self.assertTrue(rec["argv"][-1].endswith("\n\n--no-priority"))
         self.assertEqual(self.config_values(rec["argv"])["service_tier"], '"priority"')

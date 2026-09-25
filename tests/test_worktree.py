@@ -280,7 +280,20 @@ class Clean(WorktreeCase):
         self.write_meta(orphans[0], {**self.meta(orphans[0]), "worktree": None})
         status = self.bridge("status", "--group", "p1")
         self.assertEqual(len(status["runs"]) + len(status["unstarted"]), 3)
-        self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertEqual(self.registered_worktrees(), [], res)
+
+    def test_force_removes_a_checkout_git_add_never_finished(self):
+        out = self.finished()
+        half = Path(out["runs"][0]["worktree"])
+        # What `git worktree add` leaves when it is killed before writing the checkout's .git file.
+        self.git("worktree", "lock", "--reason", "initializing", half)
+        (half / ".git").unlink()
+        refused = self.bridge("batch", "clean", "--group", "p1")
+        self.assertIn(str(half), [k["path"] for k in refused["kept"]])
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertTrue(res["name_released"], res)
+        self.assertFalse(half.exists())
         self.assertEqual(self.registered_worktrees(), [])
 
     def test_a_checkout_removed_by_hand_is_not_reported_as_removed(self):

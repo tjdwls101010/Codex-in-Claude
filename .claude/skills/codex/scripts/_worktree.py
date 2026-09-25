@@ -30,6 +30,7 @@ that makes `git worktree remove` protect it.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -227,9 +228,16 @@ def remove(source: Path, target: Path, force: bool = False):
     if force:
         args += ["--force", "--force"]
     r = _git(source, *args, str(target))
-    if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()[:400]
-    return True, None
+    if r.returncode == 0:
+        return True, None
+    if force:
+        # A `git worktree add` killed before it wrote the checkout's .git file leaves a directory git refuses to validate as a working tree; forced, it is unlocked, deleted and pruned instead.
+        _git(source, "worktree", "unlock", str(target))
+        shutil.rmtree(target, ignore_errors=True)
+        prune(source)
+        if not target.exists() and target not in registered(source):
+            return True, None
+    return False, (r.stderr or r.stdout).strip()[:400]
 
 
 def prune(source: Path):

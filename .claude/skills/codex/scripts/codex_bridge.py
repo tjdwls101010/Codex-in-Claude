@@ -1555,6 +1555,9 @@ def build_parser():
 
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
+    if os.environ.get("CODEX_HOME"):
+        # The supervisor and codex run in other directories, so a relative value is pinned to what it meant here.
+        os.environ["CODEX_HOME"] = str(codex_home())
     ap = build_parser()
     # `resume` is the only subcommand with two optional positionals
     # (`[REF] PROMPT`). Plain argparse binds them in groups split by any option

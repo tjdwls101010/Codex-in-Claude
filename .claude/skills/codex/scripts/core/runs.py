@@ -72,8 +72,7 @@ def resolve_implicit_run(candidates):
         rd, m = live[0]
         return rd, m, "the only non-terminal run"
     if len(live) >= 2:
-        fail("multiple non-terminal runs; an implicit target is ambiguous — "
-             "pass an explicit run id, thread id, or thread name",
+        fail("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
              candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
                           "state": m.get("state"), "sandbox": m.get("sandbox"),
                           "thread_id": m.get("thread_id")} for rd, m in live])
@@ -104,17 +103,11 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
              **({"codex_still_running": True} if still_writing(m) else {})}
             for m in live if is_live(m)]
     if live:
-        fail("thread already has a live turn; pass --force to run a second turn "
-             "concurrently", thread_id=thread_id, live_runs=live)
+        fail("thread already has a live turn; wait for it, or pass --force to run a second turn at once", thread_id=thread_id, live_runs=live)
     blind = [name for name in unreadable_runs(runs_dir)
              if thread_of_unreadable(runs_dir / name) in (None, thread_id)]
     if blind:
-        fail("cannot tell whether this thread is free: "
-             f"{len(blind)} run(s) in this project have a meta.json that will "
-             "not parse, and their thread cannot be recovered from their event "
-             "stream either. Remove the run director"
-             f"{'ies' if len(blind) > 1 else 'y'} named below, or pass --force "
-             "to start a turn without knowing.",
+        fail("cannot tell whether this thread is free: the runs in `unreadable_runs` have a meta.json that will not parse and no readable thread id; repair or remove them, or pass --force",
              thread_id=thread_id,
              unreadable_runs=[{"run_id": name, "run_dir": str(runs_dir / name)} for name in blind])
 
@@ -132,8 +125,7 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
 
     if kind == "resume" and not thread_ref:
         # A bare `codex exec resume` would fail after this command already reported a run started.
-        fail("nothing to resume: that run never recorded a thread id, so there "
-             "is no conversation to continue",
+        fail("nothing to resume: that run has no thread id; `status --run` shows why",
              run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
     r = settings.resolve(sandbox=args.sandbox, model=args.model, effort=args.effort,
@@ -158,10 +150,7 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
         # A thread this registry never recorded has no sandbox to re-assert, and inventing a write policy cannot be undone. Skipped when a run is unreadable: "never recorded" is a claim about the whole registry.
         if (kind == "resume" and base is None and not getattr(args, "sandbox", None)
                 and not unreadable_runs(runs_dir)):
-            fail("this thread has no registry entry, so its original sandbox "
-                 "was never recorded and there is nothing to re-assert. Pass "
-                 "--sandbox explicitly; it is recorded against the thread from "
-                 "then on.",
+            fail(f"thread {thread_ref} is not in this registry, so its sandbox was never recorded; pass --sandbox, which is recorded from then on",
                  thread=thread_ref, sandbox=sorted(SANDBOX_MODES))
         try:
             run_id, run_dir = claim_run_dir(runs_dir, args.label or (base.get("label") if base else None))
@@ -271,10 +260,6 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
         if others:
             out["concurrent_writers"] = others
             out["concurrent_writers_note"] = (
-                f"{len(others)} other live run(s) can write to {cwd}. None of you "
-                "can tell another agent's change from your own. Only a member "
-                "starting fresh can be given a checkout of its own, with "
-                "`batch start --worktree`; a resumed thread keeps the directory "
-                "it already lives in, so runs already under way can no longer "
-                "be separated.")
+                f"{len(others)} other live run(s) can write in {cwd}, and none of you can tell another's change from your own. "
+                "Only a fresh `batch start --worktree` member gets a checkout of its own; a resumed thread keeps its directory.")
     return out

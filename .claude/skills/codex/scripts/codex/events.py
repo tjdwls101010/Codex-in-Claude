@@ -46,7 +46,7 @@ def read_events(path: Path, since: int = 0):
     since = max(0, since)
     size = path.stat().st_size
     if since > size:
-        raise CursorOutOfRange(f"--since {since} is past the end of the events file ({size} bytes)")
+        raise CursorOutOfRange(f"--since {since} is past the end of this run's events file ({size} bytes); check the `run=` of the trailer it came from")
     if since == size:
         return [], since
     with path.open("rb") as fh:
@@ -54,10 +54,7 @@ def read_events(path: Path, since: int = 0):
         if since:
             fh.seek(since - 1)
             if fh.read(1) != b"\n":
-                raise CursorOutOfRange(
-                    f"--since {since} does not land on an event boundary in this "
-                    f"file, so it is not a cursor this run produced — check the "
-                    f"`run=` field of the trailer the cursor came from")
+                raise CursorOutOfRange(f"--since {since} is not a line boundary of this run's events file, so it is not a cursor this run printed; check the `run=` of the trailer it came from")
         fh.seek(since)
         blob = fh.read()
     cut = blob.rfind(b"\n")

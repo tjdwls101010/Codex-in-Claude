@@ -49,9 +49,10 @@ from codex.events import (  # noqa: E402
     read_events, strip_wrapper,
 )
 from _batch import (  # noqa: E402
-    TASK_FIELDS, cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group,
-    follow_group_log, heartbeat_due, list_groups, resolve_group,
-    unstarted_members, vanished_members,
+    cmd_batch_clean, cmd_batch_start, cmd_result_group, follow_group, follow_group_log, heartbeat_due,
+)
+from core.groups import (  # noqa: E402
+    TASK_FIELDS, list_groups, resolve_group, unstarted_members, vanished_members,
 )
 from worktree import registered as worktrees_registered  # noqa: E402
 from core.registry import (  # noqa: E402

@@ -539,7 +539,7 @@ def create_run(args, *, kind: str, base=None, thread_ref=None,
     return out
 
 
-def run_row(run_dir: Path, meta: dict, project: Path):
+def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
     meta = reap(run_dir, meta)
     events_path = run_dir / "events.jsonl"
     info = scan_progress(events_path,
@@ -613,7 +613,7 @@ def run_row(run_dir: Path, meta: dict, project: Path):
         "turns_completed": info["turns_completed"], "commands": info["commands"],
         "files_changed": info["files_changed"], "config_error_events": info["errors"],
         "in_progress_item": info["in_progress_item"],
-        "last_agent_message": clip(info["last_agent_message"] or "", 400) or None,
+        "last_agent_message": clip(info["last_agent_message"] or "", excerpt) or None,
         # F8: `turn.failed` was parsed by _events.py and never surfaced, so a
         # failed run showed `message: null` and the reason needed a second
         # `log` call. Clipped like the neighbouring `turn.failed` log line.

@@ -212,9 +212,9 @@ def note_unreadable(out: dict, runs_dir):
 
 
 def summary_row(row):
-    """What the default listing shows of a run. `--run`, `--thread` and `--group` return the whole row."""
+    """What the default listing shows of a run, from a row built with a 160-character excerpt. `--run`, `--thread` and `--group` return the whole row."""
     out = {k: row.get(k) for k in ("run_id", "label", "state", "group", "idle_seconds")}
-    out["last_agent_message"] = clip(row.get("last_agent_message") or "", 160) or None
+    out["last_agent_message"] = row.get("last_agent_message")
     if row.get("codex_still_running"):
         out["codex_still_running"] = True
     return out
@@ -276,7 +276,7 @@ def cmd_status(args):
         for rd, m in iter_runs(runs_dir):
             if args.thread and m.get("thread_id") != args.thread:
                 continue
-            rows.append(run_row(rd, m, project))
+            rows.append(run_row(rd, m, project, excerpt=400 if args.thread else 160))
 
     # F3: derive every summary from the FULL list before truncating for
     # display. A phase gate is literally `len(running) == 0` — deriving it
@@ -1177,8 +1177,9 @@ def build_parser():
         "status", formatter_class=HidesSuppressedCommands,
         help="is it alive, how far along, what it last said — registry state, not the event stream",
         description="State, never output. The default listing also carries this "
-                    "project's `groups` and gives every row its `group` and "
-                    "`worktree`, which is how a session that did not start a "
+                    "project's `groups` and gives every row its `group` (the "
+                    "full row, with `worktree`, is behind --run, --thread and "
+                    "--group), which is how a session that did not start a "
                     "batch finds it: the group name is the one thing about a "
                     "batch nobody can re-derive.",
         epilog=STATUS_EPILOG)

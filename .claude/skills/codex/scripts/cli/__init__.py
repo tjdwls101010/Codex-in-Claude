@@ -7,7 +7,7 @@ import sys
 
 from cli.parser import build_parser
 from codex.codex_cli.config import codex_home
-from util import fail
+from codex.util import fail
 
 
 def main(argv=None):

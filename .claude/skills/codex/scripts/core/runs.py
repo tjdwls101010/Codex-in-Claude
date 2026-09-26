@@ -15,14 +15,15 @@ from codex.codex_cli.catalog import check_model_effort, model_catalog
 from codex.codex_cli.config import user_defaults
 from codex.codex_cli.events import first_thread_id
 from core import settings
+from codex.git.repo import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted
+from codex.git.worktree import add as worktree_add
+from codex.util import clip, fail, is_within, now_iso
 from core.registry import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, is_live, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir, still_writing, thread_turn_lock, unreadable_runs,
+    resolve_runs_dir, still_writing, thread_turn_lock, unreadable_runs,
     write_meta,
 )
 from core.supervisor import THREAD_ID_WAIT, spawn_supervised
-from util import clip, fail, git_toplevel, is_within, now_iso
-from worktree import add as worktree_add, uncommitted_count as worktree_uncommitted
 
 WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
 

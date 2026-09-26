@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 
 from cli.guards import refuse_competing_selectors, refuse_unresolved_run
+from codex.git.repo import resolve_project
+from codex.util import emit, fail
 from core.groups import resolve_group
-from core.registry import find_run, is_live, iter_runs, reap, resolve_project, resolve_runs_dir
+from core.registry import find_run, is_live, iter_runs, reap, resolve_runs_dir
 from core.runs import create_run, resolve_implicit_run
 from core.supervisor import stop_run
-from util import emit, fail
+
 
 
 def cmd_start(args):

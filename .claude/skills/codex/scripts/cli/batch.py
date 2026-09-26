@@ -6,8 +6,9 @@ from core.groups import (
     check_task_settings, claim_group, clean_group, group_path, load_tasks, pair_with_previous, plan_worktrees,
     read_group, spawn_members, valid_name, worktree_report,
 )
-from core.registry import ensure_runs_dir, resolve_project, resolve_runs_dir
-from util import emit, fail
+from codex.git.repo import resolve_project
+from codex.util import emit, fail
+from core.registry import ensure_runs_dir, resolve_runs_dir
 
 
 def cmd_batch_start(args):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from core.registry import meta_unreadable, unreadable_runs
-from util import fail
+from codex.util import fail
 
 
 def refuse_competing_selectors(args, command, *selectors):

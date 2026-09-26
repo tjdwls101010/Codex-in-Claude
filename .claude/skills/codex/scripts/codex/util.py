@@ -7,11 +7,13 @@ import errno
 import json
 import os
 import re
-import subprocess
 import sys
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
+
+# The entrypoint a detached supervisor re-executes and `doctor` reports.
+ENTRY = Path(__file__).resolve().parent.parent / "cli_codex.py"
 
 
 def now_iso() -> str:
@@ -96,14 +98,3 @@ def is_within(path, parent) -> bool:
         return p == q or q in p.parents
     except Exception:
         return False
-
-
-def git_toplevel(path: Path):
-    try:
-        r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0 and r.stdout.strip():
-            return Path(nfc(r.stdout.strip())).resolve()
-    except Exception:
-        pass
-    return None

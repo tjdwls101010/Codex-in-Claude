@@ -16,19 +16,19 @@ from pathlib import Path
 from codex.codex_cli.catalog import check_model_effort, model_catalog
 from codex.codex_cli.config import user_defaults
 from codex.codex_cli.events import read_events
+from codex.git.repo import (
+    git_toplevel, ignored_entries as worktree_ignored_entries, is_dirty as worktree_dirty,
+    missing_at_base as worktree_missing_at_base, repo_identity, resolve_base as worktree_base_sha,
+    uncommitted_count as worktree_uncommitted,
+)
+from codex.git.worktree import prune as worktree_prune, remove as worktree_remove
+from codex.util import BridgeError, clip, fail, failures_raise, is_within, nfc, now_iso
 from core import settings
 from core.observe import progress, turn_failed_excerpt
 from core.registry import (
     find_run, is_live, iter_runs, meta_unreadable, reap, still_writing, write_json_atomic,
 )
 from core.runs import WRITING_SANDBOXES, create_run
-from util import BridgeError, clip, fail, failures_raise, git_toplevel, is_within, nfc, now_iso
-from worktree import (
-    ignored_entries as worktree_ignored_entries, is_dirty as worktree_dirty,
-    missing_at_base as worktree_missing_at_base, prune as worktree_prune,
-    remove as worktree_remove, repo_identity, resolve_base as worktree_base_sha,
-    uncommitted_count as worktree_uncommitted,
-)
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 

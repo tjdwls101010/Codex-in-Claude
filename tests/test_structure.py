@@ -74,7 +74,6 @@ class Structure(unittest.TestCase):
         self.assertEqual(sorted(units - set(KINDS)), [], "place these in KINDS")
         self.assertEqual(sorted(set(KINDS) - units), [], "KINDS names something the package no longer has")
 
-    @unittest.expectedFailure
     def test_imports_point_one_way(self):
         # Every other top-level name beside the package is a second import root, which the tree does not have.
         roots = {p.stem for p in SCRIPTS.iterdir() if p.suffix == ".py" or (p.is_dir() and p.name != "__pycache__")} - {"codex"}

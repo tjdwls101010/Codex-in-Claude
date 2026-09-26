@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from util import git_toplevel, nfc, now_iso, pid_alive
+from codex.util import nfc, now_iso, pid_alive
 
 TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned", "timed_out")
 
@@ -47,11 +47,6 @@ def is_live(meta: dict) -> bool:
 
 
 # -- locating things --------------------------------------------------------
-
-def resolve_project(explicit=None) -> Path:
-    base = Path(explicit).expanduser().resolve() if explicit else Path.cwd().resolve()
-    return git_toplevel(base) or base
-
 
 def resolve_runs_dir(project: Path, explicit=None) -> Path:
     if explicit:

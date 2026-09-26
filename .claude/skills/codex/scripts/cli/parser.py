@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from cli.observe import cmd_log, cmd_result, cmd_status
-from cli.runs import cmd_resume, cmd_start, cmd_stop
+from cli.runs import cmd_resume, cmd_stop
 from codex.batch import commands as batch_commands
 from codex.batch.tasks import TASK_FIELDS
 from codex.codex_cli.argv import SANDBOX_MODES
@@ -17,6 +17,7 @@ from codex.observe.collect import GROUP_MESSAGE_CAP
 from codex.observe.rows import STALL_SECONDS
 from codex.observe.show import SHOW_MAX_BYTES, show
 from codex.observe.status import LISTING_ROWS
+from codex.runs import commands as run_commands
 from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
 
 OUTPUT_CONTRACT = """\
@@ -131,7 +132,7 @@ def build_parser():
     add_common(p)
     add_run_options(p, kind="start")
     p.add_argument("prompt", nargs="?", help="the prompt; `-` or omitted reads stdin when it is not a terminal")
-    p.set_defaults(func=cmd_start)
+    p.set_defaults(func=run_commands.start)
 
     p = command("resume", "run another turn on an existing thread", epilog=RESUME_EPILOG)
     add_common(p)

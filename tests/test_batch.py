@@ -80,6 +80,11 @@ class Starting(BatchCase):
         argv = self.last_argv()
         self.assertEqual(argv[argv.index("-i") + 1], str(img))
 
+    def test_reading_stdin_for_one_task_leaves_it_usable_for_the_next(self):
+        out = self.batch("p1", "-", "-", stdin="from stdin")
+        self.assertEqual((out["spawned"], out["requested"]), (2, 2), out)
+        self.wait_all(out)
+
     def test_a_batch_needs_a_task(self):
         self.assertIn("at least one", self.bridge("batch", "start", "--group", "p1", rc=2)["error"])
 

@@ -58,8 +58,8 @@ def read_prompt(args) -> str:
     if p == "-" or p is None:
         if not sys.stdin.isatty():
             try:
-                # Decoded strictly here, because sys.stdin's error policy comes from the environment and a C locale lets bad bytes through as surrogates.
-                data = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8").read()
+                # Decoded strictly here, because sys.stdin's error policy comes from the environment and a C locale lets bad bytes through as surrogates. The wrapper holds a copy: one around sys.stdin.buffer would close it for the batch members after this one.
+                data = io.TextIOWrapper(io.BytesIO(sys.stdin.buffer.read()), encoding="utf-8").read()
             except UnicodeDecodeError as e:
                 raise Refusal(f"cannot read the prompt on stdin: {e}", arguments=True)
             if data.strip():

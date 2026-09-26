@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from cli.guards import note_unreadable, refuse_competing_selectors, refuse_unresolved_run, refuse_unusable_follow_options
-from codex.events import CursorOutOfRange, FOLLOW_INTERVAL, find_item, format_events, read_events, strip_wrapper
+from codex.codex_cli.events import CursorOutOfRange, FOLLOW_INTERVAL, find_item, format_events, read_events, strip_wrapper
 from core.groups import (
     changed_paths, list_groups, member_result, overlaps, read_group, resolve_group, unstarted_members,
     vanished_members,

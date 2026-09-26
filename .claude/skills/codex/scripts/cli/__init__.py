@@ -6,7 +6,7 @@ import os
 import sys
 
 from cli.parser import build_parser
-from codex.config import codex_home
+from codex.codex_cli.config import codex_home
 from util import fail
 
 

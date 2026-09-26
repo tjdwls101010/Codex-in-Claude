@@ -8,8 +8,8 @@ import shutil
 import subprocess
 import sys
 
-from codex.catalog import codex_version, model_catalog
-from codex.config import codex_home, config_scalars, user_defaults
+from codex.codex_cli.catalog import codex_version, model_catalog
+from codex.codex_cli.config import codex_home, config_scalars, user_defaults
 from core.groups import list_groups
 from core.registry import is_live, iter_runs, reap, resolve_project, resolve_runs_dir, unreadable_runs
 from core.runs import WRITING_SANDBOXES

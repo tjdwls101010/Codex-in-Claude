@@ -13,9 +13,9 @@ import shlex
 import uuid
 from pathlib import Path
 
-from codex.catalog import check_model_effort, model_catalog
-from codex.config import user_defaults
-from codex.events import read_events
+from codex.codex_cli.catalog import check_model_effort, model_catalog
+from codex.codex_cli.config import user_defaults
+from codex.codex_cli.events import read_events
 from core import settings
 from core.observe import progress, turn_failed_excerpt
 from core.registry import (

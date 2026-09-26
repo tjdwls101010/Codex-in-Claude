@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from codex.events import first_thread_id
+from codex.codex_cli.events import first_thread_id
 from core.registry import ACTIVE_STATES, read_meta, update_meta, update_meta_if
 from util import now_iso, pid_alive
 

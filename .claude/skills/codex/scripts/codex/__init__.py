@@ -1,1 +1,1 @@
-"""Formats the Codex CLI owns: its argv, CODEX_HOME and config.toml, the model catalog, the event stream. A Codex upgrade lands here."""
+"""The codex skill's one package. While the scripts move into it, `codex_cli/` holds the formats the Codex CLI owns and the rest still lives beside it in `scripts/`."""

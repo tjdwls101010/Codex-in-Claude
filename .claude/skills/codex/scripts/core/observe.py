@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from codex.events import scan_progress
+from codex.codex_cli.events import scan_progress
 from core.registry import TERMINAL_STATES, is_live, reap, still_writing
 from util import clip
 

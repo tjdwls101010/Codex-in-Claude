@@ -1,4 +1,4 @@
-"""`codex.argv`: the argv a run hands Codex, and the paragraphs in front of its prompt."""
+"""`codex.codex_cli.argv`: the argv a run hands Codex, and the paragraphs in front of its prompt."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import unittest
 
 from support.harness import engine
 
-argv_mod = engine("codex.argv")
+argv_mod = engine("codex.codex_cli.argv")
 
 META = {"run_dir": "/r/run-1", "sandbox": "read-only", "isolated": True, "model": None, "effort": None,
         "service_tier": None, "schema_path": None, "images": [], "add_dirs": [], "skip_git_repo_check": False}

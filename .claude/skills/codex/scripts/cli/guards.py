@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.registry import meta_unreadable, unreadable_runs
+from codex.registry.runs import unreadable_runs
 from codex.util import fail
 
 
@@ -14,16 +14,6 @@ def refuse_competing_selectors(args, command, *selectors):
         names = " and ".join(sorted(given))
         fail(f"{names} select different runs; pass one",
              **{k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
-
-
-def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
-    """"Cannot read that run" and "no such run" are different answers: the first still has an event stream on disk."""
-    if meta:
-        return
-    if run_dir is not None and meta_unreadable(run_dir):
-        fail(f"run {ref} has a meta.json that will not parse, so its state is unknown; its event stream may still be readable",
-             run_id=run_dir.name, run_dir=str(run_dir), events=str(run_dir / "events.jsonl"))
-    fail(f"no such run: {ref}", runs_dir=str(runs_dir))
 
 
 def refuse_unusable_follow_options(args):

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from core.groups import (
-    check_task_settings, claim_group, clean_group, group_path, load_tasks, pair_with_previous, plan_worktrees,
-    read_group, spawn_members, valid_name, worktree_report,
-)
 from codex.git.repo import resolve_project
+from codex.registry.groups import claim_group, group_path, read_group, valid_name
+from codex.registry.runs import ensure_runs_dir, resolve_runs_dir
 from codex.util import emit, fail
-from core.registry import ensure_runs_dir, resolve_runs_dir
+from core.groups import (
+    check_task_settings, clean_group, load_tasks, pair_with_previous, plan_worktrees, spawn_members, worktree_report,
+)
 
 
 def cmd_batch_start(args):

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from codex.codex_cli.events import first_thread_id
-from core.registry import ACTIVE_STATES, read_meta, update_meta, update_meta_if
+from codex.registry.runs import ACTIVE_STATES, read_meta, update_meta, update_meta_if
 from codex.util import ENTRY, now_iso, pid_alive
 
 # How long a new run waits for `thread.started` before handing back `thread_id: null`; `status` backfills it later.

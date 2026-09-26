@@ -18,10 +18,10 @@ from core import settings
 from codex.git.repo import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted
 from codex.git.worktree import add as worktree_add
 from codex.util import clip, fail, is_within, now_iso
-from core.registry import (
+from codex.registry.locks import thread_turn_lock
+from codex.registry.runs import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, is_live, iter_runs, read_meta, reap,
-    resolve_runs_dir, still_writing, thread_turn_lock, unreadable_runs,
-    write_meta,
+    resolve_runs_dir, still_writing, unreadable_runs, write_meta,
 )
 from core.supervisor import THREAD_ID_WAIT, spawn_supervised
 
@@ -63,24 +63,6 @@ def read_prompt(args) -> str:
         if p is None:
             return ""
     return p or ""
-
-
-def resolve_implicit_run(candidates):
-    """Pick a run nobody named, from `candidates` in `iter_runs` order: the one live run, else the newest with a note saying so. Two or more live runs are refused with the candidates listed, because guessing would hand the caller another run's label and sandbox."""
-    reaped = [(rd, reap(rd, m)) for rd, m in candidates]
-    live = [(rd, m) for rd, m in reaped if is_live(m)]
-    if len(live) == 1:
-        rd, m = live[0]
-        return rd, m, "the only non-terminal run"
-    if len(live) >= 2:
-        fail("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
-             candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
-                          "state": m.get("state"), "sandbox": m.get("sandbox"),
-                          "thread_id": m.get("thread_id")} for rd, m in live])
-    if not reaped:
-        return None, None, None
-    rd, m = reaped[-1]
-    return rd, m, "the newest run (no non-terminal runs)"
 
 
 def thread_of_unreadable(run_dir):

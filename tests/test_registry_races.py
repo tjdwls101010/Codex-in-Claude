@@ -19,7 +19,7 @@ from support.harness import SCRIPTS, BridgeCase, engine, wait_until
 
 
 def _write_own_key(run_dir, writer, rounds, errors):
-    registry = engine("core.registry")
+    registry = engine("codex.registry.runs")
     for i in range(rounds):
         try:
             registry.update_meta(Path(run_dir), **{f"w{writer}": i})
@@ -28,7 +28,7 @@ def _write_own_key(run_dir, writer, rounds, errors):
 
 
 def _read(run_dir, rounds, errors):
-    registry = engine("core.registry")
+    registry = engine("codex.registry.runs")
     for i in range(rounds):
         m = registry.read_meta(Path(run_dir))
         if not m or m.get("run_id") != "fixture":
@@ -38,7 +38,7 @@ def _read(run_dir, rounds, errors):
 class ManyWritersOneMeta(unittest.TestCase):
 
     def setUp(self):
-        self.registry = engine("core.registry")
+        self.registry = engine("codex.registry.runs")
         self.run_dir = Path(tempfile.mkdtemp(prefix="codex-race-")).resolve()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.run_dir)]))
         self.registry.write_meta(self.run_dir, {"run_id": "fixture", "state": "running"})
@@ -66,7 +66,7 @@ class AStaleReap(unittest.TestCase):
     """`reap` decides from a snapshot and commits only if the state on disk is still active, so an outcome written in between wins."""
 
     def setUp(self):
-        self.registry = engine("core.registry")
+        self.registry = engine("codex.registry.runs")
         self.run_dir = Path(tempfile.mkdtemp(prefix="codex-reap-")).resolve()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.run_dir)]))
 
@@ -83,7 +83,7 @@ class AStaleReap(unittest.TestCase):
                         "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
                         "import importlib; r = importlib.import_module(sys.argv[2]); "
                         "r.update_meta(Path(sys.argv[3]), state='completed', exit_code=0, ended_at='T')",
-                        str(SCRIPTS), "core.registry", str(self.run_dir)],
+                        str(SCRIPTS), "codex.registry.runs", str(self.run_dir)],
                        check=True)
         out = self.registry.reap(self.run_dir, stale)
         self.assertEqual((out["state"], out["exit_code"], out["ended_at"]), ("completed", 0, "T"))

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from codex.codex_cli.events import scan_progress
-from core.registry import TERMINAL_STATES, is_live, reap, still_writing
+from codex.registry.runs import TERMINAL_STATES, is_live, reap, still_writing
 from codex.util import clip
 
 # Advisory: a run idle this long is shown `stalled`, never killed for it. One long command is legitimately silent, which is why `in_progress_item` is reported beside it.

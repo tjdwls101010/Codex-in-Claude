@@ -10,20 +10,17 @@ import sys
 import time
 from pathlib import Path
 
-from cli.guards import note_unreadable, refuse_competing_selectors, refuse_unresolved_run, refuse_unusable_follow_options
+from cli.guards import note_unreadable, refuse_competing_selectors, refuse_unusable_follow_options
 from codex.codex_cli.events import CursorOutOfRange, FOLLOW_INTERVAL, find_item, format_events, read_events, strip_wrapper
 from codex.git.repo import resolve_project
+from codex.registry.groups import list_groups, read_group, resolve_group, unstarted_members, vanished_members
+from codex.registry.runs import (
+    TERMINAL_STATES, find_run, is_live, iter_runs, read_meta, reap, refuse_unresolved_run, resolve_implicit_run,
+    resolve_runs_dir, still_writing, unreadable_runs,
+)
 from codex.util import emit, fail
-from core.groups import (
-    changed_paths, list_groups, member_result, overlaps, read_group, resolve_group, unstarted_members,
-    vanished_members,
-)
+from core.groups import changed_paths, member_result, overlaps
 from core.observe import group_snapshot, progress, row_is_live, run_row, turn_failed_excerpt
-from core.registry import (
-    TERMINAL_STATES, find_run, is_live, iter_runs, read_meta, reap, resolve_runs_dir,
-    still_writing, unreadable_runs,
-)
-from core.runs import resolve_implicit_run
 
 # `show --item` cap; truncation is always announced with how much was withheld.
 SHOW_MAX_BYTES = 20000

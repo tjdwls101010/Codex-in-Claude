@@ -56,11 +56,12 @@ def imports(path):
                 yield node.lineno, 0, node.module
 
 
-MUTATORS = {"insert", "append", "extend", "remove", "pop", "clear", "__setitem__", "__delitem__", "__iadd__"}
+# Calls on `sys.path` that only read it; any other method call counts as a change, so a mutator nobody listed (reverse, sort, …) cannot slip through.
+READS = {"index", "count", "copy", "__contains__", "__getitem__", "__iter__", "__len__"}
 
 
 def sys_path_changes(tree):
-    """Lines that change `sys.path`, however it is reached: `sys.path`, `import sys as s` then `s.path`, or `from sys import path`. Calls to its mutators, assignment in any form (plain, chained, annotated, augmented, to an item or a slice, unpacking), deletion, and `setattr(sys, "path", …)` all count."""
+    """Lines that change `sys.path`, however it is reached: `sys.path`, `import sys as s` then `s.path`, or `from sys import path`. Any method call on it but a read, assignment in any form (plain, chained, annotated, augmented, to an item or a slice, unpacking), deletion, and `setattr(sys, "path", …)` all count."""
     sys_names, path_names = {"sys"}, set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -92,7 +93,7 @@ def sys_path_changes(tree):
             targets = node.targets
         elif isinstance(node, ast.Call):
             f = node.func
-            if isinstance(f, ast.Attribute) and f.attr in MUTATORS and is_path(f.value):
+            if isinstance(f, ast.Attribute) and f.attr not in READS and is_path(f.value):
                 yield node.lineno
                 continue
             if (isinstance(f, ast.Name) and f.id == "setattr" and len(node.args) >= 2

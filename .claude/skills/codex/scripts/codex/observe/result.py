@@ -21,7 +21,11 @@ def result(args):
     refuse_unresolved_run(args.run, rd, meta, runs_dir)
     meta = reap(rd, meta)
     info = progress(rd, meta)
-    message = final_message(rd, info)
+    try:
+        # A --schema answer is parsed, and a replaced byte would parse into a different object than the one written.
+        message = final_message(rd, info, errors="strict" if meta.get("schema_path") else "replace")
+    except UnicodeDecodeError as e:
+        raise Refusal("the final message of a --schema run is not valid UTF-8", run_id=meta["run_id"], parse_error=str(e))
     out = {"run_id": meta["run_id"], "state": meta.get("state"), "exit_code": meta.get("exit_code"),
            "thread_id": meta.get("thread_id") or info["thread_id"]}
     if meta.get("state") not in TERMINAL_STATES:

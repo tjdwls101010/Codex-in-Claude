@@ -108,6 +108,17 @@ class ExitCodes(BridgeCase):
                 self.assertEqual(self.refused(*args, rc=2)["help"], self.help_for(*words))
         self.assertEqual(self.run_dirs(), [])
 
+    def test_an_input_file_that_is_not_utf8_is_2_with_its_help(self):
+        bad = self.tmp / "bad.txt"
+        bad.write_bytes(b"\xff\xfe not utf-8")
+        self.assertEqual(self.refused("start", "--prompt-file", bad, rc=2)["help"], self.help_for("start"))
+        self.assertEqual(self.refused("batch", "start", "--group", "g", "--tasks-file", bad, rc=2)["help"],
+                         self.help_for("batch", "start"))
+        p = subprocess.run([sys.executable, str(ENTRY), "start", "-"], cwd=str(self.project), env=self.env,
+                           input=b"\xff\xfe not utf-8", capture_output=True, timeout=60)
+        self.assertEqual((p.returncode, json.loads(p.stdout)["help"]), (2, self.help_for("start")))
+        self.assertEqual(self.run_dirs(), [])
+
     def test_a_refusal_by_the_registry_is_1_without_help(self):
         for args in (("status", "--run", "no-such-run"), ("result", "--group", "no-such-group"),
                      ("resume", "no-such-run", "x")):

@@ -45,6 +45,22 @@ class Result(BridgeCase):
                 res, body = self.result_view("--run", out["run_id"])
                 self.assertEqual((body, res["message_bytes"]), (text.encode(), len(text.encode())))
 
+    def test_a_message_that_is_not_utf8_reads_as_text_its_byte_count_still_ends(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        (self.runs_dir / out["run_id"] / "last-message.txt").write_bytes(b"caf\xe9 \xff\n")
+        header, body = self.result_view("--run", out["run_id"])
+        self.assertEqual(body, "caf\ufffd \ufffd\n".encode("utf-8"))
+
+    def test_a_schema_answer_that_is_not_utf8_is_refused_not_repaired(self):
+        schema = self.tmp / "s.json"
+        schema.write_text("{}")
+        fixture = answer_fixture(self.tmp / "a.jsonl", '{"answer": "ok"}')
+        out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
+        self.wait_state(out["run_id"])
+        (self.runs_dir / out["run_id"] / "last-message.txt").write_bytes(b'{"answer": "\xff"}')
+        self.assertIn("UTF-8", self.bridge("result", "--run", out["run_id"], rc=1)["error"])
+
     def test_a_run_that_said_nothing_is_its_header_alone(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": FIXTURES / "turn-failed.jsonl", "FAKE_CODEX_EXIT": 1})
         self.wait_state(out["run_id"])

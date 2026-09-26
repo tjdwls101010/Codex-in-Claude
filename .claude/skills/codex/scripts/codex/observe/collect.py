@@ -40,11 +40,11 @@ def changed_paths(events_path: Path, root=None):
     return paths
 
 
-def final_message(run_dir, info):
-    """What a run concluded: its `-o` file as written, else the last agent message in its event stream (a live run's answer so far), else nothing."""
+def final_message(run_dir, info, errors="replace"):
+    """What a run concluded: its `-o` file decoded as UTF-8 (a byte that is not, handled by `errors`), else the last agent message in its event stream (a live run's answer so far), else nothing."""
     msg_path = run_dir / "last-message.txt"
     if msg_path.exists():
-        return msg_path.read_bytes().decode("utf-8", "replace")
+        return msg_path.read_bytes().decode("utf-8", errors)
     return info["last_agent_message"] or ""
 
 

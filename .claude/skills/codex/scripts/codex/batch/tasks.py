@@ -28,7 +28,7 @@ def load_tasks(args):
     if args.tasks_file:
         try:
             raw = Path(args.tasks_file).read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             raise Refusal(f"cannot read tasks file: {e}", arguments=True)
         for n, line in enumerate(raw.splitlines(), 1):
             line = line.strip()

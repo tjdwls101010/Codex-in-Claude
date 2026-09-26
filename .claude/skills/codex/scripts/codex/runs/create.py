@@ -51,12 +51,15 @@ def read_prompt(args) -> str:
     if getattr(args, "prompt_file", None):
         try:
             return Path(args.prompt_file).read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             raise Refusal(f"cannot read prompt file: {e}", arguments=True)
     p = getattr(args, "prompt", None)
     if p == "-" or p is None:
         if not sys.stdin.isatty():
-            data = sys.stdin.read()
+            try:
+                data = sys.stdin.read()
+            except UnicodeDecodeError as e:
+                raise Refusal(f"cannot read the prompt on stdin: {e}", arguments=True)
             if data.strip():
                 return data
         if p is None:

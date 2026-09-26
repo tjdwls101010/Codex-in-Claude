@@ -89,7 +89,7 @@ class DamagedLines(BridgeCase):
         self.assertEqual(sum(ln.startswith("unparsed ") for ln in body), 2)
         row = self.row(rid)
         self.assertEqual((row["unparsed_events"], row["config_error_events"]), (2, 0))
-        self.assertEqual(self.bridge("result", "--run", rid)["unparsed_events"], 2)
+        self.assertEqual(self.result_view("--run", rid)[0]["unparsed_events"], 2)
 
     def test_a_finished_run_cut_off_mid_line_counts_the_fragment(self):
         rid, events = self.damaged(0)

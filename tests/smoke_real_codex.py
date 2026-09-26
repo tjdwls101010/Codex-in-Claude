@@ -45,6 +45,11 @@ class RealCodex(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return p.stdout
 
+    def result(self, run_id):
+        """`result`'s JSON header line and the message after it."""
+        header, _, body = self.cli("result", "--run", run_id).partition("\n")
+        return json.loads(header), body
+
     def turn_sandboxes(self, thread_id):
         rollouts = list((self.home / "sessions").rglob(f"rollout-*-{thread_id}.jsonl"))
         self.assertEqual(len(rollouts), 1, rollouts)
@@ -57,17 +62,17 @@ class RealCodex(unittest.TestCase):
                 started = json.loads(self.cli("start", "--sandbox", sandbox, "--label", "smoke", "Reply with exactly the word: first"))
                 run_id = started["run_id"]
                 self.cli("log", "--run", run_id, "--follow", "--follow-timeout", "500")
-                first = json.loads(self.cli("result", "--run", run_id))
+                first, answer = self.result(run_id)
                 self.assertEqual(first["state"], "completed", first)
-                self.assertIn("first", first["message"].lower())
+                self.assertIn("first", answer.lower())
                 # `start` may return before Codex reports the thread id; the finished run has it.
                 thread_id = first["thread_id"]
 
                 resumed = json.loads(self.cli("resume", run_id, "Reply with exactly the word: second"))
                 self.cli("log", "--run", resumed["run_id"], "--follow", "--follow-timeout", "500")
-                second = json.loads(self.cli("result", "--run", resumed["run_id"]))
+                second, answer = self.result(resumed["run_id"])
                 self.assertEqual(second["state"], "completed", second)
-                self.assertIn("second", second["message"].lower())
+                self.assertIn("second", answer.lower())
 
                 self.assertEqual(self.turn_sandboxes(thread_id), [sandbox, sandbox])
 

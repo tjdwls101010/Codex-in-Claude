@@ -45,7 +45,7 @@ class TerminalStates(BridgeCase):
                                              "FAKE_CODEX_EXIT": 1})
         row = self.wait_state(out["run_id"])
         self.assertIn("rate limit", row["turn_failed"])
-        self.assertIn("rate limit", self.bridge("result", "--run", out["run_id"])["turn_failed"])
+        self.assertIn("rate limit", self.result_view("--run", out["run_id"])[0]["turn_failed"])
 
     def test_stderr_is_surfaced_without_codexs_routine_stdin_notice(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_STDERR": "boom: config broken"})

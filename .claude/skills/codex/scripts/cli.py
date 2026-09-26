@@ -41,7 +41,9 @@ EXIT_REFUSED, EXIT_ARGUMENTS, EXIT_BLOCKED = 1, 2, 3
 OUTPUT_CONTRACT = """\
 Output: every command prints one line of JSON on stdout, a result or a refusal carrying `error`, except the text views below.
 Exit codes: 0 success; 1 refused by the registry's state — a run or group that is not there, a thread with a live turn, a name already taken — or the run failed; 2 the command line itself must change — it does not parse, combines flags that cannot go together, or names a file, commit or model that does not exist — and the reply's `help` is the `--help` to read; 3 `doctor` found a blocker.
-Three views print text instead:
+These views print text instead:
+  result --run              a JSON header line, then the message itself and one newline its `message_bytes` leaves out (a --schema run stays one JSON document)
+  result --group            a JSON header line, then per member a `--- [<index>:<label>] run=<id> state=<state> bytes=<n>` line, its message and one newline; the header's `members[].shown_bytes` say where each message ends
   log --run                 event lines, then `# cursor=<n> run=<id>`
   log --group               a `group.members` header, member-prefixed event lines, then a closing `group.<state>` line
   status --group --follow   a line per member state change, then a closing `group.<state>` line"""
@@ -298,11 +300,12 @@ def build_parser():
     p.add_argument("--grace", type=float, default=DEFAULT_GRACE, metavar="SEC", help=f"seconds after SIGINT before SIGTERM (default: {DEFAULT_GRACE}); SIGKILL follows 3 s later, and whatever of the run is left is swept with SIGKILL. SIGINT first lets Codex flush its rollout, so the thread can be resumed")
     p.set_defaults(func=run_commands.stop)
 
-    p = command("result", "what a run or a group concluded", description="One of --run or --group is required.")
+    p = command("result", "what a run or a group concluded",
+                description="An answer is read rather than parsed, so it comes as text after a one-line JSON header, and the header's byte counts, not the text, say where each answer ends. A --schema run's answer is parsed, so it stays one JSON document. One of --run or --group is required.")
     add_common(p)
     selector = p.add_mutually_exclusive_group(required=True)
-    selector.add_argument("--run", metavar="REF", help="one run's whole final message, usage and counts; while the run is live, what it has said so far, marked partial. A --schema run returns `json` instead of `message`, and fails while its final message is missing or not JSON")
-    selector.add_argument("--group", help=f"every member's message (capped at {GROUP_MESSAGE_CAP} B each, full size stated), usage totals, and `overlaps`: the paths more than one member wrote. Members that never started are listed under `unstarted`")
+    selector.add_argument("--run", metavar="REF", help="one run: a header with its state, exit code, thread, `message_bytes`, changed files, commands, usage and `turn_failed`, then its whole final message; while the run is live, what it has said so far, with `note` saying it is partial. A --schema run is one JSON document carrying `json`, the parsed message, and fails while its final message is missing or not JSON")
+    selector.add_argument("--group", help=f"every member: a header with `group_state`, usage totals, `overlaps` (the paths more than one member wrote), `unstarted` (members that never started) and each member's state and sizes, then each member's message after its separator line, capped at {GROUP_MESSAGE_CAP} B and cut at a character boundary, the full size stated")
     p.set_defaults(func=result.result)
 
     p = command("batch", "several runs under one group name",

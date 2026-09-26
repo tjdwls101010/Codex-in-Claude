@@ -38,7 +38,7 @@ class WorktreeCase(BridgeCase):
                 "changes": [{"path": str(p), "kind": "update"} for p in paths]}}) + "\n")
 
     def overlaps(self, name="p1"):
-        return self.bridge("result", "--group", name)["overlaps"]
+        return self.result_view("--group", name)[0]["overlaps"]
 
 
 class WhoGetsACheckout(WorktreeCase):

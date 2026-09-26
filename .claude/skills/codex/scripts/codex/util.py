@@ -32,17 +32,27 @@ def clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n] + f"…(+{len(s) - n} chars)"
 
 
-def pid_alive(pid) -> bool:
+def pid_alive(pid, pgid=None) -> bool:
+    """Whether process `pid` exists, and, given the process group it was recorded in, is still that process: an exited process's pid goes to a later one, which sits in another group."""
     if not pid:
         return False
     try:
         os.kill(int(pid), 0)
-        return True
     except OSError as e:
         # EPERM means it exists and belongs to someone else.
-        return e.errno == errno.EPERM
+        if e.errno != errno.EPERM:
+            return False
     except Exception:
         return False
+    if not pgid:
+        return True
+    try:
+        return os.getpgid(int(pid)) == int(pgid)
+    except ProcessLookupError:
+        return False
+    except Exception:
+        # Unknown is not "someone else's": a live run taken for dead would be recorded orphaned.
+        return True
 
 
 def is_within(path, parent) -> bool:

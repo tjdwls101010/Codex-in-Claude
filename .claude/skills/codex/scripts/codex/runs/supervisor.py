@@ -72,7 +72,7 @@ def stop_run(run_dir: Path, meta: dict, grace: float = DEFAULT_GRACE):
     sent = []
     try:
         end_group(pgid, grace=grace, sent=sent,
-                  done=lambda: not pid_alive(meta.get("supervisor_pid")) and not pid_alive(meta.get("codex_pid")))
+                  done=lambda: not pid_alive(meta.get("supervisor_pid"), pgid) and not pid_alive(meta.get("codex_pid"), pgid))
     except PermissionError:
         result["error"] = f"not permitted to signal process group {pgid}"
     result["signals_sent"] = sent

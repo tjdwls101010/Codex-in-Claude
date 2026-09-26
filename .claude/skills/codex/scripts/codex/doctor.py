@@ -1,4 +1,4 @@
-"""`doctor` and `models`."""
+"""`doctor` and `models`: the environment a run would start in, and the models this Codex install offers."""
 
 from __future__ import annotations
 
@@ -12,23 +12,23 @@ from codex.codex_cli.argv import WRITING_SANDBOXES
 from codex.codex_cli.catalog import codex_version, model_catalog
 from codex.codex_cli.config import codex_home, config_scalars, user_defaults
 from codex.git.repo import git_toplevel, resolve_project
+from codex.errors import Refusal
 from codex.git.worktree import registered as worktrees_registered
-from codex.util import ENTRY, clip, emit, is_within
 from codex.registry.groups import list_groups
 from codex.registry.runs import is_live, iter_runs, reap, resolve_runs_dir, unreadable_runs
+from codex.util import ENTRY, clip, is_within
 
 
-def cmd_models(args):
+def models(args):
     """The catalog is asked of Codex rather than written down: which efforts a model takes differs per model and per Codex version."""
     catalog = model_catalog()
     if catalog is None:
-        emit({"models": None,
-              "error": "could not read the catalog from `codex debug models`; `doctor` reports why. Runs still start, and an invalid --model or --effort then fails the run",
-              "codex_path": shutil.which("codex")}, code=1)
-    emit({"models": catalog, "codex_version": codex_version()})
+        raise Refusal("could not read the catalog from `codex debug models`; `doctor` reports why. Runs still start, and an invalid --model or --effort then fails the run",
+                      models=None, codex_path=shutil.which("codex"))
+    return {"models": catalog, "codex_version": codex_version()}
 
 
-def cmd_doctor(args):
+def doctor(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     report, blockers, warnings = {}, [], []
@@ -51,7 +51,7 @@ def cmd_doctor(args):
     report["blockers"] = blockers
     report["warnings"] = warnings
     report["ok"] = not blockers
-    emit(report, code=0 if not blockers else 2)
+    return report
 
 
 def _check_codex(report, blockers, warnings):

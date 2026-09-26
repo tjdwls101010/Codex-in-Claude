@@ -6,13 +6,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from cli.diagnose import cmd_doctor, cmd_models
 from cli.observe import cmd_log, cmd_result, cmd_status
 from cli.runs import cmd_resume, cmd_start, cmd_stop
 from codex.batch import commands as batch_commands
 from codex.batch.tasks import TASK_FIELDS
 from codex.codex_cli.argv import SANDBOX_MODES
 from codex.codex_cli.events import DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS
+from codex.doctor import doctor, models
 from codex.observe.collect import GROUP_MESSAGE_CAP
 from codex.observe.rows import STALL_SECONDS
 from codex.observe.show import SHOW_MAX_BYTES, show
@@ -70,6 +70,12 @@ class OneLinePerParagraph(argparse.HelpFormatter):
         for sub in super()._iter_indented_subactions(action):
             if sub.help is not argparse.SUPPRESS:
                 yield sub
+
+
+def doctor_reply(args):
+    """The report, with the exit code that says whether a blocker would stop a run."""
+    report = doctor(args)
+    return report, 0 if report["ok"] else 2
 
 
 def add_common(p):
@@ -205,12 +211,12 @@ def build_parser():
 
     p = command("models", "the models and efforts this Codex install offers",
                 description="This install's model catalog from `codex debug models`: each model's slug, efforts and default effort. `start`, `resume` and `batch start` check a --model or --effort against it before spawning. When it cannot be read the check is skipped and this command exits 1.")
-    p.set_defaults(func=cmd_models)
+    p.set_defaults(func=models)
 
     p = command("doctor", "check the environment a run would start in",
                 description="The environment a run would start in, as one JSON line: Python, codex on PATH and its version, CODEX_HOME (resolved; `codex_home_from_env` says whether it was set), login, config.toml's sandbox and the defaults a run naming nothing would get, the model catalog, the registry, overlapping live writers and leftover worktrees. Exits 2 when a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.10 — else 0. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.")
     add_common(p)
-    p.set_defaults(func=cmd_doctor)
+    p.set_defaults(func=doctor_reply)
 
     p = sub.add_parser("__supervise", help=argparse.SUPPRESS)
     p.add_argument("--run-dir", required=True, help="internal: the run directory this detached supervisor runs")

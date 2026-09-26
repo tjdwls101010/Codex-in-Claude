@@ -68,7 +68,6 @@ class Structure(unittest.TestCase):
         tops = {p.stem if p.suffix == ".py" else p.name for p in SCRIPTS.iterdir() if p.name != "__pycache__" and not p.name.startswith(".")}
         self.assertEqual(sorted(tops & set(sys.stdlib_module_names)), [])
 
-    @unittest.expectedFailure
     def test_every_module_has_a_place_and_every_place_a_module(self):
         units = {unit_of(p) for p in package_files()}
         self.assertEqual(sorted(units - set(KINDS)), [], "place these in KINDS")

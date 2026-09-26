@@ -1,8 +1,10 @@
 # S6 scenarios
 
-Each scenario runs a Claude session with only this skill loaded (a plugin copy whose SKILL.md is either the draft or a control with no judgement text — frontmatter and the call paragraph only), in a throwaway git repository, under a Bash sandbox that confines writes to that repository, a temporary CODEX_HOME and the session temp directory. The bridge alone runs outside that sandbox, because Codex applies its own `sandbox-exec`, which cannot nest; it is pre-approved on the command line the way a user's permission rule would approve it, since a skill's `allowed-tools` covers only a user-typed `/codex:codex`. `run_e2e.py` sets this up and saves the transcript and a digest of every tool call.
+Each scenario runs a Claude session with only this skill loaded (a plugin copy whose SKILL.md is the draft, a control with no judgement text — frontmatter and the call paragraph only — or, as `baseline`, the whole skill as released in v0.8.0, called the way that release was), in a throwaway git repository, under a Bash sandbox that confines writes to that repository, a temporary CODEX_HOME and the session temp directory. The bridge alone runs outside that sandbox, because Codex applies its own `sandbox-exec`, which cannot nest; it is pre-approved on the command line the way a user's permission rule would approve it, since a skill's `allowed-tools` covers only a user-typed `/codex:codex`. `run_e2e.py` sets this up and saves the transcript and a digest of every tool call.
 
 A session whose failure comes from a permission denial or the environment is not evidence either way; rerun it.
+
+Beside the pass criteria, the digest's closing `METRICS` line counts the bridge calls whose reply went through a pipe or parser (`piped`) and those that held a value in a shell variable or substitution (`shell_values`). Both say a reply was not usable as printed, and the second no longer matches the pre-approval. Compare them against `baseline` on the same scenario: a draft should not come out higher.
 
 | # | Host | Prompt (abridged) | Passes when |
 |---|---|---|---|

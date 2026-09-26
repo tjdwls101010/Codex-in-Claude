@@ -46,7 +46,7 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 
 **If this is your only turn** — nothing will wake you later — make the follower the turn's last call in the foreground, with `--follow-timeout` added and the Bash call's own timeout set above it, then take `result`. If the budget runs out first, hand back the run id and say the work is unfinished.
 
-**Per-event notifications**, worth it only when you would act mid-run (stop a run going wrong, move members on as each lands), come from Monitor running the follower. Monitor ends at its own deadline and that end reads like the run's; set it longer than the run and re-arm it when it expires.
+**Per-event notifications**, worth it only when you would act mid-run, come from Monitor running a follower: `log --follow` to stop a run going wrong, since only the log shows what it is doing; a group's `status --follow` to move members on as each lands. Monitor ends at its own deadline and that end reads like the run's; set it longer than the run and re-arm it when it expires.
 
 `status` answers whether a run is live and how far along, `log` what it is doing (incrementally with `--since`), `result` what it concluded.
 
@@ -56,7 +56,7 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 
 ## Gotchas
 
-- A project's `AGENTS.md` reaches every run, isolated or not: a standing briefing, and also input you did not write into the prompt.
+- A project's `AGENTS.md` reaches every run, isolated or not — in a worktree, as committed at its base: a standing briefing, and also input you did not write into the prompt.
 - `--inherit-config` loads your config's MCP servers, plugins and agent roles. Use it when the run needs one of them, not as a precaution.
 
 ## When something goes wrong

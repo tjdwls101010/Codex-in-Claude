@@ -5,6 +5,7 @@ Four stages, ordered around the thread's turn lock: everything that can still re
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import time
@@ -57,7 +58,8 @@ def read_prompt(args) -> str:
     if p == "-" or p is None:
         if not sys.stdin.isatty():
             try:
-                data = sys.stdin.read()
+                # Decoded strictly here, because sys.stdin's error policy comes from the environment and a C locale lets bad bytes through as surrogates.
+                data = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8").read()
             except UnicodeDecodeError as e:
                 raise Refusal(f"cannot read the prompt on stdin: {e}", arguments=True)
             if data.strip():

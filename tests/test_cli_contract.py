@@ -114,9 +114,12 @@ class ExitCodes(BridgeCase):
         self.assertEqual(self.refused("start", "--prompt-file", bad, rc=2)["help"], self.help_for("start"))
         self.assertEqual(self.refused("batch", "start", "--group", "g", "--tasks-file", bad, rc=2)["help"],
                          self.help_for("batch", "start"))
-        p = subprocess.run([sys.executable, str(ENTRY), "start", "-"], cwd=str(self.project), env=self.env,
-                           input=b"\xff\xfe not utf-8", capture_output=True, timeout=60)
-        self.assertEqual((p.returncode, json.loads(p.stdout)["help"]), (2, self.help_for("start")))
+        # Python decodes stdin by a policy the environment picks (a C locale escapes bad bytes instead of failing), so both are driven.
+        for policy in ("utf-8:strict", "utf-8:surrogateescape"):
+            p = subprocess.run([sys.executable, str(ENTRY), "start", "-"], cwd=str(self.project),
+                               env={**self.env, "PYTHONIOENCODING": policy},
+                               input=b"\xff\xfe not utf-8", capture_output=True, timeout=60)
+            self.assertEqual((p.returncode, json.loads(p.stdout).get("help")), (2, self.help_for("start")), policy)
         self.assertEqual(self.run_dirs(), [])
 
     def test_a_refusal_by_the_registry_is_1_without_help(self):

@@ -222,12 +222,13 @@ class WhatReachesCodex(BridgeCase):
         self.assertIn("prompt", self.bridge("start", "   ", rc=1)["error"])
         self.assertEqual(self.run_dirs(), [])
 
-    def test_missing_inputs_are_refused_before_spawning(self):
+    def test_missing_inputs_are_refused_before_anything_is_claimed(self):
         for args in (("--schema", self.tmp / "nope.json"), ("--image", self.tmp / "nope.png"),
                      ("--cwd", self.tmp / "nowhere")):
             with self.subTest(args=args):
                 self.bridge("start", *args, "x", rc=1)
         self.assertEqual(self.runs_invoked(), [])
+        self.assertEqual(self.run_dirs(), [], "a refused run leaves no directory behind, where no listing would show it")
 
 
 class RemovedSurface(BridgeCase):

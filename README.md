@@ -76,7 +76,7 @@ ln -s /path/to/Codex-in-Claude/.claude/skills/codex ~/.claude/skills/codex
 
 **Let Claude call it without asking**
 
-The skill pre-approves its own command, but Claude Code applies that only when you invoke the skill yourself (`/codex:codex`, or `/codex` for a symlinked skill). When Claude picks the skill on its own, which is how it is usually used, every call asks for permission, and a headless session simply refuses it. A permission rule in `~/.claude/settings.json` covers both cases. Take the path from `skill_dir` in `doctor`'s output and write it out — `$HOME` is not expanded in a permission rule:
+The skill pre-approves its own command, but Claude Code applies that only when you invoke the skill yourself (`/codex:codex`, or `/codex` for a symlinked skill). When Claude picks the skill on its own, which is how it is usually used, every call asks for permission, and a headless session simply refuses it. A permission rule in `~/.claude/settings.json` covers both cases. It matches the command as Claude calls it, so write out the path Claude calls: for the plugin, `skill_dir` from `doctor`'s output; for a symlinked skill, the link's own path (`skill_dir` is where the link points). `$HOME` is not expanded in a permission rule:
 
 ```json
 {

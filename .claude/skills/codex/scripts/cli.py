@@ -42,8 +42,8 @@ OUTPUT_CONTRACT = """\
 Output: every command prints one line of JSON on stdout, a result or a refusal carrying `error`, except the text views below.
 Exit codes: 0 success; 1 refused by the registry's state — a run or group that is not there, a thread with a live turn, a name already taken — or the run failed; 2 the command line itself must change — it does not parse, combines flags that cannot go together, or names a file, commit or model that does not exist — and the reply's `help` is the `--help` to read; 3 `doctor` found a blocker.
 These views print text instead:
-  result --run              a JSON header line, then the message itself and one newline its `message_bytes` leaves out (a --schema run stays one JSON document)
-  result --group            a JSON header line, then per member a `--- [<index>:<label>] run=<id> state=<state> bytes=<n>` line (`[<index>]` without a label), its message and one newline; the header's `members[].shown_bytes` say where each message ends
+  result --run              a JSON header line, then the message itself and one newline its `message_bytes` leaves out, neither when the message is empty (a --schema run stays one JSON document)
+  result --group            a JSON header line, then per member a `--- [<index>:<label>] run=<id> state=<state> bytes=<n>` line (`[<index>]` without a label), its message and one newline, neither when the message is empty; the header's `members[].shown_bytes` say where each message ends
   log --run                 event lines, then `# cursor=<n> run=<id>`
   log --group               a `group.members` header, member-prefixed event lines, then a closing `group.<state>` line
   status --group --follow   a line per member state change, then a closing `group.<state>` line"""

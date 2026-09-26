@@ -301,7 +301,7 @@ def cmd_result(args):
         except json.JSONDecodeError as e:
             # Loud rather than lenient: a malformed object handed back as if it had the schema's shape is worse.
             raise Refusal("the final message of a --schema run is not valid JSON",
-                 run_id=meta["run_id"], parse_error=str(e), message=message)
+                          run_id=meta["run_id"], parse_error=str(e), message=message)
         # The parsed object is the answer; the same text again as `message` would double it.
         del out["message"]
     emit(out)

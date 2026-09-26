@@ -90,8 +90,8 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
              if thread_of_unreadable(runs_dir / name) in (None, thread_id)]
     if blind:
         raise Refusal("cannot tell whether this thread is free: the runs in `unreadable_runs` have a meta.json that will not parse and may be on this thread; repair or remove them, or pass --force",
-             thread_id=thread_id,
-             unreadable_runs=[{"run_id": name, "run_dir": str(runs_dir / name)} for name in blind])
+                      thread_id=thread_id,
+                      unreadable_runs=[{"run_id": name, "run_dir": str(runs_dir / name)} for name in blind])
 
 
 def resolve_settings(args, *, kind, base, project, thread_ref):
@@ -108,7 +108,7 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     if kind == "resume" and not thread_ref:
         # A bare `codex exec resume` would fail after this command already reported a run started.
         raise Refusal("nothing to resume: that run has no thread id; `status --run` shows why",
-             run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
+                      run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
     r = settings.resolve(sandbox=args.sandbox, model=args.model, effort=args.effort,
                          priority=getattr(args, "priority", None),
@@ -133,7 +133,7 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
         if (kind == "resume" and base is None and not getattr(args, "sandbox", None)
                 and not unreadable_runs(runs_dir)):
             raise Refusal(f"thread {thread_ref} is not in this registry, so its sandbox was never recorded; pass --sandbox, which is recorded from then on",
-                 thread=thread_ref, sandbox=sorted(SANDBOX_MODES))
+                          thread=thread_ref, sandbox=sorted(SANDBOX_MODES))
         try:
             run_id, run_dir = claim_run_dir(runs_dir, args.label or (base.get("label") if base else None))
         except FileExistsError as e:

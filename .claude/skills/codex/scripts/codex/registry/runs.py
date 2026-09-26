@@ -185,9 +185,9 @@ def resolve_implicit_run(candidates):
         return rd, m, "the only non-terminal run"
     if len(live) >= 2:
         raise Refusal("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
-             candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
-                          "state": m.get("state"), "sandbox": m.get("sandbox"),
-                          "thread_id": m.get("thread_id")} for rd, m in live])
+                      candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
+                                   "state": m.get("state"), "sandbox": m.get("sandbox"),
+                                   "thread_id": m.get("thread_id")} for rd, m in live])
     if not reaped:
         return None, None, None
     rd, m = reaped[-1]
@@ -200,5 +200,5 @@ def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
         return
     if run_dir is not None and meta_unreadable(run_dir):
         raise Refusal(f"run {ref} has a meta.json that will not parse, so its state is unknown; its event stream may still be readable",
-             run_id=run_dir.name, run_dir=str(run_dir), events=str(run_dir / "events.jsonl"))
+                      run_id=run_dir.name, run_dir=str(run_dir), events=str(run_dir / "events.jsonl"))
     raise Refusal(f"no such run: {ref}", runs_dir=str(runs_dir))

@@ -13,7 +13,7 @@ def refuse_competing_selectors(args, command, *selectors):
     if len(given) > 1:
         names = " and ".join(sorted(given))
         raise Refusal(f"{names} select different runs; pass one",
-             **{k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
+                      **{k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
 
 
 def refuse_unusable_follow_options(args):

@@ -6,14 +6,15 @@ import argparse
 import sys
 from pathlib import Path
 
-from cli.batch import cmd_batch_clean, cmd_batch_start
 from cli.diagnose import cmd_doctor, cmd_models
 from cli.observe import LISTING_ROWS, SHOW_MAX_BYTES, cmd_log, cmd_result, cmd_show, cmd_status
 from cli.runs import cmd_resume, cmd_start, cmd_stop
+from codex.batch import commands as batch_commands
+from codex.batch.tasks import TASK_FIELDS
 from codex.codex_cli.argv import SANDBOX_MODES
 from codex.codex_cli.events import DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS
 from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
-from core.groups import GROUP_MESSAGE_CAP, TASK_FIELDS
+from core.groups import GROUP_MESSAGE_CAP
 from core.observe import STALL_SECONDS
 
 OUTPUT_CONTRACT = """\
@@ -191,14 +192,14 @@ def build_parser():
     b.add_argument("--worktree", action="store_true", help="give each eligible member its own git checkout (default: members share your tree); eligibility is below")
     b.add_argument("--base", help="commit the worktrees are cut from (default: HEAD). Requires --worktree")
     b.add_argument("--resume-from", metavar="GROUP", help="continue an earlier group: task i resumes member i in start order, in the directory that member's thread already uses, its worktree included, unless --cwd or the task's `cwd` names another. A task naming its own `resume` target keeps it. Refused, before anything is claimed, unless every started member has recorded a thread and finished (see --force) and the task count matches")
-    b.set_defaults(func=cmd_batch_start)
+    b.set_defaults(func=batch_commands.start)
 
     b = bsub.add_parser("clean", help="remove a group's worktrees and release its name", formatter_class=OneLinePerParagraph,
                         description="Remove a group's worktrees and release its name once nothing is left.")
     add_common(b)
     b.add_argument("--group", required=True, help="the group to clean. Refused while a member is live, and a worktree another live run works in is kept; both name the `stop` that ends them. A worktree whose run's meta.json will not parse is kept too. Refused, unless --force, when the manifest or a member's meta.json will not parse or another group was resumed from this one; a worktree with uncommitted changes is kept unless --force")
     b.add_argument("--force", action="store_true", help="lift the refusals --group says --force lifts, all at once, and discard uncommitted changes in the worktrees — that work has no other copy. `forced_past` in the reply says what was overridden")
-    b.set_defaults(func=cmd_batch_clean)
+    b.set_defaults(func=batch_commands.clean)
 
     p = command("models", "the models and efforts this Codex install offers",
                 description="This install's model catalog from `codex debug models`: each model's slug, efforts and default effort. `start`, `resume` and `batch start` check a --model or --effort against it before spawning. When it cannot be read the check is skipped and this command exits 1.")

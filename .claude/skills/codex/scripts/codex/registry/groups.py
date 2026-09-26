@@ -74,7 +74,7 @@ def write_members(runs_dir: Path, name: str, members: list, epoch=None) -> dict:
     manifest = read_group(runs_dir, name) or {"group": name, "created_at": now_iso(), "derived_from": None}
     if epoch is not None and manifest.get("epoch") != epoch:
         raise Refusal(f"group {name!r} was released and claimed again while this batch was starting; the members listed in `spawned` are still recorded as members of it",
-             spawned=[m.get("run_id") for m in members if m.get("run_id")])
+                      spawned=[m.get("run_id") for m in members if m.get("run_id")])
     manifest["members"] = members
     write_json_atomic(group_path(runs_dir, name), manifest)
     return manifest
@@ -107,8 +107,8 @@ def resolve_group(runs_dir: Path, name: str):
     """Members as (run_dir, meta) in start order; refuses an unknown or unreadable group. Slots that never spawned are `unstarted_members`."""
     if group_unreadable(runs_dir, name):
         raise Refusal(f"group {name!r} has a manifest that will not parse; `members_recorded_by_runs` lists its runs, which `status --run` reads one by one",
-             manifest=str(group_path(runs_dir, name)),
-             members_recorded_by_runs=owned_run_ids(runs_dir, name))
+                      manifest=str(group_path(runs_dir, name)),
+                      members_recorded_by_runs=owned_run_ids(runs_dir, name))
     ids = member_run_ids(runs_dir, name)
     if ids is None:
         raise Refusal(f"no such group: {name}", runs_dir=str(runs_dir), known_groups=list_groups(runs_dir))

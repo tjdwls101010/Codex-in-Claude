@@ -46,6 +46,7 @@ def pid_alive(pid, pgid=None) -> bool:
         return False
     if not pgid:
         return True
+    # 성진: pid and group together can still be reused by one later process in a group led by a reused pid; record the process's start time if that is ever observed.
     try:
         return os.getpgid(int(pid)) == int(pgid)
     except ProcessLookupError:

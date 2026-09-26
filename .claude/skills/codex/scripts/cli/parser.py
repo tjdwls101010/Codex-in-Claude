@@ -7,15 +7,17 @@ import sys
 from pathlib import Path
 
 from cli.diagnose import cmd_doctor, cmd_models
-from cli.observe import LISTING_ROWS, SHOW_MAX_BYTES, cmd_log, cmd_result, cmd_show, cmd_status
+from cli.observe import cmd_log, cmd_result, cmd_status
 from cli.runs import cmd_resume, cmd_start, cmd_stop
 from codex.batch import commands as batch_commands
 from codex.batch.tasks import TASK_FIELDS
 from codex.codex_cli.argv import SANDBOX_MODES
 from codex.codex_cli.events import DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS
+from codex.observe.collect import GROUP_MESSAGE_CAP
+from codex.observe.rows import STALL_SECONDS
+from codex.observe.show import SHOW_MAX_BYTES, show
+from codex.observe.status import LISTING_ROWS
 from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
-from core.groups import GROUP_MESSAGE_CAP
-from core.observe import STALL_SECONDS
 
 OUTPUT_CONTRACT = """\
 Output: every command prints one line of JSON on stdout, success or failure; a failure carries `error` and exits 1, and `doctor` exits 2 on a blocker. Three views print text instead:
@@ -162,7 +164,7 @@ def build_parser():
     p.add_argument("--run", required=True, metavar="REF", help="the run: item ids restart at item_0 in every run, so an item id means nothing without it")
     p.add_argument("--item", required=True, metavar="ITEM_ID", help="the item id as `log` prints it (item_0, item_1, …); an unknown id is refused with up to 60 of the run's items listed")
     p.add_argument("--max-bytes", type=int, default=SHOW_MAX_BYTES, help=f"cap on the command output returned (default: {SHOW_MAX_BYTES}); the reply states the full size")
-    p.set_defaults(func=cmd_show)
+    p.set_defaults(func=show)
 
     p = command("stop", "interrupt a run, a group, or every live run",
                 description="Interrupt runs through their recorded process groups, never by process name. A run still in an active state is recorded `interrupted`; one that already recorded an outcome, or an orphaned one, keeps its state, and `state` in the reply says which. One of --run, --group or --all is required. A running turn cannot be redirected; stop it, then `resume` the thread.")

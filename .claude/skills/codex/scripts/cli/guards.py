@@ -1,8 +1,7 @@
-"""Refusals several commands share: competing selectors, a run that cannot be resolved, a follower-only flag without a follower."""
+"""Refusals several commands share, decided from the arguments alone: competing selectors, and a follower-only flag without a follower."""
 
 from __future__ import annotations
 
-from codex.registry.runs import unreadable_runs
 from codex.errors import Refusal
 
 
@@ -26,12 +25,3 @@ def refuse_unusable_follow_options(args):
             raise Refusal(f"{flag} requires --follow")
         if value <= 0:
             raise Refusal(f"{flag} must be a positive number of seconds", **{flag[2:].replace("-", "_"): value})
-
-
-def note_unreadable(out: dict, runs_dir):
-    """Name runs whose meta.json will not parse, so a listing they are missing from does not look complete."""
-    bad = unreadable_runs(runs_dir)
-    if bad:
-        out["runs_unreadable"] = len(bad)
-        out["unreadable"] = bad
-    return out

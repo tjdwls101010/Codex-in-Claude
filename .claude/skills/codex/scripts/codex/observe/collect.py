@@ -6,16 +6,13 @@ from pathlib import Path
 
 from codex.codex_cli.events import read_events
 from codex.git.repo import repo_identity
+from codex.observe.rows import progress, turn_failed_excerpt
 from codex.registry.runs import still_writing
 from codex.util import nfc
-from core.observe import progress, turn_failed_excerpt
-
 
 # Per member, in bytes, in `result --group`; `result --run` returns the whole message.
 GROUP_MESSAGE_CAP = 4000
 
-
-# -- collecting a group ----------------------------------------------------------
 
 def changed_paths(events_path: Path, root=None):
     """Paths a run wrote, as `(repository, repo-relative path)` pairs.

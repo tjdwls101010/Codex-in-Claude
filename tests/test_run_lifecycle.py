@@ -112,10 +112,10 @@ class TerminalStates(BridgeCase):
 
 
 class TheLadderOrder(unittest.TestCase):
-    """`core.supervisor.end_group`'s order of signals, observed at `os.killpg` — the only place the order is visible."""
+    """`codex.runs.supervisor.end_group`'s order of signals, observed at `os.killpg` — the only place the order is visible."""
 
     def ladder(self, **kw):
-        supervisor = engine("core.supervisor")
+        supervisor = engine("codex.runs.supervisor")
         calls = []
         real = supervisor.os.killpg
         supervisor.os.killpg = lambda pgid, sig: calls.append(signal.Signals(sig).name)

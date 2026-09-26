@@ -1,4 +1,4 @@
-"""`core.settings.resolve`: one precedence for every setting — the flag, then what the continued thread recorded (while isolation is unchanged), then the user's config.toml (isolated runs only), then nothing. The sandbox is never taken from the config."""
+"""`codex.runs.settings.resolve`: one precedence for every setting — the flag, then what the continued thread recorded (while isolation is unchanged), then the user's config.toml (isolated runs only), then nothing. The sandbox is never taken from the config."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import unittest
 
 from support.harness import engine
 
-settings = engine("core.settings")
+settings = engine("codex.runs.settings")
 
 USER = {"model": "cfg-model", "effort": "cfg-effort", "service_tier": "fast"}
 THREAD = {"isolated": True, "sandbox": "read-only", "model": "old-model", "effort": "low",

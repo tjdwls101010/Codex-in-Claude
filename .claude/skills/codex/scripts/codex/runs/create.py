@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from codex.codex_cli.argv import SANDBOX_MODES, apply_preamble, build_argv
+from codex.codex_cli.argv import SANDBOX_MODES, WRITING_SANDBOXES, apply_preamble, build_argv
 from codex.codex_cli.catalog import check_model_effort, model_catalog
 from codex.codex_cli.config import user_defaults
 from codex.codex_cli.events import first_thread_id
@@ -22,11 +22,9 @@ from codex.registry.runs import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, is_live, iter_runs, read_meta, reap,
     resolve_runs_dir, still_writing, unreadable_runs, write_meta,
 )
+from codex.runs import settings
+from codex.runs.supervisor import THREAD_ID_WAIT, spawn_supervised
 from codex.util import clip, is_within, now_iso
-from core import settings
-from core.supervisor import THREAD_ID_WAIT, spawn_supervised
-
-WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
 
 
 def concurrent_writers(runs_dir, cwd, exclude_run_id=None):

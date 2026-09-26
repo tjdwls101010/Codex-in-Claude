@@ -12,9 +12,9 @@ from cli.observe import LISTING_ROWS, SHOW_MAX_BYTES, cmd_log, cmd_result, cmd_s
 from cli.runs import cmd_resume, cmd_start, cmd_stop
 from codex.codex_cli.argv import SANDBOX_MODES
 from codex.codex_cli.events import DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS
+from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
 from core.groups import GROUP_MESSAGE_CAP, TASK_FIELDS
 from core.observe import STALL_SECONDS
-from core.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
 
 OUTPUT_CONTRACT = """\
 Output: every command prints one line of JSON on stdout, success or failure; a failure carries `error` and exits 1, and `doctor` exits 2 on a blocker. Three views print text instead:

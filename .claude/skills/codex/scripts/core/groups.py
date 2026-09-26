@@ -7,6 +7,7 @@ import json
 import shlex
 from pathlib import Path
 
+from codex.codex_cli.argv import WRITING_SANDBOXES
 from codex.codex_cli.catalog import check_model_effort, model_catalog
 from codex.codex_cli.config import user_defaults
 from codex.codex_cli.events import read_events
@@ -22,10 +23,10 @@ from codex.registry.groups import (
     write_members,
 )
 from codex.registry.runs import find_run, is_live, iter_runs, meta_unreadable, reap, still_writing
+from codex.runs import settings
+from codex.runs.create import create_run
 from codex.util import clip, is_within, nfc
-from core import settings
 from core.observe import progress, turn_failed_excerpt
-from core.runs import WRITING_SANDBOXES, create_run
 
 
 TASK_FIELDS = ("prompt", "kind", "label", "model", "effort", "sandbox", "schema", "image", "cwd", "resume")

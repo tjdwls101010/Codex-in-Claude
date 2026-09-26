@@ -9,6 +9,9 @@ from pathlib import Path
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 
+# The modes under which a run can change files, and so collide with another run writing in the same directory.
+WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
+
 # Situational facts only: the costly failure of a non-interactive turn is spending it asking a question nobody will answer, and a run told nothing about its situation was seen asserting false things about it.
 PREAMBLE = (
     "[Run context: you are a single non-interactive `codex exec` turn. Nobody is "

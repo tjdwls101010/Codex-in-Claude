@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 
+from codex.codex_cli.argv import WRITING_SANDBOXES
 from codex.codex_cli.catalog import codex_version, model_catalog
 from codex.codex_cli.config import codex_home, config_scalars, user_defaults
 from codex.git.repo import git_toplevel, resolve_project
@@ -15,7 +16,6 @@ from codex.git.worktree import registered as worktrees_registered
 from codex.util import ENTRY, clip, emit, is_within
 from codex.registry.groups import list_groups
 from codex.registry.runs import is_live, iter_runs, reap, resolve_runs_dir, unreadable_runs
-from core.runs import WRITING_SANDBOXES
 
 
 def cmd_models(args):

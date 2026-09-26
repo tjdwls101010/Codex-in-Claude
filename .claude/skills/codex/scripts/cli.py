@@ -281,7 +281,7 @@ def build_parser():
     ap.subparser_map["resume"] = p
 
     p = command("status", "run state: whether it is live, how far along, what it last said", epilog=STATUS_EPILOG,
-                description=f"Run state from the registry, with short excerpts of the last message and stderr. The default listing is a summary row per run — every live run plus the {LISTING_ROWS} newest, with `runs_truncated` counting the rest — and the project's `groups`; --run, --thread and --group give full rows.")
+                description=f"Run state from the registry, with short excerpts of the last message and stderr. The default listing, --all included, names the live runs in `running`, counts live, completed and failed runs in `counts` rather than naming finished ones, lists the project's `groups`, and gives a summary row per run — every live run plus the {LISTING_ROWS} newest, with `runs_truncated` counting the rest. --run, --thread and --group give full rows, with the `done` and `failed` run ids among them.")
     add_common(p)
     selector = p.add_mutually_exclusive_group()
     selector.add_argument("--run", metavar="REF", help="one run's full row: a run id, thread id or run-id prefix (newest match wins)")

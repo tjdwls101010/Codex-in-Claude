@@ -13,7 +13,8 @@ from pathlib import Path
 
 from codex.registry.locks import write_json_atomic
 from codex.registry.runs import find_run, iter_runs, meta_unreadable
-from codex.util import fail, now_iso
+from codex.errors import Refusal
+from codex.util import now_iso
 
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -72,7 +73,7 @@ def write_members(runs_dir: Path, name: str, members: list, epoch=None) -> dict:
     """Record the member list so far, after every member: a spawned member must be reachable through its group from the instant it exists."""
     manifest = read_group(runs_dir, name) or {"group": name, "created_at": now_iso(), "derived_from": None}
     if epoch is not None and manifest.get("epoch") != epoch:
-        fail(f"group {name!r} was released and claimed again while this batch was starting; the members listed in `spawned` are still recorded as members of it",
+        raise Refusal(f"group {name!r} was released and claimed again while this batch was starting; the members listed in `spawned` are still recorded as members of it",
              spawned=[m.get("run_id") for m in members if m.get("run_id")])
     manifest["members"] = members
     write_json_atomic(group_path(runs_dir, name), manifest)
@@ -105,12 +106,12 @@ def derived_groups(runs_dir: Path, name: str):
 def resolve_group(runs_dir: Path, name: str):
     """Members as (run_dir, meta) in start order; refuses an unknown or unreadable group. Slots that never spawned are `unstarted_members`."""
     if group_unreadable(runs_dir, name):
-        fail(f"group {name!r} has a manifest that will not parse; `members_recorded_by_runs` lists its runs, which `status --run` reads one by one",
+        raise Refusal(f"group {name!r} has a manifest that will not parse; `members_recorded_by_runs` lists its runs, which `status --run` reads one by one",
              manifest=str(group_path(runs_dir, name)),
              members_recorded_by_runs=owned_run_ids(runs_dir, name))
     ids = member_run_ids(runs_dir, name)
     if ids is None:
-        fail(f"no such group: {name}", runs_dir=str(runs_dir), known_groups=list_groups(runs_dir))
+        raise Refusal(f"no such group: {name}", runs_dir=str(runs_dir), known_groups=list_groups(runs_dir))
     out = []
     for rid in ids:
         rd, m = find_run(runs_dir, rid)

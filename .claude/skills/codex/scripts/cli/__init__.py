@@ -7,7 +7,19 @@ import sys
 
 from cli.parser import build_parser
 from codex.codex_cli.config import codex_home
-from codex.util import fail
+from codex.errors import Refusal
+from codex.util import emit
+
+
+def render(out):
+    """A handler's answer: a dict is one line of JSON, a `(dict, exit code)` pair the same with that code, and anything else is text to stream, piece by piece, each carrying its own newlines."""
+    if isinstance(out, tuple):
+        emit(*out)
+    if isinstance(out, dict):
+        emit(out)
+    for piece in out:
+        sys.stdout.write(piece)
+        sys.stdout.flush()
 
 
 def main(argv=None):
@@ -22,13 +34,17 @@ def main(argv=None):
     else:
         args = ap.parse_args(raw)
     try:
-        args.func(args)
+        out = args.func(args)
+        if out is not None:
+            render(out)
     except BrokenPipeError:
         try:
             sys.stdout.close()
         except Exception:
             pass
+    except Refusal as e:
+        emit({"error": e.error, **e.fields}, code=1)
     except KeyboardInterrupt:
-        fail("interrupted")
+        emit({"error": "interrupted"}, code=1)
     except Exception as e:
-        fail(f"internal error: {e}")
+        emit({"error": f"internal error: {e}"}, code=1)

@@ -10,6 +10,7 @@ from pathlib import Path
 from codex.codex_cli.catalog import check_model_effort, model_catalog
 from codex.codex_cli.config import user_defaults
 from codex.codex_cli.events import read_events
+from codex.errors import Refusal
 from codex.git.repo import (
     git_toplevel, ignored_entries as worktree_ignored_entries, is_dirty as worktree_dirty,
     missing_at_base as worktree_missing_at_base, repo_identity, resolve_base as worktree_base_sha,
@@ -21,7 +22,7 @@ from codex.registry.groups import (
     write_members,
 )
 from codex.registry.runs import find_run, is_live, iter_runs, meta_unreadable, reap, still_writing
-from codex.util import BridgeError, clip, fail, failures_raise, is_within, nfc
+from codex.util import clip, is_within, nfc
 from core import settings
 from core.observe import progress, turn_failed_excerpt
 from core.runs import WRITING_SANDBOXES, create_run
@@ -45,13 +46,13 @@ def load_tasks(args):
         try:
             raw = Path(args.tasks_file).read_text(encoding="utf-8")
         except OSError as e:
-            fail(f"cannot read tasks file: {e}")
+            raise Refusal(f"cannot read tasks file: {e}")
         for n, line in enumerate(raw.splitlines(), 1):
             line = line.strip()
             if line and not line.startswith("#"):
                 tasks.append(_task_from_line(n, line, args))
     if not tasks:
-        fail("batch start needs at least one --task or a --tasks-file")
+        raise Refusal("batch start needs at least one --task or a --tasks-file")
     return tasks
 
 
@@ -59,27 +60,27 @@ def _task_from_line(n, line, args):
     try:
         item = json.loads(line)
     except json.JSONDecodeError as e:
-        fail(f"tasks file line {n} is not valid JSON: {e}", line=clip(line, 200))
+        raise Refusal(f"tasks file line {n} is not valid JSON: {e}", line=clip(line, 200))
     if not isinstance(item, dict):
-        fail(f"tasks file line {n} is not a JSON object", line=clip(line, 200))
+        raise Refusal(f"tasks file line {n} is not a JSON object", line=clip(line, 200))
     unknown = set(item) - set(TASK_FIELDS)
     if unknown:
         # A silently ignored field is a member that quietly used the group default.
-        fail(f"tasks file line {n} has unknown field(s): {sorted(unknown)}", known_fields=list(TASK_FIELDS))
+        raise Refusal(f"tasks file line {n} has unknown field(s): {sorted(unknown)}", known_fields=list(TASK_FIELDS))
     for field, want in TASK_FIELD_TYPES.items():
         if field in item and not isinstance(item[field], want):
-            fail(f"tasks file line {n}: {field!r} must be {want.__name__}, got {type(item[field]).__name__}",
+            raise Refusal(f"tasks file line {n}: {field!r} must be {want.__name__}, got {type(item[field]).__name__}",
                  line=clip(line, 200))
     if any(not isinstance(i, str) for i in item.get("image") or []):
-        fail(f"tasks file line {n}: 'image' must be a list of paths", line=clip(line, 200))
+        raise Refusal(f"tasks file line {n}: 'image' must be a list of paths", line=clip(line, 200))
     item.setdefault("kind", "start")
     if item["kind"] not in ("start", "resume"):
-        fail(f"tasks file line {n}: kind must be start or resume"
+        raise Refusal(f"tasks file line {n}: kind must be start or resume"
              + ("; for a review use kind 'start' with sandbox 'read-only'" if item["kind"] == "review" else ""),
              got=item["kind"])
     # Under --resume-from the target comes from the pairing, so an unnamed resume is normal there.
     if item["kind"] == "resume" and not item.get("resume") and not getattr(args, "resume_from", None):
-        fail(f"tasks file line {n}: kind 'resume' needs a 'resume' field naming a run id or thread id")
+        raise Refusal(f"tasks file line {n}: kind 'resume' needs a 'resume' field naming a run id or thread id")
     return item
 
 
@@ -113,9 +114,11 @@ def check_task_settings(tasks, args, runs_dir):
     catalog = model_catalog()
     for n, a in adopted:
         if a["model"] or a["effort"]:
-            check_model_effort(a["model"], a["effort"], catalog=catalog,
-                               fail=lambda msg, _n=n, **extra: fail(f"task {_n}: {msg}", **extra),
-                               model_source=a["model_source"], effort_source=a["effort_source"])
+            try:
+                check_model_effort(a["model"], a["effort"], catalog=catalog,
+                                   model_source=a["model_source"], effort_source=a["effort_source"])
+            except Refusal as e:
+                raise Refusal(f"task {n}: {e.error}", **e.fields) from None
 
 
 # -- continuing a group ---------------------------------------------------------
@@ -126,19 +129,19 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     if manifest is None:
         if group_unreadable(runs_dir, previous):
             # Only the manifest records slots; inferring an order would land tasks on other tasks' threads.
-            fail(f"group {previous!r} has a manifest that will not parse, and only the manifest records the start order --resume-from pairs by",
+            raise Refusal(f"group {previous!r} has a manifest that will not parse, and only the manifest records the start order --resume-from pairs by",
                  manifest=str(group_path(runs_dir, previous)),
                  members_recorded_by_runs=owned_run_ids(runs_dir, previous))
-        fail(f"no such group to resume from: {previous}", known_groups=list_groups(runs_dir)[:20])
+        raise Refusal(f"no such group to resume from: {previous}", known_groups=list_groups(runs_dir)[:20])
     prior = [m for m in manifest.get("members") or [] if m.get("run_id")]
     if not prior:
-        fail(f"group {previous!r} has no members that started, so there is nothing to resume")
+        raise Refusal(f"group {previous!r} has no members that started, so there is nothing to resume")
     threadless = [m["run_id"] for m in prior if not (find_run(runs_dir, m["run_id"])[1] or {}).get("thread_id")]
     if threadless:
-        fail(f"{len(threadless)} member(s) of {previous!r} have no thread id, so there is nothing to continue for them; `status --run` shows why. --resume-from needs every started member, so start that work fresh",
+        raise Refusal(f"{len(threadless)} member(s) of {previous!r} have no thread id, so there is nothing to continue for them; `status --run` shows why. --resume-from needs every started member, so start that work fresh",
              members=threadless)
     if len(tasks) != len(prior):
-        fail(f"--resume-from pairs task i with member i, but {previous!r} has {len(prior)} started member(s) and this batch has {len(tasks)} task(s)",
+        raise Refusal(f"--resume-from pairs task i with member i, but {previous!r} has {len(prior)} started member(s) and this batch has {len(tasks)} task(s)",
              previous_members=[m["run_id"] for m in prior])
     # Checked for the whole group up front: per member, the refusal would come after earlier tasks had already resumed.
     live = []
@@ -154,13 +157,13 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
         if is_live(reaped):
             live.append({"run_id": m["run_id"], "state": reaped.get("state")})
     if live and not force:
-        fail(f"group {previous!r} still has members running; wait for them, or pass --force to continue them mid-turn", running=live)
+        raise Refusal(f"group {previous!r} still has members running; wait for them, or pass --force to continue them mid-turn", running=live)
 
     paired = []
     for slot, (task, prev) in enumerate(zip(tasks, prior)):
         kind, named = task["kind"], task.get("resume")
         if kind != "resume" and named:
-            fail(f"task {slot} names a `resume` target but has kind {kind!r}; set kind 'resume' to keep the target, or drop `resume` to pair it with {prev['run_id']}")
+            raise Refusal(f"task {slot} names a `resume` target but has kind {kind!r}; set kind 'resume' to keep the target, or drop `resume` to pair it with {prev['run_id']}")
         paired.append(task if named else {**task, "kind": "resume", "resume": prev["run_id"]})
     return paired, [m["run_id"] for m in prior]
 
@@ -241,7 +244,7 @@ def plan_worktrees(tasks, args, project, runs_dir):
     base = worktree_base_sha(project, ref)
     if not base and ref:
         # A typo'd --base is the caller's mistake; degrading to a shared tree would give them the one outcome they asked to avoid.
-        fail(f"--base {ref!r} does not resolve to a commit in {project}")
+        raise Refusal(f"--base {ref!r} does not resolve to a commit in {project}")
     if not base:
         return set(), None, ("this repository has no HEAD yet (nothing is "
                              "committed), so there is no commit to cut a "
@@ -297,13 +300,12 @@ def spawn_members(args, tasks, *, runs_dir, epoch, isolated, base):
         members.append(entry)
         write_members(runs_dir, args.group, members, epoch=epoch)
         try:
-            with failures_raise():
-                out = spawn_task(task_args(args, item), item, group=args.group, runs_dir=runs_dir, batch=batch_ctx,
-                                 worktree_base=base if index in isolated else None)
+            out = spawn_task(task_args(args, item), item, group=args.group, runs_dir=runs_dir, batch=batch_ctx,
+                             worktree_base=base if index in isolated else None)
         except Exception as e:
             # Any exception, not only an anticipated refusal: escaping would abort the batch with members already running.
-            entry["error"] = e.msg if isinstance(e, BridgeError) else str(e)
-            entry.update(e.extra if isinstance(e, BridgeError) else {"error_type": type(e).__name__})
+            entry["error"] = e.error if isinstance(e, Refusal) else str(e)
+            entry.update(e.fields if isinstance(e, Refusal) else {"error_type": type(e).__name__})
             results.append(entry)
             write_members(runs_dir, args.group, members, epoch=epoch)
             continue
@@ -338,10 +340,10 @@ def clean_group(project, runs_dir, name, *, force, explicit_registry):
     """
     lost_manifest = read_group(runs_dir, name) is None and group_unreadable(runs_dir, name)
     if read_group(runs_dir, name) is None and not lost_manifest:
-        fail(f"no such group in this project: {name}", known_groups=list_groups(runs_dir)[:20])
+        raise Refusal(f"no such group in this project: {name}", known_groups=list_groups(runs_dir)[:20])
     live, unknown = _member_liveness(runs_dir, name)
     if live:
-        fail(f"group {name!r} still has running members; stop them with the command in `stop`, then clean again",
+        raise Refusal(f"group {name!r} still has running members; stop them with the command in `stop`, then clean again",
              running=live, stop=stop_commands(live, runs_dir, explicit_registry))
     overrode = _check_liftable_guards(runs_dir, name, force=force, lost_manifest=lost_manifest, unknown=unknown)
     removed, kept = _remove_worktrees(project, runs_dir, name, force=force,
@@ -403,7 +405,7 @@ def _check_liftable_guards(runs_dir, name, *, force, lost_manifest, unknown):
     for key, tripped, message, detail, forced_value in guards:
         if tripped:
             if not force:
-                fail(message, **detail())
+                raise Refusal(message, **detail())
             overrode[key] = forced_value
     return overrode
 

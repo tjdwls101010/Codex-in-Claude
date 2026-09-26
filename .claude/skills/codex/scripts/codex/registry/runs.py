@@ -11,7 +11,8 @@ from datetime import datetime
 from pathlib import Path
 
 from codex.registry.locks import meta_lock, write_json_atomic
-from codex.util import fail, now_iso, pid_alive
+from codex.errors import Refusal
+from codex.util import now_iso, pid_alive
 
 TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned", "timed_out")
 
@@ -183,7 +184,7 @@ def resolve_implicit_run(candidates):
         rd, m = live[0]
         return rd, m, "the only non-terminal run"
     if len(live) >= 2:
-        fail("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
+        raise Refusal("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
              candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
                           "state": m.get("state"), "sandbox": m.get("sandbox"),
                           "thread_id": m.get("thread_id")} for rd, m in live])
@@ -198,6 +199,6 @@ def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
     if meta:
         return
     if run_dir is not None and meta_unreadable(run_dir):
-        fail(f"run {ref} has a meta.json that will not parse, so its state is unknown; its event stream may still be readable",
+        raise Refusal(f"run {ref} has a meta.json that will not parse, so its state is unknown; its event stream may still be readable",
              run_id=run_dir.name, run_dir=str(run_dir), events=str(run_dir / "events.jsonl"))
-    fail(f"no such run: {ref}", runs_dir=str(runs_dir))
+    raise Refusal(f"no such run: {ref}", runs_dir=str(runs_dir))

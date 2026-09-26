@@ -18,7 +18,8 @@ from codex.registry.runs import (
     TERMINAL_STATES, find_run, is_live, iter_runs, read_meta, reap, refuse_unresolved_run, resolve_implicit_run,
     resolve_runs_dir, still_writing, unreadable_runs,
 )
-from codex.util import emit, fail
+from codex.errors import Refusal
+from codex.util import emit
 from core.groups import changed_paths, member_result, overlaps
 from core.observe import group_snapshot, progress, row_is_live, run_row, turn_failed_excerpt
 
@@ -70,7 +71,7 @@ def cmd_status(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     refuse_competing_selectors(args, "status", "--run", "--thread", "--group")
     if args.follow and not args.group:
-        fail("--follow requires --group; to follow one run use `log --run <id> --follow`", run=args.run)
+        raise Refusal("--follow requires --group; to follow one run use `log --run <id> --follow`", run=args.run)
     refuse_unusable_follow_options(args)
     if args.group:
         return follow_group(args, project, runs_dir) if args.follow else status_group(args, project, runs_dir)
@@ -154,7 +155,7 @@ def cmd_log(args):
     refuse_unusable_follow_options(args)
     if args.group:
         if args.since is not None:
-            fail("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`", group=args.group)
+            raise Refusal("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`", group=args.group)
         return log_group(args, project, runs_dir)
     if args.run:
         rd, meta = find_run(runs_dir, args.run)
@@ -162,7 +163,7 @@ def cmd_log(args):
     else:
         candidates = list(iter_runs(runs_dir))
         if not candidates:
-            fail("no runs in this registry", runs_dir=str(runs_dir))
+            raise Refusal("no runs in this registry", runs_dir=str(runs_dir))
         rd, meta, _ = resolve_implicit_run(candidates)
 
     events_path = rd / "events.jsonl"
@@ -174,7 +175,7 @@ def cmd_log(args):
         try:
             events, cursor[0] = read_events(events_path, cursor[0])
         except CursorOutOfRange as e:
-            fail(str(e), run_id=run_id, since=cursor[0])
+            raise Refusal(str(e), run_id=run_id, since=cursor[0])
         for line in format_events(events, args.level, rel_to):
             sys.stdout.write(line + "\n")
         sys.stdout.flush()
@@ -245,7 +246,7 @@ def cmd_show(args):
     if not found:
         ids = [f"{(e.get('item') or {}).get('id')}:{(e.get('item') or {}).get('type')}"
                for e in events if e.get("type") == "item.completed"]
-        fail(f"no item {args.item!r} in run {meta['run_id']}", available=ids[:60])
+        raise Refusal(f"no item {args.item!r} in run {meta['run_id']}", available=ids[:60])
     out = {"run_id": meta["run_id"], "item_id": args.item, "item_type": found.get("type")}
     if found.get("type") == "command_execution":
         text = found.get("aggregated_output") or ""
@@ -273,7 +274,7 @@ def cmd_result(args):
     if args.group:
         return result_group(args, project, runs_dir)
     if not args.run:
-        fail("result needs --run <id> or --group <name>")
+        raise Refusal("result needs --run <id> or --group <name>")
     rd, meta = find_run(runs_dir, args.run)
     refuse_unresolved_run(args.run, rd, meta, runs_dir)
     meta = reap(rd, meta)
@@ -294,12 +295,12 @@ def cmd_result(args):
     if meta.get("schema_path"):
         out["schema_path"] = meta["schema_path"]
         if not message:
-            fail("the --schema run has no final message", run_id=meta["run_id"], state=meta.get("state"))
+            raise Refusal("the --schema run has no final message", run_id=meta["run_id"], state=meta.get("state"))
         try:
             out["json"] = json.loads(message)
         except json.JSONDecodeError as e:
             # Loud rather than lenient: a malformed object handed back as if it had the schema's shape is worse.
-            fail("the final message of a --schema run is not valid JSON",
+            raise Refusal("the final message of a --schema run is not valid JSON",
                  run_id=meta["run_id"], parse_error=str(e), message=message)
         # The parsed object is the answer; the same text again as `message` would double it.
         del out["message"]

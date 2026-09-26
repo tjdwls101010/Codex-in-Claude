@@ -10,7 +10,8 @@ from codex.registry.groups import resolve_group
 from codex.registry.runs import (
     find_run, is_live, iter_runs, reap, refuse_unresolved_run, resolve_implicit_run, resolve_runs_dir,
 )
-from codex.util import emit, fail
+from codex.errors import Refusal
+from codex.util import emit
 from core.runs import create_run
 from core.supervisor import stop_run
 
@@ -25,7 +26,7 @@ def cmd_resume(args):
     rest = list(args.rest)
     args.ref = None if args.last else (rest.pop(0) if rest else None)
     if len(rest) > 1:
-        fail("too many positional arguments: resume takes [REF] PROMPT",
+        raise Refusal("too many positional arguments: resume takes [REF] PROMPT",
              expected="resume <ref> <prompt>  |  resume --last <prompt>", got=list(args.rest))
     args.prompt = rest[0] if rest else None
 
@@ -35,16 +36,16 @@ def cmd_resume(args):
     if args.last:
         candidates = [(rd, m) for rd, m in iter_runs(runs_dir) if m.get("thread_id")]
         if not candidates:
-            fail("--last found no run with a thread in this project's registry; "
+            raise Refusal("--last found no run with a thread in this project's registry; "
                  "name the thread to resume", runs_dir=str(runs_dir))
         _, base, resolved_from = resolve_implicit_run(candidates)
         thread_ref = base["thread_id"]
     else:
         if not args.ref:
-            fail("resume needs a run id, thread id, thread name, or --last")
+            raise Refusal("resume needs a run id, thread id, thread name, or --last")
         _, base = find_run(runs_dir, args.ref)
         if base and not base.get("thread_id"):
-            fail(f"run {base.get('run_id')} has no thread id, so there is nothing to resume; `status --run` shows why",
+            raise Refusal(f"run {base.get('run_id')} has no thread id, so there is nothing to resume; `status --run` shows why",
                  run_id=base.get("run_id"), state=base.get("state"))
         # A ref this registry has never seen may be a thread started elsewhere, so it is passed through.
         thread_ref = (base or {}).get("thread_id") or args.ref
@@ -72,6 +73,6 @@ def cmd_stop(args):
         pool = resolve_group(runs_dir, args.group) if args.group else iter_runs(runs_dir)
         targets = [(rd, m) for rd, m in ((rd, reap(rd, m)) for rd, m in pool) if is_live(m)]
     else:
-        fail("stop needs --run <id> (repeatable), --group <name>, or --all")
+        raise Refusal("stop needs --run <id> (repeatable), --group <name>, or --all")
     emit({"stopped": [stop_run(rd, m, grace=args.grace) for rd, m in targets],
           "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID")})

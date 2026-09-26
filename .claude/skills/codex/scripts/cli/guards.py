@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from codex.registry.runs import unreadable_runs
-from codex.util import fail
+from codex.errors import Refusal
 
 
 def refuse_competing_selectors(args, command, *selectors):
@@ -12,7 +12,7 @@ def refuse_competing_selectors(args, command, *selectors):
     given = {k: v for k, v in given.items() if v}
     if len(given) > 1:
         names = " and ".join(sorted(given))
-        fail(f"{names} select different runs; pass one",
+        raise Refusal(f"{names} select different runs; pass one",
              **{k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
 
 
@@ -23,9 +23,9 @@ def refuse_unusable_follow_options(args):
         if value is None:
             continue
         if not args.follow:
-            fail(f"{flag} requires --follow")
+            raise Refusal(f"{flag} requires --follow")
         if value <= 0:
-            fail(f"{flag} must be a positive number of seconds", **{flag[2:].replace("-", "_"): value})
+            raise Refusal(f"{flag} must be a positive number of seconds", **{flag[2:].replace("-", "_"): value})
 
 
 def note_unreadable(out: dict, runs_dir):

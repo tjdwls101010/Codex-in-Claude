@@ -5,7 +5,8 @@ from __future__ import annotations
 from codex.git.repo import resolve_project
 from codex.registry.groups import claim_group, group_path, read_group, valid_name
 from codex.registry.runs import ensure_runs_dir, resolve_runs_dir
-from codex.util import emit, fail
+from codex.errors import Refusal
+from codex.util import emit
 from core.groups import (
     check_task_settings, clean_group, load_tasks, pair_with_previous, plan_worktrees, spawn_members, worktree_report,
 )
@@ -13,10 +14,10 @@ from core.groups import (
 
 def cmd_batch_start(args):
     if not valid_name(args.group):
-        fail("group name must be 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a letter or digit (no path separators)", got=args.group)
+        raise Refusal("group name must be 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a letter or digit (no path separators)", got=args.group)
     if getattr(args, "base", None) and not getattr(args, "worktree", False):
         # Refused before the claim, so a typo does not burn the name.
-        fail("--base requires --worktree", base=args.base)
+        raise Refusal("--base requires --worktree", base=args.base)
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
     tasks = load_tasks(args)
@@ -30,7 +31,7 @@ def cmd_batch_start(args):
         epoch = claim_group(runs_dir, args.group, derived_from=previous, requested=len(tasks))["epoch"]
     except FileExistsError:
         existing = read_group(runs_dir, args.group) or {}
-        fail(f"group {args.group!r} already exists; `batch clean --group {args.group}` releases the name once nothing is left",
+        raise Refusal(f"group {args.group!r} already exists; `batch clean --group {args.group}` releases the name once nothing is left",
              created_at=existing.get("created_at"), members=len(existing.get("members") or []))
 
     isolated, base, note = plan_worktrees(tasks, args, project, runs_dir)

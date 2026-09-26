@@ -6,6 +6,8 @@ import json
 import shutil
 import subprocess
 
+from codex.errors import Refusal
+
 # A `codex` slower than this to answer a local cache read is not answering; the check is skipped rather than holding up every run start.
 CATALOG_TIMEOUT = 5.0
 
@@ -67,10 +69,10 @@ def model_catalog():
     return _CATALOG_CACHE[0]
 
 
-def check_model_effort(model, effort, *, catalog, fail, model_source=None, effort_source=None):
+def check_model_effort(model, effort, *, catalog, model_source=None, effort_source=None):
     """Refuse a model or effort this install does not offer.
 
-    Callers pass only values being adopted now, never one inherited from the thread being resumed: a model retired upstream must not turn every resume of an old thread into a refusal. `fail` is passed in because a batch member raises where the CLI exits. `*_source` names where a value came from when it was not typed, per value, so the caller is sent to the right file.
+    Callers pass only values being adopted now, never one inherited from the thread being resumed: a model retired upstream must not turn every resume of an old thread into a refusal. `*_source` names where a value came from when it was not typed, per value, so the caller is sent to the right file.
     """
     if not catalog or (not model and not effort):
         return
@@ -78,7 +80,7 @@ def check_model_effort(model, effort, *, catalog, fail, model_source=None, effor
     es = f" (from {effort_source})" if effort_source else ""
     by_slug = {m["slug"]: m for m in catalog}
     if model and model not in by_slug:
-        fail(f"unknown model {model!r}{ms}: not in this install's catalog, which refreshes on every Codex run",
+        raise Refusal(f"unknown model {model!r}{ms}: not in this install's catalog, which refreshes on every Codex run",
              known_models=sorted(by_slug),
              hint="`models` prints the catalog with each model's efforts")
     if not effort:
@@ -86,12 +88,12 @@ def check_model_effort(model, effort, *, catalog, fail, model_source=None, effor
     if model:
         allowed = by_slug[model]["efforts"]
         if allowed and effort not in allowed:
-            fail(f"model {model!r} does not accept effort {effort!r}{es}", model=model, valid_efforts=allowed,
+            raise Refusal(f"model {model!r} does not accept effort {effort!r}{es}", model=model, valid_efforts=allowed,
                  default_effort=by_slug[model].get("default_effort"))
         return
     # No model named, so no single list governs; the union still catches a typo.
     union = sorted({e for m in catalog for e in m["efforts"]})
     if union and effort not in union:
-        fail(f"unknown effort {effort!r}{es}: no model in this install accepts it",
+        raise Refusal(f"unknown effort {effort!r}{es}: no model in this install accepts it",
              valid_efforts=union,
              hint="efforts are per-model; `models` shows which model takes which")

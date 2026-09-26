@@ -232,13 +232,9 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
             break
         time.sleep(0.05)
     m = read_meta(run_dir) or {}
+    # The handle and what the run may do first, warnings next, paths last.
     out = {"run_id": run_id, "thread_id": thread_id, "state": m.get("state", "starting"),
-           "events": str(run_dir / "events.jsonl"), "project": str(project),
-           "cwd": str(cwd), "sandbox": s["sandbox"], "isolated": s["isolated"]}
-    if group:
-        out["group"] = group
-    if wt_info:
-        out["worktree"] = wt_info
+           "sandbox": s["sandbox"], "isolated": s["isolated"]}
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
     if s["sandbox"] in WRITING_SANDBOXES and not wt_info:
@@ -248,4 +244,9 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
             out["concurrent_writers_note"] = (
                 f"{len(others)} other live run(s) can write in {cwd}, and none of you can tell another's change from your own. "
                 "Only a fresh `batch start --worktree` member gets a checkout of its own; a resumed thread keeps its directory.")
+    if group:
+        out["group"] = group
+    if wt_info:
+        out["worktree"] = wt_info
+    out.update(cwd=str(cwd), project=str(project), events=str(run_dir / "events.jsonl"))
     return out

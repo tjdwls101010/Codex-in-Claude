@@ -69,41 +69,40 @@ def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
                         if ln.strip() and "Reading additional input from stdin" not in ln)
         stderr_tail = txt[-800:] or None
 
-    row = {
-        "run_id": meta.get("run_id"),
-        "thread_id": meta.get("thread_id") or info["thread_id"],
-        "parent_run_id": meta.get("parent_run_id"), "kind": meta.get("kind"),
-        "label": meta.get("label"), "state": state,
-        "codex_pid": meta.get("codex_pid"), "pgid": meta.get("pgid"),
-        "started_at": meta.get("started_at"), "ended_at": meta.get("ended_at"),
-        "elapsed_seconds": elapsed, "codex_elapsed_seconds": codex_elapsed,
-        "idle_seconds": idle,
-        "exit_code": meta.get("exit_code"), "sandbox": meta.get("sandbox"),
-        "model": meta.get("model"), "effort": meta.get("effort"),
-        "isolated": meta.get("isolated"),
-        "service_tier": meta.get("service_tier"),
-        "cwd": meta.get("cwd"),
-        "usage": info["usage"],
-        "turns_completed": info["turns_completed"], "commands": info["commands"],
-        "files_changed": info["files_changed"], "config_error_events": info["errors"],
-        "in_progress_item": info["in_progress_item"],
-        "last_agent_message": clip(info["last_agent_message"] or "", excerpt) or None,
-        "turn_failed": turn_failed_excerpt(info),
-        "events": str(events_path),
-    }
     # Optional fields appear only when they say something, so a present field is worth reading.
-    if still_writing(meta):
-        row["codex_still_running"] = True
-    if info["unparsed_events"]:
-        row["unparsed_events"] = info["unparsed_events"]
-    for key in ("waits_for", "predecessor_state", "codex_started_at", "group", "sandbox_changed_from", "error"):
-        if meta.get(key):
-            row[key] = meta[key]
+    extra = {key: meta[key] for key in ("error", "group", "sandbox_changed_from", "codex_started_at",
+                                        "waits_for", "predecessor_state") if meta.get(key)}
     if meta.get("worktree"):
-        row["worktree"] = meta["worktree"]["path"]
+        extra["worktree"] = meta["worktree"]["path"]
     if stderr_tail:
-        row["stderr_tail"] = stderr_tail
-    return row
+        extra["stderr_tail"] = stderr_tail
+    if still_writing(meta):
+        extra["codex_still_running"] = True
+    if info["unparsed_events"]:
+        extra["unparsed_events"] = info["unparsed_events"]
+
+    def some(*keys):
+        return {k: extra[k] for k in keys if k in extra}
+
+    # Where the run stands and what it last said first, then its settings, then paths and process ids.
+    return {
+        "run_id": meta.get("run_id"), "label": meta.get("label"), "state": state, "exit_code": meta.get("exit_code"),
+        **some("error"), "turn_failed": turn_failed_excerpt(info),
+        "elapsed_seconds": elapsed, "codex_elapsed_seconds": codex_elapsed, "idle_seconds": idle,
+        "turns_completed": info["turns_completed"], "commands": info["commands"],
+        "files_changed": info["files_changed"], "in_progress_item": info["in_progress_item"],
+        "last_agent_message": clip(info["last_agent_message"] or "", excerpt) or None,
+        **some("stderr_tail", "codex_still_running", "unparsed_events"),
+        "config_error_events": info["errors"], "usage": info["usage"],
+        "thread_id": meta.get("thread_id") or info["thread_id"],
+        "parent_run_id": meta.get("parent_run_id"), "kind": meta.get("kind"), **some("group"),
+        "sandbox": meta.get("sandbox"), **some("sandbox_changed_from"),
+        "model": meta.get("model"), "effort": meta.get("effort"), "isolated": meta.get("isolated"),
+        "service_tier": meta.get("service_tier"), "cwd": meta.get("cwd"), **some("worktree"),
+        "started_at": meta.get("started_at"), **some("codex_started_at"), "ended_at": meta.get("ended_at"),
+        "codex_pid": meta.get("codex_pid"), "pgid": meta.get("pgid"), "events": str(events_path),
+        **some("waits_for", "predecessor_state"),
+    }
 
 
 def group_snapshot(rows, unstarted=0):

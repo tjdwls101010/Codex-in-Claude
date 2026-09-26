@@ -54,10 +54,11 @@ def clean_group(project, runs_dir, name, *, force, explicit_registry):
                 + "kept[].reason says why each worktree is kept, and kept[].stop ends a live run")
     else:
         note = "the name stays reserved until nothing is left: kept[].reason says why git kept each worktree; collect uncommitted changes, or pass --force to discard them"
-    out = {"group": name, "removed": removed, "kept": kept, "name_released": released, "note": note}
+    out = {"group": name, "name_released": released}
     if overrode:
         out["forced_past"] = overrode
         out["forced_note"] = "--force overrode everything in forced_past, not only the refusal you hit; discarded changes are not recoverable"
+    out.update(note=note, removed=removed, kept=kept)
     return out
 
 

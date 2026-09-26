@@ -160,7 +160,8 @@ def with_next(out, args, *words):
     if args.runs_dir:
         where += ["--runs-dir", os.path.abspath(os.path.expanduser(args.runs_dir))]
     items = list(out.items())
-    at = next((i + 1 for i, (k, _v) in enumerate(items) if k == "state"), 1)
+    # Right after the handle: a run's state, or a batch's counts.
+    at = next((i + 1 for i, (k, _v) in enumerate(items) if k in ("state", "requested")), 1)
     return dict(items[:at] + [("next", {"command": invocation(*words, *where), "run_in_background": True})] + items[at:])
 
 

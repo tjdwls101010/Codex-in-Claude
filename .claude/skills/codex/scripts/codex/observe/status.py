@@ -41,9 +41,9 @@ def status(args):
     by_thread = {}
     for r in rows:
         by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
-    out = {"project": str(project), "runs_dir": str(runs_dir), "runs": shown,
-           "threads": by_thread, "running": running, "done": done, "failed": failed,
-           "total_runs": len(rows), "runs_truncated": len(rows) - len(shown), "groups": groups}
+    out = {"running": running, "done": done, "failed": failed,
+           "total_runs": len(rows), "runs_truncated": len(rows) - len(shown), "runs": shown,
+           "threads": by_thread, "groups": groups, "project": str(project), "runs_dir": str(runs_dir)}
     return note_unreadable(out, runs_dir)
 
 
@@ -51,11 +51,11 @@ def status_group(args, project, runs_dir):
     rows = [run_row(rd, m, project) for rd, m in resolve_group(runs_dir, args.group)]
     never = unstarted_members(runs_dir, args.group) + vanished_members(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(rows, len(never))
-    out = {"project": str(project), "group": args.group, "runs": rows,
-           "running": running, "done": done, "failed": failed,
-           "total_runs": len(rows), "runs_truncated": 0, "group_state": gstate}
+    out = {"group": args.group, "group_state": gstate, "running": running, "done": done, "failed": failed,
+           "total_runs": len(rows), "runs_truncated": 0}
     if never:
         out["unstarted"] = never
+    out.update(runs=rows, project=str(project))
     return note_unreadable(out, runs_dir)
 
 

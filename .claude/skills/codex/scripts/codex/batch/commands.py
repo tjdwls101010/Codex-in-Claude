@@ -33,9 +33,7 @@ def start(args):
 
     isolated, base, note = plan_worktrees(tasks, args, project, runs_dir)
     members, results = spawn_members(args, tasks, runs_dir=runs_dir, epoch=epoch, isolated=isolated, base=base)
-    out = {"group": args.group, "runs": results,
-           "spawned": len([m for m in members if m.get("run_id")]), "requested": len(tasks),
-           "manifest": str(group_path(runs_dir, args.group))}
+    out = {"group": args.group, "spawned": len([m for m in members if m.get("run_id")]), "requested": len(tasks)}
     if previous:
         out["resumed_from"] = {"group": previous, "members": paired_with}
     cut = [m for m in members if m.get("worktree")]
@@ -43,6 +41,7 @@ def start(args):
         out["worktrees"] = worktree_report(project, runs_dir, base, len(cut))
     elif note:
         out["worktrees"] = {"count": 0, "note": note}
+    out.update(runs=results, manifest=str(group_path(runs_dir, args.group)))
     return out
 
 

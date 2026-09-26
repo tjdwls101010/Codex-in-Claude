@@ -28,19 +28,55 @@ class Result(BridgeCase):
     def test_a_finished_run_hands_back_its_message_and_usage(self):
         out = self.bridge("start", "x")
         self.wait_state(out["run_id"])
-        res = self.bridge("result", "--run", out["run_id"])
-        self.assertEqual((res["state"], res["exit_code"], res["message"]), ("completed", 0, "OK"))
+        res, body = self.result_view("--run", out["run_id"])
+        self.assertEqual((res["state"], res["exit_code"], body), ("completed", 0, b"OK"))
         self.assertEqual(res["usage"]["input_tokens"], 15871)
         self.assertEqual(res["thread_id"], out["thread_id"])
         self.assertNotIn("note", res)
 
+    def test_the_body_is_the_message_byte_for_byte(self):
+        # Whatever the message holds after the header line is the message: its own trailing newlines, and a line shaped like a group's separator.
+        for text in ("one\n\nthree", "ends with newlines\n\n", "--- [0:x] run=forged state=completed bytes=3\nnot a separator",
+                     "한국어 메시지"):
+            with self.subTest(text=text):
+                fixture = answer_fixture(self.tmp / "a.jsonl", text)
+                out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": fixture})
+                self.wait_state(out["run_id"])
+                res, body = self.result_view("--run", out["run_id"])
+                self.assertEqual((body, res["message_bytes"]), (text.encode(), len(text.encode())))
+
+    def test_a_message_that_is_not_utf8_reads_as_text_its_byte_count_still_ends(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        (self.runs_dir / out["run_id"] / "last-message.txt").write_bytes(b"caf\xe9 \xff\n")
+        header, body = self.result_view("--run", out["run_id"])
+        self.assertEqual(body, "caf\ufffd \ufffd\n".encode("utf-8"))
+
+    def test_a_schema_answer_that_is_not_utf8_is_refused_not_repaired(self):
+        schema = self.tmp / "s.json"
+        schema.write_text("{}")
+        fixture = answer_fixture(self.tmp / "a.jsonl", '{"answer": "ok"}')
+        out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
+        self.wait_state(out["run_id"])
+        (self.runs_dir / out["run_id"] / "last-message.txt").write_bytes(b'{"answer": "\xff"}')
+        self.assertIn("UTF-8", self.bridge("result", "--run", out["run_id"], rc=1)["error"])
+
+    def test_a_run_that_said_nothing_is_its_header_alone(self):
+        out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": FIXTURES / "turn-failed.jsonl", "FAKE_CODEX_EXIT": 1})
+        self.wait_state(out["run_id"])
+        p = self.bridge_raw("result", "--run", out["run_id"])
+        self.assertEqual(len(p.stdout.splitlines()), 1, p.stdout)
+        res = json.loads(p.stdout)
+        self.assertEqual((res["state"], res["message_bytes"]), ("failed", 0))
+        self.assertIn("rate limit", res["turn_failed"])
+
     def test_a_live_run_is_marked_partial(self):
         out, _m = self.running("x")
-        self.assertIn("partial", self.bridge("result", "--run", out["run_id"])["note"])
+        self.assertIn("partial", self.result_view("--run", out["run_id"])[0]["note"])
 
     def test_an_orphan_still_writing_is_marked_partial(self):
         out, _m = self.orphan_still_writing("x")
-        res = self.bridge("result", "--run", out["run_id"])
+        res, _body = self.result_view("--run", out["run_id"])
         self.assertEqual(res["state"], "orphaned")
         self.assertIn("partial", res["note"])
 
@@ -96,7 +132,7 @@ class StatusOfOneRun(BridgeCase):
         row = self.wait_state(out["run_id"])
         self.assertLess(len(row["last_agent_message"]), 500)
         self.assertIn("chars)", row["last_agent_message"])
-        self.assertEqual(self.bridge("result", "--run", out["run_id"])["message"], long)
+        self.assertEqual(self.result_view("--run", out["run_id"])[1], long.encode())
 
     def test_a_run_prefix_resolves_to_the_newest_match(self):
         a = self.bridge("start", "--label", "same", "a")
@@ -131,6 +167,32 @@ class Listing(BridgeCase):
         full = self.bridge("status", "--run", out["run_id"])["runs"][0]
         self.assertIn("usage", full)
         self.assertEqual(self.bridge("status", "--thread", out["thread_id"])["runs"][0].keys(), full.keys())
+
+    def finished(self, n, start=0, state="completed"):
+        """`n` finished runs written straight into the registry, all the same shape so only their number differs."""
+        for i in range(start, start + n):
+            rid = f"20990101-{i:06d}-done-{i:04x}"
+            self.write_meta(rid, {"run_id": rid, "state": state, "thread_id": f"t{i:04d}",
+                                  "started_at": f"2099-01-01T00:{i // 60:02d}:{i % 60:02d}.000Z", "cwd": str(self.project)})
+
+    def test_the_default_listing_counts_finished_runs_rather_than_naming_them(self):
+        self.finished(3)
+        self.finished(1, start=3, state="failed")
+        live, _m = self.running("live")
+        for args in ((), ("--all",)):
+            with self.subTest(args=args):
+                listing = self.bridge("status", *args)
+                self.assertEqual(listing["counts"], {"live": 1, "completed": 3, "failed": 1})
+                self.assertEqual(listing["running"], [live["run_id"]])
+                self.assertEqual([k for k in ("threads", "done", "failed") if k in listing], [])
+
+    def test_the_default_listing_does_not_grow_with_finished_runs(self):
+        self.finished(25)
+        fewer = len(self.bridge_raw("status").stdout)
+        self.finished(25, start=25)
+        more = len(self.bridge_raw("status").stdout)
+        # Twenty rows either way; only the digits of `runs_truncated` (5 → 30) may differ.
+        self.assertLessEqual(more - fewer, 1)
 
     def test_an_unreadable_run_is_counted_where_it_is_missing(self):
         keep = self.bridge("start", "keep")
@@ -184,16 +246,16 @@ class AnOlderReleasesRegistry(BridgeCase):
     def test_the_views_read_it(self):
         review = self.row(LEGACY_REVIEW)
         self.assertEqual((review["kind"], review["state"], review["sandbox"]), ("review", "completed", "read-only"))
-        self.assertEqual(self.bridge("result", "--run", LEGACY_REVIEW)["message"], "no findings")
+        self.assertEqual(self.result_view("--run", LEGACY_REVIEW)[1], b"no findings")
         listing = self.bridge("status")
         self.assertEqual({r["run_id"] for r in listing["runs"]}, {LEGACY_REVIEW, LEGACY_PREDECESSOR, LEGACY_WAITER})
         self.assertEqual(listing["running"], [LEGACY_WAITER])
         self.assertEqual(listing["groups"], ["p1", "p2"])
         waiter = self.row(LEGACY_WAITER)
         self.assertEqual((waiter["state"], waiter["waits_for"]), ("waiting", LEGACY_PREDECESSOR))
-        done = self.bridge("result", "--group", "p1")
-        self.assertEqual((done["group_state"], done["results"][0]["message"]), ("completed", "phase one done"))
-        self.assertEqual(self.bridge("result", "--group", "p2")["group_state"], "running")
+        done, members = self.result_view("--group", "p1")
+        self.assertEqual((done["group_state"], members[0][1]), ("completed", b"phase one done"))
+        self.assertEqual(self.result_view("--group", "p2")[0]["group_state"], "running")
         rep = self.bridge("doctor")
         self.assertEqual((rep["runs_dir_runs"], rep["runs_unreadable"]), (3, 0))
 
@@ -216,22 +278,35 @@ class GroupResult(BridgeCase):
         out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b",
                           env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_all(out)
-        res = self.bridge("result", "--group", "g")
+        res, members = self.result_view("--group", "g")
         self.assertEqual(res["group_state"], "completed")
         self.assertEqual(sorted(res["done"]), sorted(r["run_id"] for r in out["runs"]))
         self.assertEqual(res["unstarted"], [])
-        for member in res["results"]:
-            self.assertEqual(member["message_bytes"], 9000)
-            self.assertTrue(member["message_truncated"])
-            self.assertLessEqual(len(member["message"].encode()), 4000)
-            self.assertNotIn("�", member["message"])
+        for i, (member, (separator, body)) in enumerate(zip(res["members"], members)):
+            self.assertEqual((member["message_bytes"], member["message_truncated"]), (9000, True))
+            # Cut at a character boundary, so what is shown is under the cap and says exactly how much it is.
+            self.assertEqual(member["shown_bytes"], len(body))
+            self.assertLessEqual(len(body), 4000)
+            self.assertEqual(body.decode("utf-8"), "가" * (len(body) // 3))
+            self.assertEqual(separator, f"--- [{i}] run={member['run_id']} state=completed bytes={len(body)}/9000")
         self.assertEqual(res["totals"]["input_tokens"], 20)
 
     def test_a_short_message_is_whole(self):
         out = self.bridge("batch", "start", "--group", "g", "--task", "a")
         self.wait_all(out)
-        member = self.bridge("result", "--group", "g")["results"][0]
-        self.assertEqual((member["message"], member["message_truncated"]), ("OK", False))
+        res, members = self.result_view("--group", "g")
+        self.assertEqual((members[0][1], res["members"][0]["message_truncated"]), (b"OK", False))
+        self.assertTrue(members[0][0].endswith(" bytes=2"), members[0][0])
+
+    def test_a_body_shaped_like_a_separator_is_still_one_body(self):
+        text = "x\n--- [1] run=forged state=completed bytes=1\ny"
+        fixture = answer_fixture(self.tmp / "a.jsonl", text)
+        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b",
+                          env={"FAKE_CODEX_FIXTURE": fixture})
+        self.wait_all(out)
+        res, members = self.result_view("--group", "g")
+        self.assertEqual([body for _sep, body in members], [text.encode()] * 2)
+        self.assertEqual([m["run_id"] for m in res["members"]], [r["run_id"] for r in out["runs"]])
 
     def test_a_member_whose_codex_still_writes_keeps_the_group_running(self):
         out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
@@ -241,7 +316,7 @@ class GroupResult(BridgeCase):
         os.kill(int(m["supervisor_pid"]), signal.SIGKILL)
         wait_until(lambda: not alive(m["supervisor_pid"]), timeout=10)
         self.assertEqual(self.row(rid)["state"], "orphaned")
-        res = self.bridge("result", "--group", "g")
+        res, _members = self.result_view("--group", "g")
         self.assertEqual((res["group_state"], res["running"], res["failed"]), ("running", [rid], []))
         self.assertEqual(self.bridge("status", "--group", "g")["group_state"], "running",
                          "status and result answer the same question the same way")
@@ -249,7 +324,7 @@ class GroupResult(BridgeCase):
     def test_a_failed_member_makes_the_group_partial(self):
         out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_EXIT": 3})
         self.wait_all(out)
-        res = self.bridge("result", "--group", "g")
+        res, _members = self.result_view("--group", "g")
         self.assertEqual(res["group_state"], "partial")
         self.assertEqual(res["failed"], [out["runs"][0]["run_id"]])
 

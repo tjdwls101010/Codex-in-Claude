@@ -82,18 +82,18 @@ def check_model_effort(model, effort, *, catalog, model_source=None, effort_sour
     if model and model not in by_slug:
         raise Refusal(f"unknown model {model!r}{ms}: not in this install's catalog, which refreshes on every Codex run",
                       known_models=sorted(by_slug),
-                      hint="`models` prints the catalog with each model's efforts")
+                      hint="`models` prints the catalog with each model's efforts", arguments=model_source is None)
     if not effort:
         return
     if model:
         allowed = by_slug[model]["efforts"]
         if allowed and effort not in allowed:
             raise Refusal(f"model {model!r} does not accept effort {effort!r}{es}", model=model, valid_efforts=allowed,
-                          default_effort=by_slug[model].get("default_effort"))
+                          default_effort=by_slug[model].get("default_effort"), arguments=effort_source is None)
         return
     # No model named, so no single list governs; the union still catches a typo.
     union = sorted({e for m in catalog for e in m["efforts"]})
     if union and effort not in union:
         raise Refusal(f"unknown effort {effort!r}{es}: no model in this install accepts it",
                       valid_efforts=union,
-                      hint="efforts are per-model; `models` shows which model takes which")
+                      hint="efforts are per-model; `models` shows which model takes which", arguments=effort_source is None)

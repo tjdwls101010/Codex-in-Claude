@@ -45,7 +45,7 @@ class TerminalStates(BridgeCase):
                                              "FAKE_CODEX_EXIT": 1})
         row = self.wait_state(out["run_id"])
         self.assertIn("rate limit", row["turn_failed"])
-        self.assertIn("rate limit", self.bridge("result", "--run", out["run_id"])["turn_failed"])
+        self.assertIn("rate limit", self.result_view("--run", out["run_id"])[0]["turn_failed"])
 
     def test_stderr_is_surfaced_without_codexs_routine_stdin_notice(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_STDERR": "boom: config broken"})
@@ -193,7 +193,7 @@ class AnOrphanThatIsStillWriting(BridgeCase):
         out, _m = self.orphan_still_writing("x")
         listing = self.bridge("status", "--all")
         self.assertIn(out["run_id"], listing["running"])
-        self.assertNotIn(out["run_id"], listing["failed"])
+        self.assertEqual(listing["counts"]["failed"], 0)
         self.assertTrue(self.row(out["run_id"])["codex_still_running"])
 
     def test_stop_reaches_its_codex_through_the_process_group(self):

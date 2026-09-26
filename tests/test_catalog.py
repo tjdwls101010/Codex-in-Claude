@@ -31,10 +31,12 @@ class ChecksBeforeSpawning(BridgeCase):
                               (("--model", "fake-small", "--effort", "ultra"), "does not accept effort"),
                               (("--effort", "maximal"), "unknown effort")):
             with self.subTest(args=args):
-                self.assertIn(message, self.bridge("start", *args, "x", rc=1)["error"])
+                # A value the command line names is the command line's to change: exit 2.
+                self.assertIn(message, self.bridge("start", *args, "x", rc=2)["error"])
         self.assertEqual(self.run_dirs(), [])
 
     def test_a_refused_value_says_it_came_from_the_config(self):
+        # The command line was right and the config is what must change, so these stay 1.
         (self.codex_home / "config.toml").write_text('model = "retired-model"\n')
         refused = self.bridge("start", "x", rc=1)
         self.assertIn("retired-model", refused["error"])

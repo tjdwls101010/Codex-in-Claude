@@ -48,10 +48,8 @@ def doctor(args):
         warnings.append(
             f"{agents} is given to every Codex run started in this project, isolated or not")
     _check_registry(report, blockers, warnings, project, runs_dir)
-    report["blockers"] = blockers
-    report["warnings"] = warnings
-    report["ok"] = not blockers
-    return report
+    # The verdict first, then what it rests on.
+    return {"ok": not blockers, "blockers": blockers, "warnings": warnings, **report}
 
 
 def _check_codex(report, blockers, warnings):

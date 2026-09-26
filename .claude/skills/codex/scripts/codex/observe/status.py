@@ -25,21 +25,25 @@ def status(args):
     else:
         rows = [run_row(rd, m, project, excerpt=400 if args.thread else 160)
                 for rd, m in iter_runs(runs_dir) if not args.thread or m.get("thread_id") == args.thread]
-    by_thread = {}
-    for r in rows:
-        by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
     # Summaries come from every row before the display cap, so no live run falls off `running`.
     running, done, failed, _ = group_snapshot(rows)
     shown = rows
     if not args.run and not args.all and len(rows) > LISTING_ROWS:
         shown = [r for r in rows[:-LISTING_ROWS] if row_is_live(r)] + rows[-LISTING_ROWS:]
+    # Listed even when none of their members is shown: this is how a later session finds a batch.
+    groups = list_groups(runs_dir)
     if not (args.run or args.thread):
-        shown = [summary_row(r) for r in shown]
-    out = {"project": str(project), "runs_dir": str(runs_dir), "runs": shown,
-           "threads": by_thread, "running": running, "done": done, "failed": failed,
-           "total_runs": len(rows), "runs_truncated": len(rows) - len(shown),
-           # Listed even when none of their members is shown: this is how a later session finds a batch.
-           "groups": list_groups(runs_dir)}
+        # The listing counts finished runs rather than naming them: their ids grow with the registry and say nothing the caller acts on.
+        out = {"running": running, "counts": {"live": len(running), "completed": len(done), "failed": len(failed)},
+               "total_runs": len(rows), "runs_truncated": len(rows) - len(shown), "groups": groups,
+               "runs": [summary_row(r) for r in shown], "project": str(project), "runs_dir": str(runs_dir)}
+        return note_unreadable(out, runs_dir)
+    by_thread = {}
+    for r in rows:
+        by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
+    out = {"running": running, "done": done, "failed": failed,
+           "total_runs": len(rows), "runs_truncated": len(rows) - len(shown), "runs": shown,
+           "threads": by_thread, "groups": groups, "project": str(project), "runs_dir": str(runs_dir)}
     return note_unreadable(out, runs_dir)
 
 
@@ -47,11 +51,11 @@ def status_group(args, project, runs_dir):
     rows = [run_row(rd, m, project) for rd, m in resolve_group(runs_dir, args.group)]
     never = unstarted_members(runs_dir, args.group) + vanished_members(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(rows, len(never))
-    out = {"project": str(project), "group": args.group, "runs": rows,
-           "running": running, "done": done, "failed": failed,
-           "total_runs": len(rows), "runs_truncated": 0, "group_state": gstate}
+    out = {"group": args.group, "group_state": gstate, "running": running, "done": done, "failed": failed,
+           "total_runs": len(rows), "runs_truncated": 0}
     if never:
         out["unstarted"] = never
+    out.update(runs=rows, project=str(project))
     return note_unreadable(out, runs_dir)
 
 

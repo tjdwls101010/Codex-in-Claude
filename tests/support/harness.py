@@ -151,6 +151,32 @@ class BridgeCase(unittest.TestCase):
                 pass
         p.communicate(timeout=10)
 
+    def result_view(self, *args, rc=0, **kw):
+        """`result` read the way its `--help` says to: one JSON header line, then bodies whose extent is a byte count, each followed by one newline the count leaves out. Returns `(header, body)` for a run and `(header, [(separator line, body), …])` for a group, bodies as bytes."""
+        p = self.bridge_raw("result", *args, **kw)
+        self.assertEqual(p.returncode, rc, p.stdout + p.stderr)
+        line, _, rest = p.stdout.encode("utf-8").partition(b"\n")
+        header = json.loads(line)
+
+        def take(n, rest):
+            body, rest = rest[:n], rest[n:]
+            if n:
+                self.assertEqual(rest[:1], b"\n", "a body ends with one uncounted newline")
+                rest = rest[1:]
+            return body, rest
+
+        if "members" not in header:
+            body, rest = take(header["message_bytes"], rest)
+            self.assertEqual(rest, b"", "nothing follows a run's body")
+            return header, body
+        members = []
+        for member in header["members"]:
+            separator, _, rest = rest.partition(b"\n")
+            body, rest = take(member["shown_bytes"], rest)
+            members.append((separator.decode("utf-8"), body))
+        self.assertEqual(rest, b"", "nothing follows the last member's body")
+        return header, members
+
     def log(self, *args, **kw):
         """`log` output split into (event lines, cursor)."""
         p = self.bridge_raw("log", *args, **kw)

@@ -43,17 +43,17 @@ class Doctor(BridgeCase):
         self.assertEqual(rep["config_sandbox_mode"], "danger-full-access")
         self.assertTrue(any("danger-full-access" in w for w in rep["warnings"]))
 
-    def test_blockers_exit_2(self):
+    def test_blockers_exit_3(self):
         cases = [({"PATH": "/usr/bin:/bin"}, "not on PATH"),
                  ({"FAKE_CODEX_LOGIN_RC": 1}, "not authenticated"),
                  ({"CODEX_HOME": str(self.tmp / "missing")}, "CODEX_HOME does not exist")]
         for env, message in cases:
             with self.subTest(env=env):
-                rep = self.bridge("doctor", rc=2, env=env)
+                rep = self.bridge("doctor", rc=3, env=env)
                 self.assertTrue(any(message in b for b in rep["blockers"]), rep["blockers"])
 
     def test_a_config_that_will_not_load_is_not_called_an_auth_problem(self):
-        rep = self.bridge("doctor", rc=2, env={"FAKE_CODEX_LOGIN_RC": 1,
+        rep = self.bridge("doctor", rc=3, env={"FAKE_CODEX_LOGIN_RC": 1,
                                                "FAKE_CODEX_LOGIN_OUT": "Error loading configuration: config.toml:1:26"})
         blocker = next(b for b in rep["blockers"] if "login status" in b)
         self.assertIn("not an auth one", blocker)
@@ -62,7 +62,7 @@ class Doctor(BridgeCase):
         self.runs_dir.mkdir()
         os.chmod(self.runs_dir, 0o500)
         self.addCleanup(os.chmod, self.runs_dir, 0o700)
-        rep = self.bridge("doctor", rc=2)
+        rep = self.bridge("doctor", rc=3)
         self.assertFalse(rep["runs_dir_writable"])
 
     def test_the_project_agents_md_is_named(self):

@@ -50,12 +50,12 @@ class ThroughASymlink(BridgeCase):
         self.assertEqual(self.runs_invoked()[-1]["cwd"], str(self.project))
 
         def finished():
-            res = json.loads(self.uv("result", "--project", self.project, "--run", out["run_id"]).stdout)
-            return res if res["state"] == "completed" else None
+            header, _, body = self.uv("result", "--project", self.project, "--run", out["run_id"]).stdout.partition("\n")
+            return (json.loads(header), body) if json.loads(header)["state"] == "completed" else None
 
         res = wait_until(finished, timeout=30, interval=0.2)
         self.assertTrue(res)
-        self.assertEqual(res["message"], "OK")
+        self.assertEqual(res[1], "OK\n")
 
     def test_doctor_through_the_link_reports_the_installed_skill(self):
         rep = json.loads(self.uv("doctor", "--project", self.project).stdout)

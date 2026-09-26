@@ -62,7 +62,7 @@ class Starting(BatchCase):
         self.assertEqual(self.run_dirs(), before)
 
     def test_a_name_that_could_escape_the_registry_is_refused(self):
-        self.assertIn("path separators", self.batch("../oops", "x", rc=1)["error"])
+        self.assertIn("path separators", self.batch("../oops", "x", rc=2)["error"])
 
     def test_prompt_and_image_are_per_task_fields_only(self):
         img = self.tmp / "a.png"
@@ -71,9 +71,8 @@ class Starting(BatchCase):
         prompt.write_text("from a file")
         for flag, value in (("--prompt-file", prompt), ("--image", img)):
             with self.subTest(flag=flag):
-                p = self.bridge_raw("batch", "start", "--group", "p1", flag, value, "--task", "x")
-                self.assertEqual(p.returncode, 2, p.stdout)
-                self.assertIn("unrecognized arguments", p.stderr)
+                self.assertIn("unrecognized arguments",
+                              self.bridge("batch", "start", "--group", "p1", flag, value, "--task", "x", rc=2)["error"])
         self.assertEqual(self.run_dirs(), [])
         out = self.bridge("batch", "start", "--group", "p1", "--tasks-file",
                           self.tasks_file({"prompt": "look", "image": [str(img)]}))
@@ -81,8 +80,13 @@ class Starting(BatchCase):
         argv = self.last_argv()
         self.assertEqual(argv[argv.index("-i") + 1], str(img))
 
+    def test_reading_stdin_for_one_task_leaves_it_usable_for_the_next(self):
+        out = self.batch("p1", "-", "-", stdin="from stdin")
+        self.assertEqual((out["spawned"], out["requested"]), (2, 2), out)
+        self.wait_all(out)
+
     def test_a_batch_needs_a_task(self):
-        self.assertIn("at least one", self.bridge("batch", "start", "--group", "p1", rc=1)["error"])
+        self.assertIn("at least one", self.bridge("batch", "start", "--group", "p1", rc=2)["error"])
 
 
 class TasksAreValidatedBeforeAnythingStarts(BatchCase):
@@ -102,7 +106,7 @@ class TasksAreValidatedBeforeAnythingStarts(BatchCase):
         for bad, message in self.CASES:
             with self.subTest(bad=bad):
                 tf = self.tasks_file("fine", bad)
-                refused = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf, rc=1)
+                refused = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf, rc=2)
                 self.assertIn(message, refused["error"])
                 self.assertRegex(refused["error"], r"(line|task) 2")
         self.assert_cost_nothing([], [])
@@ -110,7 +114,7 @@ class TasksAreValidatedBeforeAnythingStarts(BatchCase):
     def test_a_line_that_is_not_json_is_named(self):
         tf = self.tmp / "bad.jsonl"
         tf.write_text('{"prompt": "ok"}\nnot json\n')
-        self.assertIn("line 2", self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf, rc=1)["error"])
+        self.assertIn("line 2", self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf, rc=2)["error"])
 
     def test_blank_lines_and_comments_are_skipped(self):
         tf = self.tmp / "t.jsonl"
@@ -188,7 +192,7 @@ class ResumeFrom(BatchCase):
         one = self.phase_one()
         self.wait_all(one)
         tf = self.tasks_file({"prompt": "x", "resume": one["runs"][0]["run_id"]}, "y")
-        refused = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--tasks-file", tf, rc=1)
+        refused = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--tasks-file", tf, rc=2)
         self.assertIn("kind", refused["error"])
 
     def refused(self, *tasks, extra=()):

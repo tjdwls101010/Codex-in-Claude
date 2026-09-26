@@ -38,7 +38,7 @@ class WorktreeCase(BridgeCase):
                 "changes": [{"path": str(p), "kind": "update"} for p in paths]}}) + "\n")
 
     def overlaps(self, name="p1"):
-        return self.bridge("result", "--group", name)["overlaps"]
+        return self.result_view("--group", name)[0]["overlaps"]
 
 
 class WhoGetsACheckout(WorktreeCase):
@@ -99,7 +99,7 @@ class WhoGetsACheckout(WorktreeCase):
         self.assertTrue(all(r["cwd"] == str(plain) for r in out["runs"]))
 
     def test_an_unresolvable_base_is_refused_before_anything_is_claimed(self):
-        refused = self.group("--worktree", "--base", "no-such-ref", rc=1)
+        refused = self.group("--worktree", "--base", "no-such-ref", rc=2)
         self.assertIn("no-such-ref", refused["error"])
         self.assertEqual(self.run_dirs(), [])
 

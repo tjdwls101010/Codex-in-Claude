@@ -40,27 +40,34 @@ def changed_paths(events_path: Path, root=None):
     return paths
 
 
+def final_message(run_dir, info, errors="replace"):
+    """What a run concluded: its `-o` file decoded as UTF-8 (a byte that is not, handled by `errors`), else the last agent message in its event stream (a live run's answer so far), else nothing."""
+    msg_path = run_dir / "last-message.txt"
+    if msg_path.exists():
+        return msg_path.read_bytes().decode("utf-8", errors)
+    return info["last_agent_message"] or ""
+
+
 def member_result(rd, meta):
-    """One member's row in `result --group`: its message capped in bytes (cut and counted in the same unit), plus usage and liveness."""
+    """One member of `result --group`: its row and the part of its message that is shown, capped in bytes (cut and counted in the same unit). Returns `(row, info, shown)`."""
     info = progress(rd, meta)
-    msg_path = rd / "last-message.txt"
-    message = (msg_path.read_text(encoding="utf-8") if msg_path.exists() else info["last_agent_message"]) or ""
-    raw = message.encode("utf-8", "replace")
+    message = final_message(rd, info)
+    raw = message.encode("utf-8")
     truncated = len(raw) > GROUP_MESSAGE_CAP
+    # "ignore": a byte cut mid-character would otherwise add U+FFFD, which is larger and reads as corruption.
+    shown = raw[:GROUP_MESSAGE_CAP].decode("utf-8", "ignore") if truncated else message
     row = {"run_id": meta["run_id"], "label": meta.get("label"),
            "state": meta.get("state"), "exit_code": meta.get("exit_code"),
-           # "ignore": a byte cut mid-character would otherwise add U+FFFD, which is larger and reads as corruption.
-           "message": raw[:GROUP_MESSAGE_CAP].decode("utf-8", "ignore") if truncated else message,
-           "message_bytes": len(raw), "message_truncated": truncated,
-           "usage": info["usage"], "files_changed": info["files_changed"],
+           "message_bytes": len(raw), "shown_bytes": len(shown.encode("utf-8")), "message_truncated": truncated,
+           "files_changed": info["files_changed"], "usage": info["usage"],
            "turn_failed": turn_failed_excerpt(info)}
     if info["unparsed_events"]:
         row["unparsed_events"] = info["unparsed_events"]
-    if still_writing(meta):
-        row["codex_still_running"] = True
     if meta.get("worktree"):
         row["worktree"] = meta["worktree"]
-    return row, info
+    if still_writing(meta):
+        row["codex_still_running"] = True
+    return row, info, shown
 
 
 def overlaps(per_run_paths):

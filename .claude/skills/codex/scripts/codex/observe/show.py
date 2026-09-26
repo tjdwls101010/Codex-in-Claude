@@ -29,9 +29,9 @@ def show(args):
                    total_bytes=len(raw), truncated=len(raw) > args.max_bytes)
         if out["truncated"]:
             out["shown_bytes"] = args.max_bytes
-            out["output"] = raw[: args.max_bytes].decode("utf-8", "replace")
             out["truncation_notice"] = (f"{len(raw) - args.max_bytes} of {len(raw)} bytes withheld; "
                                         f"raise --max-bytes to see more")
+            out["output"] = raw[: args.max_bytes].decode("utf-8", "replace")
         else:
             out["output"] = text
     elif found.get("type") == "file_change":

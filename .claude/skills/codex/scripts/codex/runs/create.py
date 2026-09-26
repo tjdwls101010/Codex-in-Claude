@@ -5,6 +5,7 @@ Four stages, ordered around the thread's turn lock: everything that can still re
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import time
@@ -51,12 +52,16 @@ def read_prompt(args) -> str:
     if getattr(args, "prompt_file", None):
         try:
             return Path(args.prompt_file).read_text(encoding="utf-8")
-        except OSError as e:
-            raise Refusal(f"cannot read prompt file: {e}")
+        except (OSError, UnicodeDecodeError) as e:
+            raise Refusal(f"cannot read prompt file: {e}", arguments=True)
     p = getattr(args, "prompt", None)
     if p == "-" or p is None:
         if not sys.stdin.isatty():
-            data = sys.stdin.read()
+            try:
+                # Decoded strictly here, because sys.stdin's error policy comes from the environment and a C locale lets bad bytes through as surrogates. The wrapper holds a copy: one around sys.stdin.buffer would close it for the batch members after this one.
+                data = io.TextIOWrapper(io.BytesIO(sys.stdin.buffer.read()), encoding="utf-8").read()
+            except UnicodeDecodeError as e:
+                raise Refusal(f"cannot read the prompt on stdin: {e}", arguments=True)
             if data.strip():
                 return data
         if p is None:
@@ -99,11 +104,21 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     cwd = (Path(args.cwd).expanduser().resolve() if getattr(args, "cwd", None)
            else (Path(base["cwd"]) if base else project))
     if not cwd.is_dir():
-        raise Refusal(f"cwd does not exist: {cwd}")
+        raise Refusal(f"cwd does not exist: {cwd}", arguments=True)
 
     prompt = read_prompt(args)
     if not prompt.strip():
-        raise Refusal("a prompt is required (positional, --prompt-file, or stdin via '-')")
+        raise Refusal("a prompt is required (positional, --prompt-file, or stdin via '-')", arguments=True)
+
+    # Checked here rather than once the run is published: a refusal after the claim would leave a run directory with no meta.json, which no listing shows.
+    schema_path = (str(Path(args.schema).expanduser().resolve()) if getattr(args, "schema", None)
+                   else (base.get("schema_path") if base else None))
+    if schema_path and not Path(schema_path).exists():
+        raise Refusal(f"schema file not found: {schema_path}", arguments=True)
+    images = [str(Path(i).expanduser().resolve()) for i in (getattr(args, "image", None) or [])]
+    for img in images:
+        if not Path(img).exists():
+            raise Refusal(f"image not found: {img}", arguments=True)
 
     if kind == "resume" and not thread_ref:
         # A bare `codex exec resume` would fail after this command already reported a run started.
@@ -122,7 +137,7 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
 
     return {"cwd": cwd, "prompt": prompt, "isolated": r["isolated"],
             "sandbox": r["sandbox"], "model": r["model"], "effort": r["effort"],
-            "service_tier": r["service_tier"]}
+            "service_tier": r["service_tier"], "schema_path": schema_path, "images": images}
 
 
 def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
@@ -154,9 +169,8 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
             "effort": s["effort"],
             "isolated": s["isolated"],
             "service_tier": s["service_tier"],
-            "schema_path": (str(Path(args.schema).expanduser().resolve()) if getattr(args, "schema", None)
-                            else (base.get("schema_path") if base else None)),
-            "images": [str(Path(i).expanduser().resolve()) for i in (getattr(args, "image", None) or [])],
+            "schema_path": s["schema_path"],
+            "images": s["images"],
             "add_dirs": [str(Path(d).expanduser().resolve()) for d in (getattr(args, "add_dir", None) or [])],
             # Only where Codex's own guard does not apply.
             "skip_git_repo_check": git_toplevel(s["cwd"]) is None,
@@ -176,11 +190,6 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
         }
         if base and args.sandbox and args.sandbox != base["sandbox"]:
             meta["sandbox_changed_from"] = base["sandbox"]
-        if meta["schema_path"] and not Path(meta["schema_path"]).exists():
-            raise Refusal(f"schema file not found: {meta['schema_path']}")
-        for img in meta["images"]:
-            if not Path(img).exists():
-                raise Refusal(f"image not found: {img}")
         write_meta(run_dir, meta)
     return run_id, run_dir, meta
 
@@ -228,13 +237,9 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
             break
         time.sleep(0.05)
     m = read_meta(run_dir) or {}
+    # The handle and what the run may do first, warnings next, paths last.
     out = {"run_id": run_id, "thread_id": thread_id, "state": m.get("state", "starting"),
-           "events": str(run_dir / "events.jsonl"), "project": str(project),
-           "cwd": str(cwd), "sandbox": s["sandbox"], "isolated": s["isolated"]}
-    if group:
-        out["group"] = group
-    if wt_info:
-        out["worktree"] = wt_info
+           "sandbox": s["sandbox"], "isolated": s["isolated"]}
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
     if s["sandbox"] in WRITING_SANDBOXES and not wt_info:
@@ -244,4 +249,9 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
             out["concurrent_writers_note"] = (
                 f"{len(others)} other live run(s) can write in {cwd}, and none of you can tell another's change from your own. "
                 "Only a fresh `batch start --worktree` member gets a checkout of its own; a resumed thread keeps its directory.")
+    if group:
+        out["group"] = group
+    if wt_info:
+        out["worktree"] = wt_info
+    out.update(cwd=str(cwd), project=str(project), events=str(run_dir / "events.jsonl"))
     return out

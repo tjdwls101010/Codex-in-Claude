@@ -28,14 +28,14 @@ def load_tasks(args):
     if args.tasks_file:
         try:
             raw = Path(args.tasks_file).read_text(encoding="utf-8")
-        except OSError as e:
-            raise Refusal(f"cannot read tasks file: {e}")
+        except (OSError, UnicodeDecodeError) as e:
+            raise Refusal(f"cannot read tasks file: {e}", arguments=True)
         for n, line in enumerate(raw.splitlines(), 1):
             line = line.strip()
             if line and not line.startswith("#"):
                 tasks.append(_task_from_line(n, line, args))
     if not tasks:
-        raise Refusal("batch start needs at least one --task or a --tasks-file")
+        raise Refusal("batch start needs at least one --task or a --tasks-file", arguments=True)
     return tasks
 
 
@@ -43,27 +43,27 @@ def _task_from_line(n, line, args):
     try:
         item = json.loads(line)
     except json.JSONDecodeError as e:
-        raise Refusal(f"tasks file line {n} is not valid JSON: {e}", line=clip(line, 200))
+        raise Refusal(f"tasks file line {n} is not valid JSON: {e}", line=clip(line, 200), arguments=True)
     if not isinstance(item, dict):
-        raise Refusal(f"tasks file line {n} is not a JSON object", line=clip(line, 200))
+        raise Refusal(f"tasks file line {n} is not a JSON object", line=clip(line, 200), arguments=True)
     unknown = set(item) - set(TASK_FIELDS)
     if unknown:
         # A silently ignored field is a member that quietly used the group default.
-        raise Refusal(f"tasks file line {n} has unknown field(s): {sorted(unknown)}", known_fields=list(TASK_FIELDS))
+        raise Refusal(f"tasks file line {n} has unknown field(s): {sorted(unknown)}", known_fields=list(TASK_FIELDS), arguments=True)
     for field, want in TASK_FIELD_TYPES.items():
         if field in item and not isinstance(item[field], want):
             raise Refusal(f"tasks file line {n}: {field!r} must be {want.__name__}, got {type(item[field]).__name__}",
-                          line=clip(line, 200))
+                          line=clip(line, 200), arguments=True)
     if any(not isinstance(i, str) for i in item.get("image") or []):
-        raise Refusal(f"tasks file line {n}: 'image' must be a list of paths", line=clip(line, 200))
+        raise Refusal(f"tasks file line {n}: 'image' must be a list of paths", line=clip(line, 200), arguments=True)
     item.setdefault("kind", "start")
     if item["kind"] not in ("start", "resume"):
         raise Refusal(f"tasks file line {n}: kind must be start or resume"
                       + ("; for a review use kind 'start' with sandbox 'read-only'" if item["kind"] == "review" else ""),
-                      got=item["kind"])
+                      got=item["kind"], arguments=True)
     # Under --resume-from the target comes from the pairing, so an unnamed resume is normal there.
     if item["kind"] == "resume" and not item.get("resume") and not getattr(args, "resume_from", None):
-        raise Refusal(f"tasks file line {n}: kind 'resume' needs a 'resume' field naming a run id or thread id")
+        raise Refusal(f"tasks file line {n}: kind 'resume' needs a 'resume' field naming a run id or thread id", arguments=True)
     return item
 
 
@@ -101,4 +101,4 @@ def check_task_settings(tasks, args, runs_dir):
                 check_model_effort(a["model"], a["effort"], catalog=catalog,
                                    model_source=a["model_source"], effort_source=a["effort_source"])
             except Refusal as e:
-                raise Refusal(f"task {n}: {e.error}", **e.fields) from None
+                raise Refusal(f"task {n}: {e.error}", arguments=e.arguments, **e.fields) from None

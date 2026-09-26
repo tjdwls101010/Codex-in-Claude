@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -28,11 +29,10 @@ class OutputFrame(BridgeCase):
                 json.loads(p.stdout)
         self.assertIn("error", json.loads(refused.stdout))
 
-    def test_an_unparseable_command_line_is_argparse_usage_on_stderr(self):
+    def test_an_unparseable_command_line_is_one_json_line_too(self):
         p = self.bridge_raw("start", "--no-such-flag", "x")
-        self.assertEqual(p.returncode, 2)
-        self.assertEqual(p.stdout, "")
-        self.assertIn("unrecognized arguments", p.stderr)
+        self.assertEqual((p.returncode, p.stderr), (2, ""))
+        self.assertIn("unrecognized arguments", json.loads(p.stdout)["error"])
 
     def test_a_reader_that_went_away_ends_the_command_quietly(self):
         # A caller that pipes into `head` closes the pipe early; that is not an error worth a traceback, for a reply or a refusal.
@@ -66,6 +66,111 @@ class OutputFrame(BridgeCase):
         self.assertRegex(lines[-1], r"^group\.completed group=g done=2 failed=0$")
 
 
+class ExitCodes(BridgeCase):
+    """0 success; 2 the command line itself must change, answered as JSON with the `--help` to read; 1 the registry's state refused or the run failed; 3 `doctor` found a blocker."""
+
+    def help_for(self, *words):
+        return " ".join(["uv run", f'"{ENTRY}"', *words, "--help"])
+
+    def refused(self, *args, rc, **kw):
+        p = self.bridge_raw(*args, **kw)
+        self.assertEqual(p.returncode, rc, p.stdout + p.stderr)
+        self.assertEqual(p.stderr, "")
+        lines = p.stdout.splitlines()
+        self.assertEqual(len(lines), 1, p.stdout)
+        out = json.loads(lines[0])
+        self.assertIn("error", out)
+        return out
+
+    def test_a_command_line_that_does_not_parse_is_json_naming_the_help_to_read(self):
+        for args, words in ((("start", "--no-such-flag", "x"), ("start",)),
+                            (("batch", "start", "--no-such-flag"), ("batch", "start")),
+                            (("resume", "--no-such-flag", "r", "x"), ("resume",)),
+                            (("no-such-command",), ())):
+            with self.subTest(args=args):
+                self.assertEqual(self.refused(*args, rc=2)["help"], self.help_for(*words))
+
+    def test_help_still_prints_and_succeeds(self):
+        p = self.bridge_raw("status", "--help")
+        self.assertEqual(p.returncode, 0)
+        self.assertIn("usage:", p.stdout)
+
+    def test_a_command_line_that_must_change_is_2_with_its_help(self):
+        cases = [(("status", "--follow"), ("status",)),
+                 (("log", "--group", "g", "--since", "0"), ("log",)),
+                 (("start", "   "), ("start",)),
+                 (("start", "--schema", self.tmp / "nope.json", "x"), ("start",)),
+                 (("resume", "--sandbox", "read-only"), ("resume",)),
+                 (("batch", "start", "--group", "a/b", "--task", "x"), ("batch", "start")),
+                 (("batch", "start", "--group", "g", "--base", "HEAD", "--task", "x"), ("batch", "start"))]
+        for args, words in cases:
+            with self.subTest(args=args):
+                self.assertEqual(self.refused(*args, rc=2)["help"], self.help_for(*words))
+        self.assertEqual(self.run_dirs(), [])
+
+    def test_an_input_file_that_is_not_utf8_is_2_with_its_help(self):
+        bad = self.tmp / "bad.txt"
+        bad.write_bytes(b"\xff\xfe not utf-8")
+        self.assertEqual(self.refused("start", "--prompt-file", bad, rc=2)["help"], self.help_for("start"))
+        self.assertEqual(self.refused("batch", "start", "--group", "g", "--tasks-file", bad, rc=2)["help"],
+                         self.help_for("batch", "start"))
+        # Python decodes stdin by a policy the environment picks (a C locale escapes bad bytes instead of failing), so both are driven.
+        for policy in ("utf-8:strict", "utf-8:surrogateescape"):
+            p = subprocess.run([sys.executable, str(ENTRY), "start", "-"], cwd=str(self.project),
+                               env={**self.env, "PYTHONIOENCODING": policy},
+                               input=b"\xff\xfe not utf-8", capture_output=True, timeout=60)
+            self.assertEqual((p.returncode, json.loads(p.stdout).get("help")), (2, self.help_for("start")), policy)
+        self.assertEqual(self.run_dirs(), [])
+
+    def test_a_refusal_by_the_registry_is_1_without_help(self):
+        for args in (("status", "--run", "no-such-run"), ("result", "--group", "no-such-group"),
+                     ("resume", "no-such-run", "x")):
+            with self.subTest(args=args):
+                self.assertNotIn("help", self.refused(*args, rc=1))
+
+
+class TheNextStep(BridgeCase):
+    """A detached run announces nothing, so every reply that starts work names the follower to run in the background, written out whole the way the pre-approval matches it."""
+
+    def follow(self, *words):
+        return {"command": " ".join(["uv run", f'"{ENTRY}"', *words]), "run_in_background": True}
+
+    def test_start_and_resume_name_the_follower_of_the_run_they_made(self):
+        out = self.bridge("start", "x")
+        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow"))
+        self.wait_state(out["run_id"])
+        again = self.bridge("resume", out["run_id"], "y")
+        self.assertEqual(again["next"], self.follow("log", "--run", again["run_id"], "--follow"))
+        self.wait_state(again["run_id"])
+        last = self.bridge("resume", "--last", "z")
+        self.assertEqual(last["next"], self.follow("log", "--run", last["run_id"], "--follow"))
+
+    def test_a_batch_names_the_follower_of_its_group(self):
+        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b")
+        self.assertEqual(out["next"], self.follow("status", "--group", "g", "--follow"))
+
+    def test_a_batch_that_started_nothing_has_nothing_to_follow(self):
+        tf = self.tasks_file({"prompt": "a", "schema": str(self.tmp / "nope.json")})
+        out = self.bridge("batch", "start", "--group", "g", "--tasks-file", tf)
+        self.assertEqual(out["spawned"], 0)
+        self.assertNotIn("next", out)
+
+    def test_the_registry_named_on_the_command_line_travels_with_it(self):
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        out = self.bridge("start", "--project", self.project, "x", cwd=elsewhere)
+        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow", "--project", str(self.project)))
+
+    def test_the_command_it_names_runs_to_the_end(self):
+        if not shutil.which("uv"):
+            self.skipTest("uv is not on PATH, and the command it names is a `uv run`")
+        out = self.bridge("start", "x")
+        p = subprocess.run(out["next"]["command"], shell=True, cwd=str(self.project), env=self.env,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertRegex(p.stdout.splitlines()[-2], rf"^run\.completed run={re.escape(out['run_id'])} exit=0$")
+
+
 class SelectorsAreExclusive(BridgeCase):
     """Two selectors name different things; honouring one silently drops the other."""
 
@@ -85,7 +190,7 @@ class SelectorsAreExclusive(BridgeCase):
                  ("stop", "--group", "g", "--all")]
         for args in cases:
             with self.subTest(args=args):
-                self.assertIn("error", self.bridge(*args, rc=1))
+                self.assertIn("not allowed with", self.bridge(*args, rc=2)["error"])
 
     def test_log_run_and_group_are_refused_by_the_parser(self):
         p = self.bridge_raw("log", "--run", self.run_id, "--group", "g")
@@ -94,7 +199,7 @@ class SelectorsAreExclusive(BridgeCase):
     def test_stop_and_result_need_a_target(self):
         for cmd in ("stop", "result"):
             with self.subTest(cmd=cmd):
-                self.assertIn("--run", self.bridge(cmd, rc=1)["error"])
+                self.assertIn("--run", self.bridge(cmd, rc=2)["error"])
 
     def test_status_all_is_a_cap_not_a_selector(self):
         self.assertEqual(self.bridge("status", "--run", self.run_id, "--all")["runs"][0]["run_id"], self.run_id)
@@ -118,7 +223,7 @@ class FlagsThatWouldDecideNothing(BridgeCase):
                  ("batch", "start", "--group", "h", "--base", "HEAD", "--task", "x")]
         for args in cases:
             with self.subTest(args=args):
-                self.assertIn("error", self.bridge(*args, rc=1))
+                self.assertIn("error", self.bridge(*args, rc=2))
         self.assertEqual(self.bridge("status")["groups"], ["g"], "a refused batch must not claim its name")
 
 
@@ -181,9 +286,7 @@ class WhatReachesCodex(BridgeCase):
         self.assertTrue(rec["argv"][-1].endswith("compare them"))
 
     def test_the_tier_flags_are_one_choice(self):
-        p = self.bridge_raw("start", "--priority", "--no-priority", "x")
-        self.assertEqual(p.returncode, 2)
-        self.assertIn("not allowed with", p.stderr)
+        self.assertIn("not allowed with", self.bridge("start", "--priority", "--no-priority", "x", rc=2)["error"])
 
     def test_a_prompt_after_the_terminator_is_only_a_prompt(self):
         out, rec = self.started("--priority", "--", "--no-priority")
@@ -219,15 +322,16 @@ class WhatReachesCodex(BridgeCase):
         self.assertTrue(rec["argv"][-1].endswith("from stdin"))
 
     def test_an_empty_prompt_is_refused_before_anything_is_claimed(self):
-        self.assertIn("prompt", self.bridge("start", "   ", rc=1)["error"])
+        self.assertIn("prompt", self.bridge("start", "   ", rc=2)["error"])
         self.assertEqual(self.run_dirs(), [])
 
-    def test_missing_inputs_are_refused_before_spawning(self):
+    def test_missing_inputs_are_refused_before_anything_is_claimed(self):
         for args in (("--schema", self.tmp / "nope.json"), ("--image", self.tmp / "nope.png"),
                      ("--cwd", self.tmp / "nowhere")):
             with self.subTest(args=args):
-                self.bridge("start", *args, "x", rc=1)
+                self.bridge("start", *args, "x", rc=2)
         self.assertEqual(self.runs_invoked(), [])
+        self.assertEqual(self.run_dirs(), [], "a refused run leaves no directory behind, where no listing would show it")
 
 
 class RemovedSurface(BridgeCase):
@@ -238,9 +342,7 @@ class RemovedSurface(BridgeCase):
                      ("status", "--include-external"),
                      ("batch", "start", "--group", "g", "--resume-from", "p", "--as-ready", "--task", "x")):
             with self.subTest(args=args):
-                p = self.bridge_raw(*args)
-                self.assertEqual(p.returncode, 2, p.stdout)
-                self.assertIn("unrecognized arguments", p.stderr)
+                self.assertIn("unrecognized arguments", self.bridge(*args, rc=2)["error"])
         self.assertFalse(self.runs_dir.exists())
 
     def test_last_never_reaches_past_the_registry(self):

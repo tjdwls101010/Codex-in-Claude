@@ -1,6 +1,6 @@
 """Installs: the skill reached through a symlink, from a directory that has nothing to do with the project, must run exactly as it does in place.
 
-A user-level install is `~/.claude/skills/codex -> <checkout>`, so the path the caller types is the link while the running script's own path is the target. The launcher exits as soon as it has a handle; a detached supervisor it re-executes finishes the run.
+A user-level install is `~/.claude/skills/codex -> <checkout>`, so the path the caller types is the link while the running script's own path is the target. The skill is called the way SKILL.md calls it, through `uv run`, whose environment the detached supervisor re-executes into; the launcher exits as soon as it has a handle and the supervisor finishes the run.
 """
 
 from __future__ import annotations
@@ -8,8 +8,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
-import sys
 import unittest
 
 from support.harness import SCRIPTS, BridgeCase, ENTRY, alive, engine, wait_until
@@ -20,6 +20,8 @@ SKILL_MD = ENTRY.parent.parent / "SKILL.md"
 class ThroughASymlink(BridgeCase):
 
     def setUp(self):
+        if not shutil.which("uv"):
+            self.skipTest("uv is not on PATH, and the skill is only ever called through `uv run`")
         super().setUp()
         skills = self.tmp / "홈 디렉터리" / ".claude" / "skills"
         skills.mkdir(parents=True)
@@ -28,8 +30,13 @@ class ThroughASymlink(BridgeCase):
         self.elsewhere = self.tmp / "unrelated"
         self.elsewhere.mkdir()
 
+    def uv(self, *args, **kw):
+        """The call SKILL.md teaches, through the link, from a directory unrelated to the project."""
+        return subprocess.run(["uv", "run", str(self.linked), *map(str, args)], cwd=str(self.elsewhere), env=self.env,
+                              capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=90, **kw)
+
     def test_a_run_started_through_the_link_is_finished_by_its_detached_supervisor(self):
-        launcher = subprocess.Popen([sys.executable, str(self.linked), "start", "--project", str(self.project),
+        launcher = subprocess.Popen(["uv", "run", str(self.linked), "start", "--project", str(self.project),
                                      "--label", "via-link", "x"],
                                     cwd=str(self.elsewhere), env={**self.env, "FAKE_CODEX_HANG": "2"},
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
@@ -43,9 +50,7 @@ class ThroughASymlink(BridgeCase):
         self.assertEqual(self.runs_invoked()[-1]["cwd"], str(self.project))
 
         def finished():
-            p = self.bridge_raw("result", "--project", self.project, "--run", out["run_id"],
-                                entry=self.linked, cwd=self.elsewhere)
-            res = json.loads(p.stdout)
+            res = json.loads(self.uv("result", "--project", self.project, "--run", out["run_id"]).stdout)
             return res if res["state"] == "completed" else None
 
         res = wait_until(finished, timeout=30, interval=0.2)
@@ -53,8 +58,7 @@ class ThroughASymlink(BridgeCase):
         self.assertEqual(res["message"], "OK")
 
     def test_doctor_through_the_link_reports_the_installed_skill(self):
-        p = self.bridge_raw("doctor", "--project", self.project, entry=self.linked, cwd=self.elsewhere)
-        rep = json.loads(p.stdout)
+        rep = json.loads(self.uv("doctor", "--project", self.project).stdout)
         self.assertEqual(rep["project"], str(self.project))
         self.assertEqual(rep["skill_dir"], str(ENTRY.parent.parent.resolve()))
 
@@ -66,7 +70,7 @@ class TheSkillTextPointsAtRealThings(unittest.TestCase):
         self.text = SKILL_MD.read_text()
         front, self.body = self.text.split("\n---\n", 1)
         self.allowed = re.findall(r"^\s+- Bash\((.*)\)$", front, re.M)
-        parser = engine("cli.parser").build_parser()
+        parser = engine("cli").build_parser()
         self.flags = {}
 
         def walk(p, path):
@@ -84,7 +88,7 @@ class TheSkillTextPointsAtRealThings(unittest.TestCase):
         self.assertTrue(pattern.endswith(" *"))
         prefix = pattern[:-2]
         self.assertIn(f"`{prefix} <command>", self.body, "the call the text teaches is the one pre-approved")
-        self.assertEqual(prefix, f'python3 "${{CLAUDE_SKILL_DIR}}/scripts/{ENTRY.name}"')
+        self.assertEqual(prefix, f'uv run "${{CLAUDE_SKILL_DIR}}/scripts/{ENTRY.name}"')
         self.assertTrue((SKILL_MD.parent / "scripts" / ENTRY.name).is_file())
 
     def test_every_command_and_flag_named_exists(self):

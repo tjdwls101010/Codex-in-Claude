@@ -1,4 +1,4 @@
-"""Describing runs and groups: the status row, the turn-failure excerpt, and whether a row or a group is still live."""
+"""Describing runs and groups: the status row and its summary, the turn-failure excerpt, whether a row or a group is still live, and a note for runs no listing can show."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from codex.events import scan_progress
-from core.registry import TERMINAL_STATES, is_live, reap, still_writing
-from util import clip
+from codex.codex_cli.events import scan_progress
+from codex.registry.runs import TERMINAL_STATES, is_live, reap, still_writing, unreadable_runs
+from codex.util import clip
 
 # Advisory: a run idle this long is shown `stalled`, never killed for it. One long command is legitimately silent, which is why `in_progress_item` is reported beside it.
 STALL_SECONDS = 300
@@ -121,3 +121,21 @@ def group_snapshot(rows, unstarted=0):
     else:
         state = "completed"
     return running, done, failed, state
+
+
+def summary_row(row):
+    """What the default listing shows of a run, from a row built with a 160-character excerpt. `--run`, `--thread` and `--group` return the whole row."""
+    out = {k: row.get(k) for k in ("run_id", "label", "state", "group", "idle_seconds")}
+    out["last_agent_message"] = row.get("last_agent_message")
+    if row.get("codex_still_running"):
+        out["codex_still_running"] = True
+    return out
+
+
+def note_unreadable(out: dict, runs_dir):
+    """Name runs whose meta.json will not parse, so a listing they are missing from does not look complete."""
+    bad = unreadable_runs(runs_dir)
+    if bad:
+        out["runs_unreadable"] = len(bad)
+        out["unreadable"] = bad
+    return out

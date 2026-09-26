@@ -20,7 +20,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO / ".claude" / "skills" / "codex"
 # The one place the entrypoint is named. CODEX_BRIDGE_ENTRY points the whole suite at another copy of the scripts, which is how a deliberately broken engine is checked to turn tests red without touching the real one.
-ENTRY = Path(os.environ.get("CODEX_BRIDGE_ENTRY") or SKILL_DIR / "scripts" / "cli_codex.py")
+ENTRY = Path(os.environ.get("CODEX_BRIDGE_ENTRY") or SKILL_DIR / "scripts" / "cli.py")
 SUPPORT = Path(__file__).resolve().parent
 FAKE_CODEX_DIR = SUPPORT / "fake_codex"
 FIXTURES = SUPPORT / "fixtures"
@@ -30,7 +30,7 @@ SCRIPTS = ENTRY.parent
 
 
 def engine(module):
-    """Import an engine module (`"core.settings"`, `"codex.argv"`, …) from the scripts under test, for the pure functions and the races that are tested below the CLI."""
+    """Import an engine module (`"codex.runs.settings"`, `"codex.codex_cli.argv"`, …) from the scripts under test, for the pure functions and the races that are tested below the CLI."""
     if str(SCRIPTS) not in sys.path:
         sys.path.insert(0, str(SCRIPTS))
     return importlib.import_module(module)

@@ -10,21 +10,21 @@ import sys
 import time
 from pathlib import Path
 
-from codex.argv import SANDBOX_MODES, apply_preamble, build_argv
-from codex.catalog import check_model_effort, model_catalog
-from codex.config import user_defaults
-from codex.events import first_thread_id
-from core import settings
-from core.registry import (
+from codex.codex_cli.argv import SANDBOX_MODES, WRITING_SANDBOXES, apply_preamble, build_argv
+from codex.codex_cli.catalog import check_model_effort, model_catalog
+from codex.codex_cli.config import user_defaults
+from codex.codex_cli.events import first_thread_id
+from codex.errors import Refusal
+from codex.git.repo import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted
+from codex.git.worktree import add as worktree_add
+from codex.registry.locks import thread_turn_lock
+from codex.registry.runs import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, is_live, iter_runs, read_meta, reap,
-    resolve_project, resolve_runs_dir, still_writing, thread_turn_lock, unreadable_runs,
-    write_meta,
+    resolve_runs_dir, still_writing, unreadable_runs, write_meta,
 )
-from core.supervisor import THREAD_ID_WAIT, spawn_supervised
-from util import clip, fail, git_toplevel, is_within, now_iso
-from worktree import add as worktree_add, uncommitted_count as worktree_uncommitted
-
-WRITING_SANDBOXES = ("workspace-write", "danger-full-access")
+from codex.runs import settings
+from codex.runs.supervisor import THREAD_ID_WAIT, spawn_supervised
+from codex.util import clip, is_within, now_iso
 
 
 def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
@@ -52,7 +52,7 @@ def read_prompt(args) -> str:
         try:
             return Path(args.prompt_file).read_text(encoding="utf-8")
         except OSError as e:
-            fail(f"cannot read prompt file: {e}")
+            raise Refusal(f"cannot read prompt file: {e}")
     p = getattr(args, "prompt", None)
     if p == "-" or p is None:
         if not sys.stdin.isatty():
@@ -62,24 +62,6 @@ def read_prompt(args) -> str:
         if p is None:
             return ""
     return p or ""
-
-
-def resolve_implicit_run(candidates):
-    """Pick a run nobody named, from `candidates` in `iter_runs` order: the one live run, else the newest with a note saying so. Two or more live runs are refused with the candidates listed, because guessing would hand the caller another run's label and sandbox."""
-    reaped = [(rd, reap(rd, m)) for rd, m in candidates]
-    live = [(rd, m) for rd, m in reaped if is_live(m)]
-    if len(live) == 1:
-        rd, m = live[0]
-        return rd, m, "the only non-terminal run"
-    if len(live) >= 2:
-        fail("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
-             candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
-                          "state": m.get("state"), "sandbox": m.get("sandbox"),
-                          "thread_id": m.get("thread_id")} for rd, m in live])
-    if not reaped:
-        return None, None, None
-    rd, m = reaped[-1]
-    return rd, m, "the newest run (no non-terminal runs)"
 
 
 def thread_of_unreadable(run_dir):
@@ -103,13 +85,13 @@ def refuse_concurrent_turn(runs_dir, thread_id, force):
              **({"codex_still_running": True} if still_writing(m) else {})}
             for m in live if is_live(m)]
     if live:
-        fail("thread already has a live turn; wait for it, or pass --force to run a second turn at once", thread_id=thread_id, live_runs=live)
+        raise Refusal("thread already has a live turn; wait for it, or pass --force to run a second turn at once", thread_id=thread_id, live_runs=live)
     blind = [name for name in unreadable_runs(runs_dir)
              if thread_of_unreadable(runs_dir / name) in (None, thread_id)]
     if blind:
-        fail("cannot tell whether this thread is free: the runs in `unreadable_runs` have a meta.json that will not parse and may be on this thread; repair or remove them, or pass --force",
-             thread_id=thread_id,
-             unreadable_runs=[{"run_id": name, "run_dir": str(runs_dir / name)} for name in blind])
+        raise Refusal("cannot tell whether this thread is free: the runs in `unreadable_runs` have a meta.json that will not parse and may be on this thread; repair or remove them, or pass --force",
+                      thread_id=thread_id,
+                      unreadable_runs=[{"run_id": name, "run_dir": str(runs_dir / name)} for name in blind])
 
 
 def resolve_settings(args, *, kind, base, project, thread_ref):
@@ -117,16 +99,16 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     cwd = (Path(args.cwd).expanduser().resolve() if getattr(args, "cwd", None)
            else (Path(base["cwd"]) if base else project))
     if not cwd.is_dir():
-        fail(f"cwd does not exist: {cwd}")
+        raise Refusal(f"cwd does not exist: {cwd}")
 
     prompt = read_prompt(args)
     if not prompt.strip():
-        fail("a prompt is required (positional, --prompt-file, or stdin via '-')")
+        raise Refusal("a prompt is required (positional, --prompt-file, or stdin via '-')")
 
     if kind == "resume" and not thread_ref:
         # A bare `codex exec resume` would fail after this command already reported a run started.
-        fail("nothing to resume: that run has no thread id; `status --run` shows why",
-             run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
+        raise Refusal("nothing to resume: that run has no thread id; `status --run` shows why",
+                      run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
     r = settings.resolve(sandbox=args.sandbox, model=args.model, effort=args.effort,
                          priority=getattr(args, "priority", None),
@@ -135,7 +117,7 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     adopted = r["adopted"]
     # Guarded because the catalog lookup is a subprocess on the path of every run.
     if adopted["model"] or adopted["effort"]:
-        check_model_effort(adopted["model"], adopted["effort"], catalog=model_catalog(), fail=fail,
+        check_model_effort(adopted["model"], adopted["effort"], catalog=model_catalog(),
                            model_source=adopted["model_source"], effort_source=adopted["effort_source"])
 
     return {"cwd": cwd, "prompt": prompt, "isolated": r["isolated"],
@@ -150,12 +132,12 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
         # A thread this registry never recorded has no sandbox to re-assert, and inventing a write policy cannot be undone. Skipped when a run is unreadable: "never recorded" is a claim about the whole registry.
         if (kind == "resume" and base is None and not getattr(args, "sandbox", None)
                 and not unreadable_runs(runs_dir)):
-            fail(f"thread {thread_ref} is not in this registry, so its sandbox was never recorded; pass --sandbox, which is recorded from then on",
-                 thread=thread_ref, sandbox=sorted(SANDBOX_MODES))
+            raise Refusal(f"thread {thread_ref} is not in this registry, so its sandbox was never recorded; pass --sandbox, which is recorded from then on",
+                          thread=thread_ref, sandbox=sorted(SANDBOX_MODES))
         try:
             run_id, run_dir = claim_run_dir(runs_dir, args.label or (base.get("label") if base else None))
         except FileExistsError as e:
-            fail(str(e), runs_dir=str(runs_dir))
+            raise Refusal(str(e), runs_dir=str(runs_dir))
 
         meta = {
             "run_id": run_id,
@@ -195,10 +177,10 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
         if base and args.sandbox and args.sandbox != base["sandbox"]:
             meta["sandbox_changed_from"] = base["sandbox"]
         if meta["schema_path"] and not Path(meta["schema_path"]).exists():
-            fail(f"schema file not found: {meta['schema_path']}")
+            raise Refusal(f"schema file not found: {meta['schema_path']}")
         for img in meta["images"]:
             if not Path(img).exists():
-                fail(f"image not found: {img}")
+                raise Refusal(f"image not found: {img}")
         write_meta(run_dir, meta)
     return run_id, run_dir, meta
 
@@ -208,7 +190,7 @@ def cut_worktree(run_dir: Path, meta: dict, source: Path, worktree_base: str):
     wt = run_dir / "wt"
     ok, err = worktree_add(source, wt, worktree_base)
     if not ok:
-        fail(f"could not create the worktree for this member: {err}", base=worktree_base, path=str(wt))
+        raise Refusal(f"could not create the worktree for this member: {err}", base=worktree_base, path=str(wt))
     wt_info = {"path": str(wt), "base": worktree_base,
                "uncommitted_in_caller_tree": worktree_uncommitted(source), "source": str(source)}
     meta["cwd"] = str(wt)

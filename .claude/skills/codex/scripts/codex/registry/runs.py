@@ -1,22 +1,7 @@
-"""The run registry: `<project>/.codex-runs/<run_id>/`.
-
-    .codex-runs/
-    ├── .gitignore            # `*`, so the registry never lands in the user's history
-    ├── .groups/<name>.json   # batch manifests
-    ├── .locks/               # per-thread turn locks
-    └── <run_id>/
-        ├── meta.json         # the run's settings and lifecycle
-        ├── events.jsonl      # `codex exec --json` stdout
-        ├── stderr.log
-        └── last-message.txt  # from -o
-
-`codex exec resume` inherits no per-invocation setting from the thread it continues, so this registry is the only place a run's intended sandbox, model and effort exist at all.
-"""
+"""Run records: one directory per run, its `meta.json` the run's settings and lifecycle, and the one liveness question every view and guard asks."""
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
 import json
 import os
 import re
@@ -25,7 +10,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from util import git_toplevel, nfc, now_iso, pid_alive
+from codex.registry.locks import meta_lock, write_json_atomic
+from codex.errors import Refusal
+from codex.util import now_iso, pid_alive
 
 TERMINAL_STATES = ("completed", "failed", "interrupted", "orphaned", "timed_out")
 
@@ -47,11 +34,6 @@ def is_live(meta: dict) -> bool:
 
 
 # -- locating things --------------------------------------------------------
-
-def resolve_project(explicit=None) -> Path:
-    base = Path(explicit).expanduser().resolve() if explicit else Path.cwd().resolve()
-    return git_toplevel(base) or base
-
 
 def resolve_runs_dir(project: Path, explicit=None) -> Path:
     if explicit:
@@ -87,57 +69,6 @@ def claim_run_dir(runs_dir: Path, label=None, attempts: int = 5):
     raise FileExistsError(f"could not claim a free run id under {runs_dir} in {attempts} attempts")
 
 
-# -- locks and atomic writes --------------------------------------------------
-
-@contextlib.contextmanager
-def _flock_path(lock: Path):
-    """Hold an exclusive lock on `lock` for the body.
-
-    Failing to take the lock degrades to unlocked access, so a registry on a filesystem that cannot lock still works; an error raised by the body is the body's and propagates.
-    """
-    try:
-        lock.parent.mkdir(parents=True, exist_ok=True)
-        fh = lock.open("a+")
-    except OSError:
-        yield
-        return
-    try:
-        with contextlib.suppress(OSError):
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        yield
-    finally:
-        with contextlib.suppress(Exception):
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        with contextlib.suppress(Exception):
-            fh.close()
-
-
-def thread_turn_lock(runs_dir: Path, thread_ref):
-    """Serialise "is this thread free?" with publishing the run that answers it, across processes.
-
-    Without it two resumes a fraction of a second apart both see an idle thread and start two turns on one rollout file. Held only across check-and-publish, never across the turn.
-    """
-    if not thread_ref:
-        return contextlib.nullcontext()
-    return _flock_path(runs_dir / ".locks" / (nfc(str(thread_ref)).replace("/", "_") + ".lock"))
-
-
-def _meta_lock(run_dir: Path):
-    """Serialise read-modify-write on one meta.json. The lock file is separate because locking the file being replaced would lock an inode that is no longer current."""
-    return _flock_path(run_dir / ".meta.lock")
-
-
-def write_json_atomic(path: Path, obj):
-    """A reader sees the old file or the new one, never half of one. The staging name is unique per writer: a shared one lets two writers truncate each other."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
-    try:
-        tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
-    finally:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-
-
 # -- meta.json ----------------------------------------------------------------
 
 def read_meta(run_dir: Path):
@@ -158,7 +89,7 @@ def write_meta(run_dir: Path, meta: dict):
 
 def update_meta(run_dir: Path, **fields):
     """Merge `fields` into meta.json under the run's lock."""
-    with _meta_lock(run_dir):
+    with meta_lock(run_dir):
         meta = read_meta(run_dir) or {}
         meta.update(fields)
         write_meta(run_dir, meta)
@@ -167,7 +98,7 @@ def update_meta(run_dir: Path, **fields):
 
 def update_meta_if(run_dir: Path, expected_states, **fields):
     """Compare-and-set on `state`: merge only if the state on disk is still one of `expected_states`, and return what is on disk. A caller deciding from a snapshot commits this way so an outcome written in between wins."""
-    with _meta_lock(run_dir):
+    with meta_lock(run_dir):
         meta = read_meta(run_dir) or {}
         if meta.get("state") not in expected_states:
             return meta
@@ -243,3 +174,31 @@ def reap(run_dir: Path, meta: dict) -> dict:
         except OSError:
             pass
     return update_meta_if(run_dir, ACTIVE_STATES, state="orphaned", ended_at=now_iso())
+
+
+def resolve_implicit_run(candidates):
+    """Pick a run nobody named, from `candidates` in `iter_runs` order: the one live run, else the newest with a note saying so. Two or more live runs are refused with the candidates listed, because guessing would hand the caller another run's label and sandbox."""
+    reaped = [(rd, reap(rd, m)) for rd, m in candidates]
+    live = [(rd, m) for rd, m in reaped if is_live(m)]
+    if len(live) == 1:
+        rd, m = live[0]
+        return rd, m, "the only non-terminal run"
+    if len(live) >= 2:
+        raise Refusal("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
+                      candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
+                                   "state": m.get("state"), "sandbox": m.get("sandbox"),
+                                   "thread_id": m.get("thread_id")} for rd, m in live])
+    if not reaped:
+        return None, None, None
+    rd, m = reaped[-1]
+    return rd, m, "the newest run (no non-terminal runs)"
+
+
+def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
+    """"Cannot read that run" and "no such run" are different answers: the first still has an event stream on disk."""
+    if meta:
+        return
+    if run_dir is not None and meta_unreadable(run_dir):
+        raise Refusal(f"run {ref} has a meta.json that will not parse, so its state is unknown; its event stream may still be readable",
+                      run_id=run_dir.name, run_dir=str(run_dir), events=str(run_dir / "events.jsonl"))
+    raise Refusal(f"no such run: {ref}", runs_dir=str(runs_dir))

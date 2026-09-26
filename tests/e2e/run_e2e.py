@@ -47,7 +47,7 @@ def control_text(draft: str) -> str:
 def stop_runs(repo: Path):
     """Detached runs outlive the session that started them; stop them so none keeps writing into this repo or into its replacement on a rerun."""
     if (repo / ".codex-runs").exists():
-        subprocess.run(["python3", str(SKILL / "scripts" / "cli_codex.py"), "stop", "--project", str(repo), "--all"],
+        subprocess.run(["uv", "run", str(SKILL / "scripts" / "cli.py"), "stop", "--project", str(repo), "--all"],
                        capture_output=True, text=True)
 
 
@@ -79,7 +79,7 @@ def setup(out: Path, scenario: int, variant: str):
         "enabled": True, "allowUnsandboxedCommands": False, "autoAllowBashIfSandboxed": True,
         "enableWeakerNetworkIsolation": True,
         # the bridge runs outside Claude's sandbox because Codex applies its own sandbox-exec, which cannot nest; permission to run it still comes only from the skill's allowed-tools
-        "excludedCommands": ["python3 *cli_codex.py*"],
+        "excludedCommands": ["uv run *cli.py*"],
         "filesystem": {"allowWrite": [str(home)]},
         "network": {"allowedDomains": ["chatgpt.com", "*.chatgpt.com", "api.openai.com", "*.openai.com", "*.oaistatic.com"],
                     "strictAllowlist": True}}}))
@@ -90,7 +90,7 @@ def base_cmd(plugin, settings, model):
     return ["claude", "-p", "--setting-sources", "", "--strict-mcp-config", "--plugin-dir", str(plugin),
             "--settings", str(settings), "--tools", "Bash,Read,Edit,Write,Glob,Grep,Monitor,Skill",
             # a skill's allowed-tools covers only a user-typed /codex:codex; a skill the model picks itself needs the user's own permission rule, which this stands in for
-            "--allowedTools", f'Skill,Monitor,Bash(python3 "{plugin}/.claude/skills/codex/scripts/cli_codex.py" *)', "--permission-mode", "acceptEdits", "--model", model, "--output-format", "stream-json", "--verbose"]
+            "--allowedTools", f'Skill,Monitor,Bash(uv run "{plugin}/.claude/skills/codex/scripts/cli.py" *)', "--permission-mode", "acceptEdits", "--model", model, "--output-format", "stream-json", "--verbose"]
 
 
 def run_stream(cmd, repo, env, prompt, transcript, idle, cap):

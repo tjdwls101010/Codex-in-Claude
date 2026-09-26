@@ -1,17 +1,16 @@
-"""Primitives with no knowledge of runs, events or Codex: time, text, paths, JSON output, process liveness."""
+"""Primitives with no knowledge of runs, events or Codex: time, text, paths, process liveness, and where the entrypoint is."""
 
 from __future__ import annotations
 
-import contextlib
 import errno
-import json
 import os
 import re
-import subprocess
-import sys
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
+
+# The entrypoint a detached supervisor re-executes and `doctor` reports.
+ENTRY = Path(__file__).resolve().parent.parent / "cli.py"
 
 
 def now_iso() -> str:
@@ -31,47 +30,6 @@ def clip(s: str, n: int) -> str:
         return ""
     s = re.sub(r"\s+", " ", s.replace("\n", " ").replace("\r", " ")).strip()
     return s if len(s) <= n else s[:n] + f"…(+{len(s) - n} chars)"
-
-
-def emit(obj, code: int = 0):
-    """Print one line of JSON and exit. The whole CLI answers this way."""
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
-    sys.exit(code)
-
-
-class BridgeError(Exception):
-    """A `fail()` raised instead of emitted. See `failures_raise`."""
-
-    def __init__(self, msg: str, extra: dict):
-        super().__init__(msg)
-        self.msg = msg
-        self.extra = extra
-
-
-_FAIL_RAISES = False
-
-
-@contextlib.contextmanager
-def failures_raise():
-    """Inside this block `fail()` raises `BridgeError` instead of printing and exiting.
-
-    `batch start` needs it: one member failing to spawn must neither take the others with it nor print a second line of JSON. Reentrant.
-    """
-    global _FAIL_RAISES
-    prev = _FAIL_RAISES
-    _FAIL_RAISES = True
-    try:
-        yield
-    finally:
-        _FAIL_RAISES = prev
-
-
-def fail(msg: str, **extra):
-    """Errors are JSON on stdout too, so the caller parses one shape whatever happened."""
-    if _FAIL_RAISES:
-        raise BridgeError(msg, extra)
-    emit({"error": msg, **extra}, code=1)
 
 
 def pid_alive(pid) -> bool:
@@ -96,14 +54,3 @@ def is_within(path, parent) -> bool:
         return p == q or q in p.parents
     except Exception:
         return False
-
-
-def git_toplevel(path: Path):
-    try:
-        r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0 and r.stdout.strip():
-            return Path(nfc(r.stdout.strip())).resolve()
-    except Exception:
-        pass
-    return None

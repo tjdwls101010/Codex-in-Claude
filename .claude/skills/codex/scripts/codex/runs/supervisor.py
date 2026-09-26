@@ -13,18 +13,15 @@ import sys
 import time
 from pathlib import Path
 
-from codex.events import first_thread_id
-from core.registry import ACTIVE_STATES, read_meta, update_meta, update_meta_if
-from util import now_iso, pid_alive
+from codex.codex_cli.events import first_thread_id
+from codex.registry.runs import ACTIVE_STATES, read_meta, update_meta, update_meta_if
+from codex.util import ENTRY, now_iso, pid_alive
 
 # How long a new run waits for `thread.started` before handing back `thread_id: null`; `status` backfills it later.
 THREAD_ID_WAIT = 15.0
 
 # Seconds a run gets after SIGINT to flush its rollout, which is what keeps an ended run resumable, before SIGTERM.
 DEFAULT_GRACE = 5.0
-
-ENTRY = Path(__file__).resolve().parent.parent / "cli_codex.py"
-
 
 def spawn_supervised(run_dir: Path) -> int:
     """Start the run's supervisor in a new session, re-executing the entrypoint. Without a supervisor nothing would record the exit code."""

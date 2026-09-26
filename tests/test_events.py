@@ -194,10 +194,10 @@ class Show(BridgeCase):
 
 
 class FormatEvents(unittest.TestCase):
-    """`codex.events.format_events` on events built by hand, one kind at a time."""
+    """`codex.codex_cli.events.format_events` on events built by hand, one kind at a time."""
 
     def setUp(self):
-        self.events = engine("codex.events")
+        self.events = engine("codex.codex_cli.events")
 
     def lines(self, level, *events, project=None):
         return self.events.format_events(list(events), level, project)

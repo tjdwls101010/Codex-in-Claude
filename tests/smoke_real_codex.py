@@ -36,11 +36,11 @@ class RealCodex(unittest.TestCase):
                 shutil.copy(real_home / name, self.home / name)
         self.env = {**os.environ, "CODEX_HOME": str(self.home)}
         # Cleanups run last-in first-out, so a run still going after a failed assertion is stopped before its directory goes.
-        self.addCleanup(subprocess.run, ["python3", str(ENTRY), "stop", "--all", "--project", str(self.project)],
+        self.addCleanup(subprocess.run, ["uv", "run", str(ENTRY), "stop", "--all", "--project", str(self.project)],
                         cwd=self.project, env=self.env, capture_output=True)
 
     def cli(self, *args, timeout=600):
-        p = subprocess.run(["python3", str(ENTRY), *args, "--project", str(self.project)],
+        p = subprocess.run(["uv", "run", str(ENTRY), *args, "--project", str(self.project)],
                            cwd=self.project, env=self.env, capture_output=True, text=True, timeout=timeout)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return p.stdout

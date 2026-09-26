@@ -15,7 +15,7 @@ This project is particularly interested in reports involving:
 - **Sandbox or permission escalation** — a run started with `--sandbox read-only` (or under `--ignore-user-config` isolation) gaining broader filesystem or network access than it was granted, across a `resume` or otherwise.
 - **Process-group / `stop` handling** — `stop` signaling or affecting a process it doesn't own.
 - **Run registry (`.codex-runs/`) tampering** — anything that lets a run's recorded settings be read or altered by another process or session in a way that changes what gets re-asserted on the next turn.
-- **Command injection** in how `codex_bridge.py` constructs or passes arguments to the underlying `codex` CLI.
+- **Command injection** in how `scripts/cli.py` constructs or passes arguments to the underlying `codex` CLI.
 
 ## What to Include
 
@@ -23,7 +23,7 @@ To help triage quickly, include:
 
 - The command(s) you ran, including flags (redact anything sensitive).
 - What you expected to happen versus what actually happened.
-- The `codex_bridge.py doctor` output, if relevant (CLI version, sandbox config, resolved paths).
+- The `doctor` output, if relevant (CLI version, sandbox config, resolved paths).
 - Whether the issue is reproducible, and the minimal steps to reproduce it.
 
 ## Response Expectations

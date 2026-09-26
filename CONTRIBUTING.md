@@ -1,6 +1,6 @@
 # Contributing to Codex in Claude
 
-Thanks for considering a contribution. This project is a Claude Code plugin — a single skill (`codex`) backed by a Python standard-library CLI (`scripts/cli_codex.py`) — so most contributions fall into a few clear categories: bug fixes in the CLI, new Codex CLI surface area, documentation, and test coverage.
+Thanks for considering a contribution. This project is a Claude Code plugin — a single skill (`codex`) backed by a Python standard-library CLI (`scripts/cli.py`, run with `uv run`) — so most contributions fall into a few clear categories: bug fixes in the CLI, new Codex CLI surface area, documentation, and test coverage.
 
 ## 1. Scope
 
@@ -24,7 +24,7 @@ Please open an issue or discussion before starting on:
 
 ## 3. Development Setup
 
-Clone the repository and make sure the requirements in the [README](README.md#3-quick-start) are met (Python 3.10+, and the [Codex CLI](https://developers.openai.com/codex/cli) authenticated if you'll run the integration tier). There's no build or install step — `cli_codex.py` runs directly. Under it, `cli/` is the command surface, `core/` the registry, settings and run supervision, and `codex/` the formats the Codex CLI owns (argv, config, model catalog, events).
+Clone the repository and make sure the requirements in the [README](README.md#3-quick-start) are met (uv, Python 3.11+ on `PATH` for the test suite, and the [Codex CLI](https://developers.openai.com/codex/cli) authenticated if you'll run the integration tier). There's no build or install step — `uv run scripts/cli.py` runs it directly. `scripts/` holds two names: `cli.py`, the whole command surface (parser, `--help`, dispatch, output and exit codes), and `codex/`, the one package. In it, each feature has a subpackage (`runs`, `batch`, `observe`, and `doctor.py`), so does each system someone else owns (`codex_cli` for the formats the Codex CLI owns, `git`), and the run registry has `registry`. Imports run one way, from features to systems and the registry to shared helpers (`errors.py`, `util.py`); `batch` using `runs` is the one allowed edge between features.
 
 To develop against a local checkout instead of a plugin install, symlink the skill:
 
@@ -40,7 +40,7 @@ ln -s /path/to/Codex-in-Claude/.claude/skills/codex ~/.claude/skills/codex
 python3 -m unittest discover -s tests
 ```
 
-It drives the real `cli_codex.py` as a subprocess, with a fake `codex` executable (`tests/support/fake_codex/codex`) first on `PATH` that replays recorded event streams from `tests/support/fixtures/`. Process spawning, process-group signalling, argv composition and the on-disk registry are all tested for real; only the model is faked. A few tests call pure functions directly (settings precedence, argv, event formatting), race several real processes against one registry, or check the package layering and every `--help`. Always run it before opening a PR.
+It drives the real `cli.py` as a subprocess, with a fake `codex` executable (`tests/support/fake_codex/codex`) first on `PATH` that replays recorded event streams from `tests/support/fixtures/`. Process spawning, process-group signalling, argv composition and the on-disk registry are all tested for real; only the model is faked. A few tests call pure functions directly (settings precedence, argv, config, event formatting), race several real processes against one registry, or check every `--help`; `tests/test_structure.py` checks the tree above — the two names in `scripts/`, where every module sits, the import direction, and that nothing edits `sys.path` — so a change that breaks the layout fails there. Always run it before opening a PR.
 
 **S5 — the real Codex CLI, consumes tokens:**
 
@@ -56,7 +56,7 @@ Starts, follows, collects and resumes a real thread in a throwaway repository an
 python3 tests/e2e/run_e2e.py --scenario 1 --variant draft --out /tmp/e2e
 ```
 
-Runs one scenario from `tests/e2e/scenarios.md` in a session that loads only this skill, either as written or as a control without its judgement text, and saves a digest of every tool call. Run it when you change `SKILL.md`, and compare the variants against the scenario's pass criteria.
+Runs one scenario from `tests/e2e/scenarios.md` in a session that loads only this skill — as written (`draft`), as a control without its judgement text (`control`), or as released in v0.8.0 (`baseline`) — and saves a digest of every tool call, ending in a `METRICS` line. Run it when you change `SKILL.md`, and compare the variants against the scenario's pass criteria and each other's metrics.
 
 **Plugin validation:**
 

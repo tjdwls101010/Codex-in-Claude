@@ -30,7 +30,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 ## 2. Features
 
-- **Detached runs** — `start` returns a `run_id`/`thread_id` immediately instead of blocking, and `log --follow` in a background call tells Claude when the run ends.
+- **Detached runs** — `start` returns a `run_id`/`thread_id` immediately instead of blocking, with `next`: the follower to run in a background call, which tells Claude when the run ends.
 - **Sandbox stability across turns** — every `resume` re-asserts the sandbox, model, and reasoning effort its thread was created with.
 - **Your Codex defaults survive isolation** — `--ignore-user-config` drops `config.toml` whole, so an isolated run would lose the model, reasoning effort and Fast mode you configured and take the server's defaults instead. Three keys are read back out of the file and re-injected; an explicit flag still wins, and a resumed thread re-asserts what it recorded rather than what the file says now. `sandbox_mode` is deliberately not one of them.
 - **A filtered live event log** — four verbosity levels (`compact` by default, `normal`, `full`, `raw`); the default reports each command's output by size, and `show` fetches the one you need.
@@ -46,8 +46,8 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 **Prerequisites**
 
 - [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.156.1`, already authenticated (`codex login`)
-- Python 3.10+ — standard library only, no extra packages to install
-- Claude Code — verified against `2.1.282`
+- [uv](https://docs.astral.sh/uv/) — runs the CLI and provides the Python 3.11+ it needs; standard library only, no packages to install
+- Claude Code — verified against `2.1.283`
 
 **Install the plugin**
 
@@ -76,22 +76,22 @@ ln -s /path/to/Codex-in-Claude/.claude/skills/codex ~/.claude/skills/codex
 
 **Let Claude call it without asking**
 
-The skill pre-approves its own command, but Claude Code applies that only when you invoke the skill yourself (`/codex:codex`, or `/codex` for a symlinked skill). When Claude picks the skill on its own, which is how it is usually used, every call asks for permission, and a headless session simply refuses it. A permission rule in `~/.claude/settings.json` covers both cases. Take the path from `skill_dir` in `doctor`'s output and write it out — `$HOME` is not expanded in a permission rule:
+The skill pre-approves its own command, but Claude Code applies that only when you invoke the skill yourself (`/codex:codex`, or `/codex` for a symlinked skill). When Claude picks the skill on its own, which is how it is usually used, every call asks for permission, and a headless session simply refuses it. A permission rule in `~/.claude/settings.json` covers both cases. It matches the command as Claude calls it, so write out the path Claude calls: for the plugin, `skill_dir` from `doctor`'s output; for a symlinked skill, the link's own path (`skill_dir` is where the link points). `$HOME` is not expanded in a permission rule:
 
 ```json
 {
   "permissions": {
     "allow": [
       "Skill(codex)",
-      "Bash(python3 \"/Users/you/.claude/skills/codex/scripts/cli_codex.py\" *)"
+      "Bash(uv run \"/Users/you/.claude/skills/codex/scripts/cli.py\" *)"
     ]
   }
 }
 ```
 
-The skill rule is separate, and without it a headless session cannot load the skill at all: `Skill(codex)` for a symlinked skill, `Skill(codex:codex)` for the plugin. A plugin install's `skill_dir` contains the plugin's version (`…/plugins/cache/codex-in-claude/codex/0.8.0/…`); replace that segment with `*` so the rule survives an update.
+The skill rule is separate, and without it a headless session cannot load the skill at all: `Skill(codex)` for a symlinked skill, `Skill(codex:codex)` for the plugin. A plugin install's `skill_dir` contains the plugin's version (`…/plugins/cache/codex-in-claude/codex/0.9.0/…`); replace that segment with `*` so the rule survives an update.
 
-**Upgrading from 0.7.0?** The entrypoint is now `scripts/cli_codex.py`, so a rule naming `…/scripts/codex_bridge.py` no longer matches anything — replace it with the one above.
+**Upgrading from 0.8.0?** The entrypoint is now `scripts/cli.py`, run with `uv run`, so a rule naming `python3 …/scripts/cli_codex.py` (or 0.7.0's `codex_bridge.py`) no longer matches anything — replace it with the one above.
 
 **First run**
 
@@ -100,37 +100,37 @@ Inside a Claude Code session, just describe the work — the skill triggers auto
 As a sanity check, ask Claude to run:
 
 ```bash
-python3 "<skill dir>/scripts/cli_codex.py" doctor
+uv run "<skill dir>/scripts/cli.py" doctor
 ```
 
-`doctor` exits `0` when Codex is reachable, authenticated, and configured correctly, or `2` with a `blockers` array explaining exactly what to fix.
+`doctor` exits `0` when Codex is reachable, authenticated, and configured correctly, or `3` with a `blockers` array explaining exactly what to fix.
 
-From there, a typical loop looks like this (`$CODEX` below is shorthand for the full `python3 "<skill dir>/scripts/cli_codex.py"`):
+From there, a typical loop looks like this (`$CODEX` below is shorthand for the full `uv run "<skill dir>/scripts/cli.py"`):
 
 ```bash
 $CODEX start --label refactor "Refactor the auth module to use the new session store"
-# → {"run_id": "...", "thread_id": "...", "state": "running", ...}
+# → {"run_id": "...", "thread_id": "...", "state": "running", "next": {"command": "uv run \"<skill dir>/scripts/cli.py\" log --run <run_id> --follow", "run_in_background": true}, ...}
 
 $CODEX log --run <run_id> --follow
 # → the run's events as they happen; exits when the run ends
 
 $CODEX result --run <run_id>
-# → the final message and usage, once it's done
+# → a one-line JSON header (state, usage, files changed, message_bytes), then the final message as text
 ```
 
-`$CODEX --help` lists the commands, and `$CODEX <command> --help` has every flag, default and refusal.
+`$CODEX --help` lists the commands and the exit codes, and `$CODEX <command> --help` has every flag, default and refusal. A command line that has to change exits `2` with the `--help` to read in `help`.
 
 ## 4. Usage
 
 | Command | What it does |
 |---|---|
-| `start` | New thread. Background by default; returns `{run_id, thread_id}` immediately |
+| `start` | New thread. Background by default; returns `{run_id, thread_id}` immediately, with the follower to run as `next` |
 | `resume` | Add a turn to an existing thread; every recorded setting is re-asserted |
 | `status` | Whether a run is live, how far along, and what it last said; a summary row per run by default |
 | `log` | Filtered events, followed live with `--follow` or read incrementally with `--since <cursor>` |
 | `show` | One item's full output, fetched on request |
 | `stop` | Interrupt by process group — never by matching a process name |
-| `result` | Final message and usage, or the parsed JSON alone when `--schema` was used |
+| `result` | A JSON header with state and usage, then the final message as text; one JSON document with the parsed answer when `--schema` was used |
 | `batch start` | N runs as one named group, sharing your tree unless `--worktree` gives each writing member a checkout |
 | `batch clean` | Remove a finished group's worktrees, once you've collected them |
 | `models` | The models and reasoning efforts this Codex install offers |
@@ -168,9 +168,9 @@ Members work in your tree, the way a fan-out of your own subagents does: their c
 
 ## 5. Project Status
 
-Codex in Claude is at **v0.8.0** — an early, actively developed release, verified against `codex-cli 0.156.1` and Claude Code `2.1.282`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
+Codex in Claude is at **v0.9.0** — an early, actively developed release, verified against `codex-cli 0.156.1` and Claude Code `2.1.283`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
 
-**Upgrading from v0.7.0?** The entrypoint, three flags and some output shapes changed; see the [changelog](CHANGELOG.md#080--2026-09-25).
+**Upgrading from v0.8.0?** The entrypoint and how it is run, the exit codes, and the shapes of `result` and the default `status` changed; see the [changelog](CHANGELOG.md#090--2026-09-26).
 
 A few things are deliberately out of scope for now, not overlooked: `codex cloud`, `codex mcp-server`/`app-server` integration, and true mid-turn steering.
 

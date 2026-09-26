@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-09-26
+
+The skill's code takes the layout every bundled skill shares and runs under `uv`, and its replies are shaped for how the model actually reads them: `result` is text, the default `status` no longer grows with the registry, a start says which follower to run, and the exit code says whether to fix the command line or wait.
+
+**Read Changed before upgrading.** The entrypoint and how it is run, `result`'s output, the default `status` listing and the exit codes change.
+
+### Changed
+
+- **The entrypoint is `scripts/cli.py`, run with `uv run` — BREAKING.** It was `python3 scripts/cli_codex.py`. A PEP 723 header declares Python 3.11+ and no dependencies, so uv provides the interpreter whatever `python3` a terminal, hook or scheduled job finds first (the macOS system one is 3.9). The code moved into one package, `scripts/codex/`, with a subpackage per feature (`runs`, `batch`, `observe`), per system someone else owns (`codex_cli`, `git`) and for the run registry; imports run one way, and `tests/test_structure.py` fails a change that breaks the tree. **Migration:** install uv, and replace a permission rule naming `…/cli_codex.py` with `Bash(uv run "<skill dir>/scripts/cli.py" *)`.
+- **`result` prints text — BREAKING.** `result --run` prints a one-line JSON header (state, exit code, thread, `message_bytes`, changed files, commands, usage, and `turn_failed` when the turn failed), then the final message as written and one newline its `message_bytes` leaves out (neither when the message is empty). `result --group` prints a group header with `members[]`, then per member a `--- [<index>:<label>] run=<id> state=<state> bytes=<n>` line (`[<index>]` without a label) and its message, capped at 4000 bytes; the header's byte counts, not the separator lines, say where each message ends. A `--schema` run's answer is still one JSON document. With 0.8.0 the model piped 419 of 514 `result` replies through a JSON parser only to print the message. **Migration:** read the first line as JSON and the rest as the message; a script splits on the byte counts.
+- **The default `status` listing counts finished runs instead of naming them — BREAKING.** Without `--run`, `--thread` or `--group`, and with `--all`, `status` gives `running` (the live run ids) and `counts` (live, completed, failed) in place of the `threads` map and the `done`/`failed` id lists, which grew with every run the registry kept. On a 304-run registry the reply goes from 40,806 bytes to 8,032. `--run`, `--thread` and `--group` are unchanged. **Migration:** ask `status --run`, `--thread` or `--group` for the ids.
+- **Exit codes — BREAKING.** 1 now means only a refusal by the registry's state or a failed run. A command line that has to change exits 2 with `{"error", "help"}` on stdout, `help` naming the `--help` to read; argparse errors answer the same way instead of printing usage to stderr. `doctor` exits 3 on a blocker (it was 2). A model or effort named on the command line that the catalog lacks is 2; one adopted from `config.toml` stays 1. **Migration:** treat 2 as "fix the command", 3 as `doctor`'s blockers.
+- JSON replies put the cheap signal first — state, counts, warnings, `next` — and paths, pids and long lists last. The keys are unchanged.
+- **`SKILL.md` points at the new interface**: run the reply's `next.command` in the background, read replies as printed, and have Monitor run `log --follow` to catch a run going wrong (a group's `status --follow` reports only member states). Against v0.8.0's skill in real headless sessions over two scenarios, one session each, the new text followed in the background and collected with `result` both times, where v0.8.0's followed in the foreground both times.
+
+### Added
+
+- **`next` in `start`, `resume` and `batch start` replies**: `{"command", "run_in_background": true}`, the follower written out whole — `log --run <id> --follow`, or `status --group <name> --follow` for a batch that started a member — in the form a permission rule for the entrypoint matches, carrying `--project` and `--runs-dir` when given. With 0.8.0 the model held values in shell variables or substitutions in 468 of 3,282 calls, which such a rule does not match.
+
+### Fixed
+
+- **A missing `--schema` or `--image` left an empty run directory** that no listing showed. Both are checked before the directory is claimed.
+- **`config.toml` was read by a regex over `key = value` lines**, so quoted keys, escapes and multi-line strings were misread, and a number or a list came back as a string. It is read with `tomllib`; only top-level strings count, and a file that does not parse reads as empty.
+- **A prompt file, a prompt on stdin or a tasks file that is not UTF-8 was an internal error.** It is refused with exit 2. A `--schema` run whose final message is not UTF-8 is refused instead of crashing, and a text answer shows such bytes as U+FFFD.
+- **A finished run whose Codex pid had been handed to another process counted as live**, so it stayed in `status`'s `running`, its thread's `resume` was refused as a live turn and `batch clean` refused its group; a dead supervisor whose pid was reused kept its run `running` instead of `orphaned`. A recorded pid now counts only while it is still in the run's process group.
+
 ## [0.8.0] — 2026-09-25
 
 The surface nobody used is gone, the engine is split into three layers with one implementation per question, `--help` is the one reference for flags, and `SKILL.md` keeps only the judgement no single `--help` can carry. Eight defects an audit reproduced are fixed on the way.

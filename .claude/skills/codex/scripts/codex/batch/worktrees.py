@@ -87,7 +87,7 @@ def plan_worktrees(tasks, args, project, runs_dir):
     base = worktree_base_sha(project, ref)
     if not base and ref:
         # A typo'd --base is the caller's mistake; degrading to a shared tree would give them the one outcome they asked to avoid.
-        raise Refusal(f"--base {ref!r} does not resolve to a commit in {project}")
+        raise Refusal(f"--base {ref!r} does not resolve to a commit in {project}", arguments=True)
     if not base:
         return set(), None, ("this repository has no HEAD yet (nothing is "
                              "committed), so there is no commit to cut a "

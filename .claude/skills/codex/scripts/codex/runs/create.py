@@ -52,7 +52,7 @@ def read_prompt(args) -> str:
         try:
             return Path(args.prompt_file).read_text(encoding="utf-8")
         except OSError as e:
-            raise Refusal(f"cannot read prompt file: {e}")
+            raise Refusal(f"cannot read prompt file: {e}", arguments=True)
     p = getattr(args, "prompt", None)
     if p == "-" or p is None:
         if not sys.stdin.isatty():
@@ -99,21 +99,21 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     cwd = (Path(args.cwd).expanduser().resolve() if getattr(args, "cwd", None)
            else (Path(base["cwd"]) if base else project))
     if not cwd.is_dir():
-        raise Refusal(f"cwd does not exist: {cwd}")
+        raise Refusal(f"cwd does not exist: {cwd}", arguments=True)
 
     prompt = read_prompt(args)
     if not prompt.strip():
-        raise Refusal("a prompt is required (positional, --prompt-file, or stdin via '-')")
+        raise Refusal("a prompt is required (positional, --prompt-file, or stdin via '-')", arguments=True)
 
     # Checked here rather than once the run is published: a refusal after the claim would leave a run directory with no meta.json, which no listing shows.
     schema_path = (str(Path(args.schema).expanduser().resolve()) if getattr(args, "schema", None)
                    else (base.get("schema_path") if base else None))
     if schema_path and not Path(schema_path).exists():
-        raise Refusal(f"schema file not found: {schema_path}")
+        raise Refusal(f"schema file not found: {schema_path}", arguments=True)
     images = [str(Path(i).expanduser().resolve()) for i in (getattr(args, "image", None) or [])]
     for img in images:
         if not Path(img).exists():
-            raise Refusal(f"image not found: {img}")
+            raise Refusal(f"image not found: {img}", arguments=True)
 
     if kind == "resume" and not thread_ref:
         # A bare `codex exec resume` would fail after this command already reported a run started.

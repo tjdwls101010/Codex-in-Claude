@@ -47,6 +47,6 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     for slot, (task, prev) in enumerate(zip(tasks, prior)):
         kind, named = task["kind"], task.get("resume")
         if kind != "resume" and named:
-            raise Refusal(f"task {slot} names a `resume` target but has kind {kind!r}; set kind 'resume' to keep the target, or drop `resume` to pair it with {prev['run_id']}")
+            raise Refusal(f"task {slot} names a `resume` target but has kind {kind!r}; set kind 'resume' to keep the target, or drop `resume` to pair it with {prev['run_id']}", arguments=True)
         paired.append(task if named else {**task, "kind": "resume", "resume": prev["run_id"]})
     return paired, [m["run_id"] for m in prior]

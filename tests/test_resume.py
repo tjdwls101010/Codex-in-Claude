@@ -177,7 +177,7 @@ class FindingTheThread(ResumeCase):
         self.assertIn("thread id", self.bridge("resume", out["run_id"], "again", rc=1)["error"])
 
     def test_too_many_positionals_are_refused(self):
-        self.assertIn("too many", self.bridge("resume", "a", "b", "c", rc=1)["error"])
+        self.assertIn("too many", self.bridge("resume", "a", "b", "c", rc=2)["error"])
 
 
 class ThreadsTheRegistryNeverSaw(ResumeCase):

@@ -6,8 +6,9 @@
 
 Exit codes:
     0  success
-    1  a refusal or a failure, as one line of JSON carrying `error`
-    2  a command line that does not parse (argparse's usage on stderr), or `doctor` found a blocker
+    1  the registry's state refused the command, or the run failed; the reply carries `error`
+    2  the command line itself must change; the reply carries `error` and the `help` to read
+    3  `doctor` found a blocker
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -30,15 +32,19 @@ from codex.observe.collect import GROUP_MESSAGE_CAP
 from codex.observe.rows import STALL_SECONDS
 from codex.observe.show import SHOW_MAX_BYTES, show
 from codex.observe.status import LISTING_ROWS
+from codex.registry.groups import valid_name
 from codex.runs import commands as run_commands
 from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
 
+EXIT_REFUSED, EXIT_ARGUMENTS, EXIT_BLOCKED = 1, 2, 3
+
 OUTPUT_CONTRACT = """\
-Output: every command prints one line of JSON on stdout, success or failure; a failure carries `error` and exits 1, and `doctor` exits 2 on a blocker. Three views print text instead:
+Output: every command prints one line of JSON on stdout, a result or a refusal carrying `error`, except the text views below.
+Exit codes: 0 success; 1 refused by the registry's state — a run or group that is not there, a thread with a live turn, a name already taken — or the run failed; 2 the command line itself must change — it does not parse, combines flags that cannot go together, or names a file, commit or model that does not exist — and the reply's `help` is the `--help` to read; 3 `doctor` found a blocker.
+Three views print text instead:
   log --run                 event lines, then `# cursor=<n> run=<id>`
   log --group               a `group.members` header, member-prefixed event lines, then a closing `group.<state>` line
-  status --group --follow   a line per member state change, then a closing `group.<state>` line
-A command line that does not parse gets argparse's usage error on stderr and exit 2."""
+  status --group --follow   a line per member state change, then a closing `group.<state>` line"""
 
 
 RUN_EPILOG = f"""\
@@ -91,28 +97,56 @@ class OneLinePerParagraph(argparse.HelpFormatter):
                 yield sub
 
 
+def invocation(*words):
+    """This CLI called again the way SKILL.md calls it: `uv run "<this file, as the caller named it>" <words>`. The path is not resolved, so a symlinked install keeps the path its pre-approval matches."""
+    path = os.path.abspath(sys.argv[0])
+    # Double quotes are what the pre-approval pattern has; a path they cannot hold safely gets shell quoting instead.
+    quoted = shlex.quote(path) if any(c in path for c in '"$`\\') else f'"{path}"'
+    return " ".join(["uv run", quoted, *(shlex.quote(str(w)) for w in words)])
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    """A command line that does not parse is answered like any other that must change: one line of JSON on stdout, exit 2, naming the `--help` to read."""
+
+    def parse_args(self, args=None, namespace=None):
+        # Arguments no parser claimed are reported by the root, whose own help says nothing about them; the namespace already names the command they were given to.
+        ns, extras = self.parse_known_args(args, namespace)
+        if extras:
+            self.refuse(f"unrecognized arguments: {' '.join(extras)}", command_words(ns) if getattr(ns, "cmd", None) else [])
+        return ns
+
+    def error(self, message):
+        self.refuse(message, self.prog.split()[1:])
+
+    def refuse(self, message, words):
+        reply({"error": message, "help": invocation(*words, "--help")}, code=EXIT_ARGUMENTS)
+
+
 # -- checks made from the arguments alone --------------------------------------
 
-def refuse_competing_selectors(args, command, *selectors):
-    """Two selectors name different things, and honouring one would silently drop the other. Which flags compete is per command (`status --all` lifts a cap; `stop --all` is a selector), so each caller names its set."""
-    given = {name: getattr(args, name.lstrip("-").replace("-", "_"), None) for name in selectors}
-    given = {k: v for k, v in given.items() if v}
-    if len(given) > 1:
-        names = " and ".join(sorted(given))
-        raise Refusal(f"{names} select different runs; pass one",
-                      **{k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
+def positive_seconds(text):
+    """A number of seconds above zero; zero or less would read as obeyed while meaning something else."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number of seconds") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number of seconds")
+    return value
+
+
+def group_name(text):
+    """A name a group can be claimed under: it becomes a filename."""
+    if not valid_name(text):
+        raise argparse.ArgumentTypeError("group name must be 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a letter or digit (no path separators)")
+    return text
 
 
 def refuse_unusable_follow_options(args):
-    """`--follow-timeout` and `--heartbeat` only mean something to a follower, at a positive number of seconds; accepted otherwise they would read as obeyed."""
+    """`--follow-timeout` and `--heartbeat` only mean something to a follower; accepted otherwise they would read as obeyed."""
     for flag in ("--follow-timeout", "--heartbeat"):
-        value = getattr(args, flag[2:].replace("-", "_"), None)
-        if value is None:
-            continue
-        if not args.follow:
-            raise Refusal(f"{flag} requires --follow")
-        if value <= 0:
-            raise Refusal(f"{flag} must be a positive number of seconds", **{flag[2:].replace("-", "_"): value})
+        if getattr(args, flag[2:].replace("-", "_"), None) is not None and not args.follow:
+            raise Refusal(f"{flag} requires --follow", arguments=True)
 
 
 def cmd_resume(args):
@@ -120,25 +154,17 @@ def cmd_resume(args):
     rest = list(args.rest)
     args.ref = None if args.last else (rest.pop(0) if rest else None)
     if len(rest) > 1:
-        raise Refusal("too many positional arguments: resume takes [REF] PROMPT",
+        raise Refusal("too many positional arguments: resume takes [REF] PROMPT", arguments=True,
                       expected="resume <ref> <prompt>  |  resume --last <prompt>", got=list(args.rest))
     args.prompt = rest[0] if rest else None
     if not args.last and not args.ref:
-        raise Refusal("resume needs a run id, thread id, thread name, or --last")
+        raise Refusal("resume needs a run id, thread id, thread name, or --last", arguments=True)
     return run_commands.resume(args)
 
 
-def cmd_stop(args):
-    refuse_competing_selectors(args, "stop", "--run", "--group", "--all")
-    if not (args.run or args.group or args.all):
-        raise Refusal("stop needs --run <id> (repeatable), --group <name>, or --all")
-    return run_commands.stop(args)
-
-
 def cmd_status(args):
-    refuse_competing_selectors(args, "status", "--run", "--thread", "--group")
     if args.follow and not args.group:
-        raise Refusal("--follow requires --group; to follow one run use `log --run <id> --follow`", run=args.run)
+        raise Refusal("--follow requires --group; to follow one run use `log --run <id> --follow`", arguments=True, run=args.run)
     refuse_unusable_follow_options(args)
     return status.status(args)
 
@@ -146,21 +172,22 @@ def cmd_status(args):
 def cmd_log(args):
     refuse_unusable_follow_options(args)
     if args.group and args.since is not None:
-        raise Refusal("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`", group=args.group)
+        raise Refusal("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`",
+                      arguments=True, group=args.group)
     return log.log(args)
 
 
-def cmd_result(args):
-    refuse_competing_selectors(args, "result", "--run", "--group")
-    if not (args.run or args.group):
-        raise Refusal("result needs --run <id> or --group <name>")
-    return result.result(args)
+def cmd_batch_start(args):
+    if args.base and not args.worktree:
+        # Refused before the claim, so a typo does not burn the name.
+        raise Refusal("--base requires --worktree", arguments=True, base=args.base)
+    return batch_commands.start(args)
 
 
 def doctor_reply(args):
     """The report, with the exit code that says whether a blocker would stop a run."""
     report = doctor(args)
-    return report, 0 if report["ok"] else 2
+    return report, 0 if report["ok"] else EXIT_BLOCKED
 
 
 # -- the parser -------------------------------------------------------------------
@@ -171,9 +198,9 @@ def add_common(p):
 
 
 def add_follow_options(p, *, closing):
-    p.add_argument("--follow-timeout", type=float, metavar="SEC",
+    p.add_argument("--follow-timeout", type=positive_seconds, metavar="SEC",
                    help=f"stop following after SEC seconds with {closing} (default: follow until the end). Requires --follow; SEC must be positive")
-    p.add_argument("--heartbeat", type=float, metavar="SEC",
+    p.add_argument("--heartbeat", type=positive_seconds, metavar="SEC",
                    help="print `still-running elapsed=<s> running=<n>` on the first poll at or after every SEC seconds of following (default: off). Requires --follow; SEC must be positive")
 
 
@@ -204,7 +231,7 @@ def add_run_options(p, *, kind):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = JsonArgumentParser(
         prog="cli.py", formatter_class=OneLinePerParagraph, epilog=OUTPUT_CONTRACT,
         description="Drive the OpenAI Codex CLI as a managed subagent: detached runs with a handle, resumable threads, filtered event logs, and batches addressed as one group. Each command's --help has its flags, defaults and refusals.")
     ap.subparser_map = {}
@@ -226,15 +253,17 @@ def build_parser():
     p.add_argument("--last", action="store_true", help="continue the thread nobody named: the one live run with a thread in this registry, else the newest such run; the reply says which. Refused, listing them, when two or more are live. Never looks outside the registry")
     p.add_argument("--force", action="store_true", help="start a turn even though the thread has a live turn, or a run whose meta.json will not parse may be on it")
     p.add_argument("rest", nargs="*", metavar="[REF] PROMPT", help="a run id, thread id, run-id prefix or thread name, then the prompt (with --last, just the prompt). A ref this registry never recorded is passed to Codex and needs --sandbox; a run whose thread id is still null cannot be resumed yet")
-    p.set_defaults(func=cmd_resume, cwd=None, add_dir=None, ref=None, prompt=None)
+    # `cmd` is set here too because `resume` is parsed by its own subparser, which the root's `dest` never reaches.
+    p.set_defaults(func=cmd_resume, cmd="resume", cwd=None, add_dir=None, ref=None, prompt=None)
     ap.subparser_map["resume"] = p
 
     p = command("status", "run state: whether it is live, how far along, what it last said", epilog=STATUS_EPILOG,
                 description=f"Run state from the registry, with short excerpts of the last message and stderr. The default listing is a summary row per run — every live run plus the {LISTING_ROWS} newest, with `runs_truncated` counting the rest — and the project's `groups`; --run, --thread and --group give full rows.")
     add_common(p)
-    p.add_argument("--run", metavar="REF", help="one run's full row: a run id, thread id or run-id prefix (newest match wins)")
-    p.add_argument("--thread", metavar="THREAD_ID", help="full rows of the runs on one thread, capped like the default listing unless --all")
-    p.add_argument("--group", help="full rows of one batch group's members, with `group_state`; never truncated")
+    selector = p.add_mutually_exclusive_group()
+    selector.add_argument("--run", metavar="REF", help="one run's full row: a run id, thread id or run-id prefix (newest match wins)")
+    selector.add_argument("--thread", metavar="THREAD_ID", help="full rows of the runs on one thread, capped like the default listing unless --all")
+    selector.add_argument("--group", help="full rows of one batch group's members, with `group_state`; never truncated")
     p.add_argument("--all", action="store_true", help=f"no display cap: every run, not only the live ones and the {LISTING_ROWS} newest")
     p.add_argument("--follow", action="store_true", help="requires --group. Text instead of JSON: `run <id> <prev> -> <state>` for each member state change (with ` exit=N` when the state is not completed), then one closing line — `group.<state> group=<name> done=N failed=N`, or `group.empty group=<name>` when no member resolves — which appends ` unstarted=N` and ` unreadable=N` when either is non-zero")
     add_follow_options(p, closing="`group.still-running group=<name> running=N done=N failed=N`")
@@ -262,17 +291,19 @@ def build_parser():
     p = command("stop", "interrupt a run, a group, or every live run",
                 description="Interrupt runs through their recorded process groups, never by process name. A run still in an active state is recorded `interrupted`; one that already recorded an outcome, or an orphaned one, keeps its state, and `state` in the reply says which. One of --run, --group or --all is required. A running turn cannot be redirected; stop it, then `resume` the thread.")
     add_common(p)
-    p.add_argument("--run", action="append", metavar="REF", help="a run to interrupt; repeatable")
-    p.add_argument("--group", help="every live member of a batch group")
-    p.add_argument("--all", action="store_true", help="every live run in this registry, including an orphaned run whose Codex is still writing")
+    selector = p.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--run", action="append", metavar="REF", help="a run to interrupt; repeatable")
+    selector.add_argument("--group", help="every live member of a batch group")
+    selector.add_argument("--all", action="store_true", help="every live run in this registry, including an orphaned run whose Codex is still writing")
     p.add_argument("--grace", type=float, default=DEFAULT_GRACE, metavar="SEC", help=f"seconds after SIGINT before SIGTERM (default: {DEFAULT_GRACE}); SIGKILL follows 3 s later, and whatever of the run is left is swept with SIGKILL. SIGINT first lets Codex flush its rollout, so the thread can be resumed")
-    p.set_defaults(func=cmd_stop)
+    p.set_defaults(func=run_commands.stop)
 
     p = command("result", "what a run or a group concluded", description="One of --run or --group is required.")
     add_common(p)
-    p.add_argument("--run", metavar="REF", help="one run's whole final message, usage and counts; while the run is live, what it has said so far, marked partial. A --schema run returns `json` instead of `message`, and fails while its final message is missing or not JSON")
-    p.add_argument("--group", help=f"every member's message (capped at {GROUP_MESSAGE_CAP} B each, full size stated), usage totals, and `overlaps`: the paths more than one member wrote. Members that never started are listed under `unstarted`")
-    p.set_defaults(func=cmd_result)
+    selector = p.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--run", metavar="REF", help="one run's whole final message, usage and counts; while the run is live, what it has said so far, marked partial. A --schema run returns `json` instead of `message`, and fails while its final message is missing or not JSON")
+    selector.add_argument("--group", help=f"every member's message (capped at {GROUP_MESSAGE_CAP} B each, full size stated), usage totals, and `overlaps`: the paths more than one member wrote. Members that never started are listed under `unstarted`")
+    p.set_defaults(func=result.result)
 
     p = command("batch", "several runs under one group name",
                 description="A group is the set of runs one `batch start` created, addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `batch clean`, and by `batch start --resume-from`. It outlives the session that started it, and its name stays reserved until `batch clean` releases it.")
@@ -280,14 +311,14 @@ def build_parser():
     b = bsub.add_parser("start", help="start N runs as one group", formatter_class=OneLinePerParagraph, epilog=BATCH_START_EPILOG)
     add_common(b)
     add_run_options(b, kind="batch")
-    b.add_argument("--group", required=True, help="name for the group: 1–64 characters, ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit; refused while the name is reserved")
+    b.add_argument("--group", required=True, type=group_name, help="name for the group: 1–64 characters, ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit; refused while the name is reserved")
     b.add_argument("--task", action="append", help="a prompt; repeatable, ordered before --tasks-file entries")
     b.add_argument("--tasks-file", help="JSONL, one task object per line, for per-task settings: " + ", ".join(TASK_FIELDS) + ". An unknown field or a wrongly typed value refuses the batch before anything starts")
     b.add_argument("--force", action="store_true", help="with --resume-from, continue members whose turn is still live")
     b.add_argument("--worktree", action="store_true", help="give each eligible member its own git checkout (default: members share your tree); eligibility is below")
     b.add_argument("--base", help="commit the worktrees are cut from (default: HEAD). Requires --worktree")
     b.add_argument("--resume-from", metavar="GROUP", help="continue an earlier group: task i resumes member i in start order, in the directory that member's thread already uses, its worktree included, unless --cwd or the task's `cwd` names another. A task naming its own `resume` target keeps it. Refused, before anything is claimed, unless every started member has recorded a thread and finished (see --force) and the task count matches")
-    b.set_defaults(func=batch_commands.start)
+    b.set_defaults(func=cmd_batch_start)
 
     b = bsub.add_parser("clean", help="remove a group's worktrees and release its name", formatter_class=OneLinePerParagraph,
                         description="Remove a group's worktrees and release its name once nothing is left.")
@@ -301,7 +332,7 @@ def build_parser():
     p.set_defaults(func=models)
 
     p = command("doctor", "check the environment a run would start in",
-                description="The environment a run would start in, as one JSON line: Python, codex on PATH and its version, CODEX_HOME (resolved; `codex_home_from_env` says whether it was set), login, config.toml's sandbox and the defaults a run naming nothing would get, the model catalog, the registry, overlapping live writers and leftover worktrees. Exits 2 when a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.11 — else 0. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.")
+                description="The environment a run would start in, as one JSON line: Python, codex on PATH and its version, CODEX_HOME (resolved; `codex_home_from_env` says whether it was set), login, config.toml's sandbox and the defaults a run naming nothing would get, the model catalog, the registry, overlapping live writers and leftover worktrees. Exits 3 when a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.11 — else 0. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.")
     add_common(p)
     p.set_defaults(func=doctor_reply)
 
@@ -331,6 +362,11 @@ def render(out):
         sys.stdout.flush()
 
 
+def command_words(args):
+    """The words that name the command a namespace came from: `status`, or `batch start`."""
+    return [args.cmd, args.batch_cmd] if args.cmd == "batch" else [args.cmd]
+
+
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
     if os.environ.get("CODEX_HOME"):
@@ -351,11 +387,14 @@ def main(argv=None):
         except BrokenPipeError:
             raise
         except Refusal as e:
-            reply({"error": e.error, **e.fields}, code=1)
+            out = {"error": e.error, **e.fields}
+            if e.arguments:
+                out["help"] = invocation(*command_words(args), "--help")
+            reply(out, code=EXIT_ARGUMENTS if e.arguments else EXIT_REFUSED)
         except KeyboardInterrupt:
-            reply({"error": "interrupted"}, code=1)
+            reply({"error": "interrupted"}, code=EXIT_REFUSED)
         except Exception as e:
-            reply({"error": f"internal error: {e}"}, code=1)
+            reply({"error": f"internal error: {e}"}, code=EXIT_REFUSED)
     except BrokenPipeError:
         try:
             sys.stdout.close()

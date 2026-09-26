@@ -3,12 +3,12 @@ name: codex
 description: >-
   Hand non-interactive work to the local Codex CLI (GPT models) and manage it like a subagent: start runs in the background, continue their threads, watch, stop and redirect them, run several as one group, and collect text or schema-shaped JSON results. Use when work is being delegated to Codex or GPT, when a second, independent model should review or verify something, when an agent should keep working while Claude does something else, when an earlier Codex thread should be continued, or to diagnose the local Codex CLI. Triggers include: codex, 코덱스, 코덱스로, 코덱스한테, 코덱스에게, GPT한테, GPT에게 시켜, delegate to codex, ask codex, resume codex. Not for general questions about GPT, OpenAI or their API; not Claude's own subagents, the Task tool or background Bash; not Codex Cloud, `codex mcp-server` or `app-server`.
 allowed-tools:
-  - Bash(python3 "${CLAUDE_SKILL_DIR}/scripts/cli_codex.py" *)
+  - Bash(uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" *)
 ---
 
 # Codex as a managed subagent
 
-Call it as `python3 "${CLAUDE_SKILL_DIR}/scripts/cli_codex.py" <command> …`, written out in full on one line: the pre-approval matches the command text, so a path kept in a shell variable or a command continued with `\` asks for permission every time. `--help` lists the commands, and `<command> --help` owns every flag, default, refusal and output shape.
+Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written out in full on one line: the pre-approval matches the command text, so a path kept in a shell variable or a command continued with `\` asks for permission every time. `--help` lists the commands, and `<command> --help` owns every flag, default, refusal and output shape.
 
 ## Handing work over
 

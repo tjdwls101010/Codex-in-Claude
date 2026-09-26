@@ -263,7 +263,7 @@ class HelpIsTheInterface(BridgeCase):
 
     def arguments(self):
         import argparse
-        parser = engine("cli.parser").build_parser()
+        parser = engine("cli").build_parser()
         found = []
 
         def walk(p, path):

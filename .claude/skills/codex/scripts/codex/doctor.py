@@ -33,8 +33,8 @@ def doctor(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     report, blockers, warnings = {}, [], []
     report["python"] = sys.version.split()[0]
-    if sys.version_info < (3, 10):
-        blockers.append(f"python {report['python']} is below the required 3.10")
+    if sys.version_info < (3, 11):
+        blockers.append(f"python {report['python']} is below the required 3.11")
     _check_codex(report, blockers, warnings)
     _check_config(report, warnings)
     report["skill_dir"] = str(ENTRY.parent.parent)

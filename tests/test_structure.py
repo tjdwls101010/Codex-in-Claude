@@ -58,7 +58,6 @@ def imports(path):
 
 class Structure(unittest.TestCase):
 
-    @unittest.expectedFailure
     def test_scripts_holds_the_entry_point_and_one_package(self):
         found = {p.name for p in SCRIPTS.iterdir() if p.name != "__pycache__" and not p.name.startswith(".")}
         self.assertEqual(found, {"cli.py", "codex"})
@@ -117,7 +116,6 @@ class Structure(unittest.TestCase):
                     wrong.append(f"{path.relative_to(SCRIPTS)}:{node.lineno}")
         self.assertEqual(wrong, [])
 
-    @unittest.expectedFailure
     def test_the_entry_point_declares_its_runtime(self):
         entry = SCRIPTS / "cli.py"
         self.assertTrue(entry.is_file(), "the entry point is scripts/cli.py")

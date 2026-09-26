@@ -1,18 +1,16 @@
-"""Primitives with no knowledge of runs, events or Codex: time, text, paths, JSON output, process liveness."""
+"""Primitives with no knowledge of runs, events or Codex: time, text, paths, process liveness, and where the entrypoint is."""
 
 from __future__ import annotations
 
 import errno
-import json
 import os
 import re
-import sys
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
 # The entrypoint a detached supervisor re-executes and `doctor` reports.
-ENTRY = Path(__file__).resolve().parent.parent / "cli_codex.py"
+ENTRY = Path(__file__).resolve().parent.parent / "cli.py"
 
 
 def now_iso() -> str:
@@ -32,13 +30,6 @@ def clip(s: str, n: int) -> str:
         return ""
     s = re.sub(r"\s+", " ", s.replace("\n", " ").replace("\r", " ")).strip()
     return s if len(s) <= n else s[:n] + f"…(+{len(s) - n} chars)"
-
-
-def emit(obj, code: int = 0):
-    """Print one line of JSON and exit. The whole CLI answers this way."""
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
-    sys.exit(code)
 
 
 def pid_alive(pid) -> bool:

@@ -1,18 +1,31 @@
-"""Every flag, choice, help string and epilog of the CLI, and the formatter that renders them."""
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Drive the OpenAI Codex CLI as a managed subagent. This file is the whole command surface — every flag, help text and epilog, the checks made from the arguments alone, dispatch into the `codex` package, and the output contract — and the entrypoint a detached supervisor re-executes. What a command does lives in `codex/`.
+
+Exit codes:
+    0  success
+    1  a refusal or a failure, as one line of JSON carrying `error`
+    2  a command line that does not parse (argparse's usage on stderr), or `doctor` found a blocker
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
-from cli.observe import cmd_log, cmd_result, cmd_status
-from cli.runs import cmd_resume, cmd_stop
 from codex.batch import commands as batch_commands
 from codex.batch.tasks import TASK_FIELDS
 from codex.codex_cli.argv import SANDBOX_MODES
+from codex.codex_cli.config import codex_home
 from codex.codex_cli.events import DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS
 from codex.doctor import doctor, models
+from codex.errors import Refusal
+from codex.observe import log, result, status
 from codex.observe.collect import GROUP_MESSAGE_CAP
 from codex.observe.rows import STALL_SECONDS
 from codex.observe.show import SHOW_MAX_BYTES, show
@@ -27,13 +40,16 @@ Output: every command prints one line of JSON on stdout, success or failure; a f
   status --group --follow   a line per member state change, then a closing `group.<state>` line
 A command line that does not parse gets argparse's usage error on stderr and exit 2."""
 
+
 RUN_EPILOG = f"""\
 Returns as soon as the run has a handle: once its thread id appears, or after {THREAD_ID_WAIT:.0f} s with `thread_id: null`, which `status` fills in later. A run without a thread id cannot be resumed yet. A detached supervisor runs the turn, so the run outlives this command.
 Nothing announces the end. `log --run <id> --follow` returns when the run does, with a line for every terminal state; `status --run <id>` answers once; `result --run <id>` collects what it concluded.
 Codex receives the prompt behind a paragraph saying the turn is non-interactive — a clarifying question ends it with the work undone — and that its final message is what reaches the caller."""
 
+
 RESUME_EPILOG = RUN_EPILOG + """
 A resume is a new run on the same thread with its own event log. It re-asserts the sandbox, model, effort, service tier and isolation the thread recorded, except where a flag changes them."""
+
 
 STATUS_EPILOG = f"""\
 States:
@@ -49,11 +65,13 @@ States:
 A group's `group_state` is `running` while any member is live, `completed` when every member completed, and `partial` otherwise — a failure, a stop, a timeout or a member that never started.
 `idle_seconds` is the time since the run's last event."""
 
+
 BATCH_START_EPILOG = f"""\
 Returns once every member's spawn has been tried, each after up to {THREAD_ID_WAIT:.0f} s for its thread id. A member that fails to spawn keeps its slot with an `error` and no `run_id`, and the others start anyway. Group options are defaults each task's own fields override.
 Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt when it is a fresh start (not a resume), its sandbox can write, it has no cwd of its own, and the project is a git repository with a commit to cut from. A checkout holds only what git tracks at --base, none of your uncommitted or ignored files; the reply's `missing_ignored` names ignored entries the checkouts lack. Results stay in the checkouts: `result --group` reports which paths more than one member wrote, moving the changes into your tree is yours to do, and `batch clean` removes the checkouts.
 Without --worktree, members work in your tree as they go and none can tell another member's edit from its own; the reply says so when two or more writers share a directory.
 Each member is told the group's name and size; a member with a checkout is also told it is not your tree, which commit it came from, and how many uncommitted files yours has."""
+
 
 TIER_DEFAULT = "a resumed thread's recorded tier while its isolation is unchanged, otherwise `service_tier` from your config.toml, as for --model"
 
@@ -73,11 +91,79 @@ class OneLinePerParagraph(argparse.HelpFormatter):
                 yield sub
 
 
+# -- checks made from the arguments alone --------------------------------------
+
+def refuse_competing_selectors(args, command, *selectors):
+    """Two selectors name different things, and honouring one would silently drop the other. Which flags compete is per command (`status --all` lifts a cap; `stop --all` is a selector), so each caller names its set."""
+    given = {name: getattr(args, name.lstrip("-").replace("-", "_"), None) for name in selectors}
+    given = {k: v for k, v in given.items() if v}
+    if len(given) > 1:
+        names = " and ".join(sorted(given))
+        raise Refusal(f"{names} select different runs; pass one",
+                      **{k.lstrip("-").replace("-", "_"): v for k, v in given.items()})
+
+
+def refuse_unusable_follow_options(args):
+    """`--follow-timeout` and `--heartbeat` only mean something to a follower, at a positive number of seconds; accepted otherwise they would read as obeyed."""
+    for flag in ("--follow-timeout", "--heartbeat"):
+        value = getattr(args, flag[2:].replace("-", "_"), None)
+        if value is None:
+            continue
+        if not args.follow:
+            raise Refusal(f"{flag} requires --follow")
+        if value <= 0:
+            raise Refusal(f"{flag} must be a positive number of seconds", **{flag[2:].replace("-", "_"): value})
+
+
+def cmd_resume(args):
+    # `[REF] PROMPT` is two optional positionals argparse cannot tell apart; with --last everything positional is the prompt.
+    rest = list(args.rest)
+    args.ref = None if args.last else (rest.pop(0) if rest else None)
+    if len(rest) > 1:
+        raise Refusal("too many positional arguments: resume takes [REF] PROMPT",
+                      expected="resume <ref> <prompt>  |  resume --last <prompt>", got=list(args.rest))
+    args.prompt = rest[0] if rest else None
+    if not args.last and not args.ref:
+        raise Refusal("resume needs a run id, thread id, thread name, or --last")
+    return run_commands.resume(args)
+
+
+def cmd_stop(args):
+    refuse_competing_selectors(args, "stop", "--run", "--group", "--all")
+    if not (args.run or args.group or args.all):
+        raise Refusal("stop needs --run <id> (repeatable), --group <name>, or --all")
+    return run_commands.stop(args)
+
+
+def cmd_status(args):
+    refuse_competing_selectors(args, "status", "--run", "--thread", "--group")
+    if args.follow and not args.group:
+        raise Refusal("--follow requires --group; to follow one run use `log --run <id> --follow`", run=args.run)
+    refuse_unusable_follow_options(args)
+    return status.status(args)
+
+
+def cmd_log(args):
+    refuse_unusable_follow_options(args)
+    if args.group and args.since is not None:
+        raise Refusal("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`", group=args.group)
+    return log.log(args)
+
+
+def cmd_result(args):
+    refuse_competing_selectors(args, "result", "--run", "--group")
+    if not (args.run or args.group):
+        raise Refusal("result needs --run <id> or --group <name>")
+    return result.result(args)
+
+
 def doctor_reply(args):
     """The report, with the exit code that says whether a blocker would stop a run."""
     report = doctor(args)
     return report, 0 if report["ok"] else 2
 
+
+# -- the parser -------------------------------------------------------------------
 
 def add_common(p):
     p.add_argument("--runs-dir", help="registry directory (default: <project>/.codex-runs)")
@@ -119,7 +205,7 @@ def add_run_options(p, *, kind):
 
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="cli_codex.py", formatter_class=OneLinePerParagraph, epilog=OUTPUT_CONTRACT,
+        prog="cli.py", formatter_class=OneLinePerParagraph, epilog=OUTPUT_CONTRACT,
         description="Drive the OpenAI Codex CLI as a managed subagent: detached runs with a handle, resumable threads, filtered event logs, and batches addressed as one group. Each command's --help has its flags, defaults and refusals.")
     ap.subparser_map = {}
     # An explicit metavar: argparse's default one lists the suppressed internal command.
@@ -215,7 +301,7 @@ def build_parser():
     p.set_defaults(func=models)
 
     p = command("doctor", "check the environment a run would start in",
-                description="The environment a run would start in, as one JSON line: Python, codex on PATH and its version, CODEX_HOME (resolved; `codex_home_from_env` says whether it was set), login, config.toml's sandbox and the defaults a run naming nothing would get, the model catalog, the registry, overlapping live writers and leftover worktrees. Exits 2 when a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.10 — else 0. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.")
+                description="The environment a run would start in, as one JSON line: Python, codex on PATH and its version, CODEX_HOME (resolved; `codex_home_from_env` says whether it was set), login, config.toml's sandbox and the defaults a run naming nothing would get, the model catalog, the registry, overlapping live writers and leftover worktrees. Exits 2 when a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.11 — else 0. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.")
     add_common(p)
     p.set_defaults(func=doctor_reply)
 
@@ -223,3 +309,55 @@ def build_parser():
     p.add_argument("--run-dir", required=True, help="internal: the run directory this detached supervisor runs")
     p.set_defaults(func=lambda a: sys.exit(supervise(Path(a.run_dir))))
     return ap
+
+
+# -- output -------------------------------------------------------------------------
+
+def reply(obj, code: int = 0):
+    """Print one line of JSON and exit."""
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+    sys.exit(code)
+
+
+def render(out):
+    """A command's answer: a dict is one line of JSON, a `(dict, exit code)` pair the same with that code, and anything else is text to stream, piece by piece, each carrying its own newlines."""
+    if isinstance(out, tuple):
+        reply(*out)
+    if isinstance(out, dict):
+        reply(out)
+    for piece in out:
+        sys.stdout.write(piece)
+        sys.stdout.flush()
+
+
+def main(argv=None):
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if os.environ.get("CODEX_HOME"):
+        # The supervisor and codex run in other directories, so a relative value is pinned to what it meant here.
+        os.environ["CODEX_HOME"] = str(codex_home())
+    ap = build_parser()
+    # `resume [REF] PROMPT` has two optional positionals; plain parsing would drop the prompt when an option sits between them, and parse_intermixed_args cannot run on a parser that owns subparsers.
+    if raw[:1] == ["resume"]:
+        args = ap.subparser_map["resume"].parse_intermixed_args(raw[1:])
+    else:
+        args = ap.parse_args(raw)
+    try:
+        out = args.func(args)
+        if out is not None:
+            render(out)
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+    except Refusal as e:
+        reply({"error": e.error, **e.fields}, code=1)
+    except KeyboardInterrupt:
+        reply({"error": "interrupted"}, code=1)
+    except Exception as e:
+        reply({"error": f"internal error: {e}"}, code=1)
+
+
+if __name__ == "__main__":
+    main()

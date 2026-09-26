@@ -20,7 +20,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO / ".claude" / "skills" / "codex"
 # The one place the entrypoint is named. CODEX_BRIDGE_ENTRY points the whole suite at another copy of the scripts, which is how a deliberately broken engine is checked to turn tests red without touching the real one.
-ENTRY = Path(os.environ.get("CODEX_BRIDGE_ENTRY") or SKILL_DIR / "scripts" / "cli_codex.py")
+ENTRY = Path(os.environ.get("CODEX_BRIDGE_ENTRY") or SKILL_DIR / "scripts" / "cli.py")
 SUPPORT = Path(__file__).resolve().parent
 FAKE_CODEX_DIR = SUPPORT / "fake_codex"
 FIXTURES = SUPPORT / "fixtures"

@@ -325,7 +325,7 @@ def build_parser():
                 description="An answer is read rather than parsed, so it comes as text after a one-line JSON header, and the header's byte counts, not the text, say where each answer ends. A --schema run's answer is parsed, so it stays one JSON document. One of --run or --group is required.")
     add_common(p)
     selector = p.add_mutually_exclusive_group(required=True)
-    selector.add_argument("--run", metavar="REF", help="one run: a header with its state, exit code, thread, `message_bytes`, changed files, commands, usage and `turn_failed`, then its whole final message; while the run is live, what it has said so far, with `note` saying it is partial. A --schema run is one JSON document carrying `json`, the parsed message, and fails while its final message is missing or not JSON")
+    selector.add_argument("--run", metavar="REF", help="one run: a header with its state, exit code, thread, `message_bytes`, changed files, commands and usage, and `turn_failed` when the turn failed, then its whole final message; while the run is live, what it has said so far, with `note` saying it is partial. A --schema run is one JSON document carrying `json`, the parsed message, and fails while its final message is missing or not JSON")
     selector.add_argument("--group", help=f"every member: a header with `group_state`, usage totals, `overlaps` (the paths more than one member wrote), `unstarted` (members that never started) and each member's state and sizes, then each member's message after its separator line, capped at {GROUP_MESSAGE_CAP} B and cut at a character boundary, the full size stated")
     p.set_defaults(func=result.result)
 

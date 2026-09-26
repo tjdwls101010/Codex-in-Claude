@@ -132,6 +132,32 @@ class Listing(BridgeCase):
         self.assertIn("usage", full)
         self.assertEqual(self.bridge("status", "--thread", out["thread_id"])["runs"][0].keys(), full.keys())
 
+    def finished(self, n, start=0, state="completed"):
+        """`n` finished runs written straight into the registry, all the same shape so only their number differs."""
+        for i in range(start, start + n):
+            rid = f"20990101-{i:06d}-done-{i:04x}"
+            self.write_meta(rid, {"run_id": rid, "state": state, "thread_id": f"t{i:04d}",
+                                  "started_at": f"2099-01-01T00:{i // 60:02d}:{i % 60:02d}.000Z", "cwd": str(self.project)})
+
+    def test_the_default_listing_counts_finished_runs_rather_than_naming_them(self):
+        self.finished(3)
+        self.finished(1, start=3, state="failed")
+        live, _m = self.running("live")
+        for args in ((), ("--all",)):
+            with self.subTest(args=args):
+                listing = self.bridge("status", *args)
+                self.assertEqual(listing["counts"], {"live": 1, "completed": 3, "failed": 1})
+                self.assertEqual(listing["running"], [live["run_id"]])
+                self.assertEqual([k for k in ("threads", "done", "failed") if k in listing], [])
+
+    def test_the_default_listing_does_not_grow_with_finished_runs(self):
+        self.finished(25)
+        fewer = len(self.bridge_raw("status").stdout)
+        self.finished(25, start=25)
+        more = len(self.bridge_raw("status").stdout)
+        # Twenty rows either way; only the digits of `runs_truncated` (5 → 30) may differ.
+        self.assertLessEqual(more - fewer, 1)
+
     def test_an_unreadable_run_is_counted_where_it_is_missing(self):
         keep = self.bridge("start", "keep")
         lose = self.bridge("start", "lose")

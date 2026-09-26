@@ -193,7 +193,7 @@ class AnOrphanThatIsStillWriting(BridgeCase):
         out, _m = self.orphan_still_writing("x")
         listing = self.bridge("status", "--all")
         self.assertIn(out["run_id"], listing["running"])
-        self.assertNotIn(out["run_id"], listing["failed"])
+        self.assertEqual(listing["counts"]["failed"], 0)
         self.assertTrue(self.row(out["run_id"])["codex_still_running"])
 
     def test_stop_reaches_its_codex_through_the_process_group(self):

@@ -47,7 +47,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 - [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.156.1`, already authenticated (`codex login`)
 - [uv](https://docs.astral.sh/uv/) — runs the CLI and provides the Python 3.11+ it needs; standard library only, no packages to install
-- Claude Code — verified against `2.1.282`
+- Claude Code — verified against `2.1.283`
 
 **Install the plugin**
 
@@ -168,7 +168,7 @@ Members work in your tree, the way a fan-out of your own subagents does: their c
 
 ## 5. Project Status
 
-Codex in Claude is at **v0.9.0** — an early, actively developed release, verified against `codex-cli 0.156.1` and Claude Code `2.1.282`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
+Codex in Claude is at **v0.9.0** — an early, actively developed release, verified against `codex-cli 0.156.1` and Claude Code `2.1.283`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
 
 **Upgrading from v0.8.0?** The entrypoint and how it is run, the exit codes, and the shapes of `result` and the default `status` changed; see the [changelog](CHANGELOG.md#090--2026-09-26).
 

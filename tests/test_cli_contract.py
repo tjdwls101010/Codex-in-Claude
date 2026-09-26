@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -112,6 +113,48 @@ class ExitCodes(BridgeCase):
                      ("resume", "no-such-run", "x")):
             with self.subTest(args=args):
                 self.assertNotIn("help", self.refused(*args, rc=1))
+
+
+class TheNextStep(BridgeCase):
+    """A detached run announces nothing, so every reply that starts work names the follower to run in the background, written out whole the way the pre-approval matches it."""
+
+    def follow(self, *words):
+        return {"command": " ".join(["uv run", f'"{ENTRY}"', *words]), "run_in_background": True}
+
+    def test_start_and_resume_name_the_follower_of_the_run_they_made(self):
+        out = self.bridge("start", "x")
+        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow"))
+        self.wait_state(out["run_id"])
+        again = self.bridge("resume", out["run_id"], "y")
+        self.assertEqual(again["next"], self.follow("log", "--run", again["run_id"], "--follow"))
+        self.wait_state(again["run_id"])
+        last = self.bridge("resume", "--last", "z")
+        self.assertEqual(last["next"], self.follow("log", "--run", last["run_id"], "--follow"))
+
+    def test_a_batch_names_the_follower_of_its_group(self):
+        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b")
+        self.assertEqual(out["next"], self.follow("status", "--group", "g", "--follow"))
+
+    def test_a_batch_that_started_nothing_has_nothing_to_follow(self):
+        tf = self.tasks_file({"prompt": "a", "schema": str(self.tmp / "nope.json")})
+        out = self.bridge("batch", "start", "--group", "g", "--tasks-file", tf)
+        self.assertEqual(out["spawned"], 0)
+        self.assertNotIn("next", out)
+
+    def test_the_registry_named_on_the_command_line_travels_with_it(self):
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        out = self.bridge("start", "--project", self.project, "x", cwd=elsewhere)
+        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow", "--project", str(self.project)))
+
+    def test_the_command_it_names_runs_to_the_end(self):
+        if not shutil.which("uv"):
+            self.skipTest("uv is not on PATH, and the command it names is a `uv run`")
+        out = self.bridge("start", "x")
+        p = subprocess.run(out["next"]["command"], shell=True, cwd=str(self.project), env=self.env,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertRegex(p.stdout.splitlines()[-2], rf"^run\.completed run={re.escape(out['run_id'])} exit=0$")
 
 
 class SelectorsAreExclusive(BridgeCase):

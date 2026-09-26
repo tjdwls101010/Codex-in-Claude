@@ -51,7 +51,7 @@ These views print text instead:
 
 RUN_EPILOG = f"""\
 Returns as soon as the run has a handle: once its thread id appears, or after {THREAD_ID_WAIT:.0f} s with `thread_id: null`, which `status` fills in later. A run without a thread id cannot be resumed yet. A detached supervisor runs the turn, so the run outlives this command.
-Nothing announces the end. `log --run <id> --follow` returns when the run does, with a line for every terminal state; `status --run <id>` answers once; `result --run <id>` collects what it concluded.
+Nothing announces the end: run the reply's `next.command` — `log --run <id> --follow`, written out whole — in the background, and it returns when the run does, with a line for every terminal state. `status --run <id>` answers once; `result --run <id>` collects what it concluded.
 Codex receives the prompt behind a paragraph saying the turn is non-interactive — a clarifying question ends it with the work undone — and that its final message is what reaches the caller."""
 
 
@@ -76,6 +76,7 @@ A group's `group_state` is `running` while any member is live, `completed` when 
 
 BATCH_START_EPILOG = f"""\
 Returns once every member's spawn has been tried, each after up to {THREAD_ID_WAIT:.0f} s for its thread id. A member that fails to spawn keeps its slot with an `error` and no `run_id`, and the others start anyway. Group options are defaults each task's own fields override.
+Nothing announces the end: run the reply's `next.command` — `status --group <name> --follow` — in the background; it is left out when no member started.
 Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt when it is a fresh start (not a resume), its sandbox can write, it has no cwd of its own, and the project is a git repository with a commit to cut from. A checkout holds only what git tracks at --base, none of your uncommitted or ignored files; the reply's `missing_ignored` names ignored entries the checkouts lack. Results stay in the checkouts: `result --group` reports which paths more than one member wrote, moving the changes into your tree is yours to do, and `batch clean` removes the checkouts.
 Without --worktree, members work in your tree as they go and none can tell another member's edit from its own; the reply says so when two or more writers share a directory.
 Each member is told the group's name and size; a member with a checkout is also told it is not your tree, which commit it came from, and how many uncommitted files yours has."""
@@ -151,6 +152,23 @@ def refuse_unusable_follow_options(args):
             raise Refusal(f"{flag} requires --follow", arguments=True)
 
 
+def with_next(out, args, *words):
+    """The reply with `next` after its handle: the follower to run in the background, written out whole so it matches the pre-approval, and carrying the registry the command line named."""
+    where = []
+    if args.project:
+        where += ["--project", os.path.abspath(os.path.expanduser(args.project))]
+    if args.runs_dir:
+        where += ["--runs-dir", os.path.abspath(os.path.expanduser(args.runs_dir))]
+    items = list(out.items())
+    at = next((i + 1 for i, (k, _v) in enumerate(items) if k == "state"), 1)
+    return dict(items[:at] + [("next", {"command": invocation(*words, *where), "run_in_background": True})] + items[at:])
+
+
+def cmd_start(args):
+    out = run_commands.start(args)
+    return with_next(out, args, "log", "--run", out["run_id"], "--follow")
+
+
 def cmd_resume(args):
     # `[REF] PROMPT` is two optional positionals argparse cannot tell apart; with --last everything positional is the prompt.
     rest = list(args.rest)
@@ -161,7 +179,8 @@ def cmd_resume(args):
     args.prompt = rest[0] if rest else None
     if not args.last and not args.ref:
         raise Refusal("resume needs a run id, thread id, thread name, or --last", arguments=True)
-    return run_commands.resume(args)
+    out = run_commands.resume(args)
+    return with_next(out, args, "log", "--run", out["run_id"], "--follow")
 
 
 def cmd_status(args):
@@ -183,7 +202,8 @@ def cmd_batch_start(args):
     if args.base and not args.worktree:
         # Refused before the claim, so a typo does not burn the name.
         raise Refusal("--base requires --worktree", arguments=True, base=args.base)
-    return batch_commands.start(args)
+    out = batch_commands.start(args)
+    return with_next(out, args, "status", "--group", out["group"], "--follow") if out["spawned"] else out
 
 
 def doctor_reply(args):
@@ -247,7 +267,7 @@ def build_parser():
     add_common(p)
     add_run_options(p, kind="start")
     p.add_argument("prompt", nargs="?", help="the prompt; `-` or omitted reads stdin when it is not a terminal")
-    p.set_defaults(func=run_commands.start)
+    p.set_defaults(func=cmd_start)
 
     p = command("resume", "run another turn on an existing thread", epilog=RESUME_EPILOG)
     add_common(p)

@@ -13,15 +13,13 @@ from codex.registry.runs import unreadable_runs
 
 
 def follow(step, *, timeout, heartbeat):
-    """Run `step()` every FOLLOW_INTERVAL, yielding each line it produces, until it is done or `timeout` passes.
+    """Run `step()` every FOLLOW_INTERVAL until it is done or `timeout` passes, passing each line on as soon as it is produced.
 
-    `step()` returns `(lines, pending)`: this tick's lines, and `pending` — None once `lines` ends on the terminal line, else `(live count, lines to print if the deadline has passed)`. With `heartbeat`, a `still-running` line is printed on the first tick at or after each interval.
+    `step()` is a generator that yields this tick's lines, newline included, as it produces them — so a failure later in the tick does not take earlier lines with it — and returns None once it has yielded the terminal line, else `(live count, lines to print if the deadline has passed)`. With `heartbeat`, a `still-running` line is printed on the first tick at or after each interval.
     """
     started = beat_at = time.time()
     while True:
-        lines, pending = step()
-        for line in lines:
-            yield line + "\n"
+        pending = yield from step()
         if pending is None:
             return
         running, deadline_lines = pending

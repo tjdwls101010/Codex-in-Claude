@@ -65,7 +65,7 @@ def follow_group(args, project, runs_dir):
     seen = {}
 
     def step():
-        rows, lines = [], []
+        rows = []
         for rd, m in members:
             row = run_row(rd, read_meta(rd) or m, project)
             rows.append(row)
@@ -74,12 +74,13 @@ def follow_group(args, project, runs_dir):
                 line = f"run {row['run_id']} {prev or '-'} -> {row['state']}"
                 if row.get("exit_code") is not None and row["state"] != "completed":
                     line += f" exit={row['exit_code']}"
-                lines.append(line)
+                yield line + "\n"
                 seen[row["run_id"]] = row["state"]
         running, done, failed, gstate = group_snapshot(rows, len(never))
         if not running:
-            return lines + [f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail], None
-        return lines, (len(running), [f"group.still-running group={args.group} running={len(running)} "
-                                      f"done={len(done)} failed={len(failed)}"])
+            yield f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail + "\n"
+            return None
+        return len(running), [f"group.still-running group={args.group} running={len(running)} "
+                              f"done={len(done)} failed={len(failed)}"]
 
     yield from follow(step, timeout=args.follow_timeout, heartbeat=getattr(args, "heartbeat", None))

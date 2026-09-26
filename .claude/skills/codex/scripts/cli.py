@@ -342,21 +342,25 @@ def main(argv=None):
         args = ap.subparser_map["resume"].parse_intermixed_args(raw[1:])
     else:
         args = ap.parse_args(raw)
+    # The reply to a refusal is written inside the guard too: a reader that has gone away is not worth a traceback either way.
     try:
-        out = args.func(args)
-        if out is not None:
-            render(out)
+        try:
+            out = args.func(args)
+            if out is not None:
+                render(out)
+        except BrokenPipeError:
+            raise
+        except Refusal as e:
+            reply({"error": e.error, **e.fields}, code=1)
+        except KeyboardInterrupt:
+            reply({"error": "interrupted"}, code=1)
+        except Exception as e:
+            reply({"error": f"internal error: {e}"}, code=1)
     except BrokenPipeError:
         try:
             sys.stdout.close()
         except Exception:
             pass
-    except Refusal as e:
-        reply({"error": e.error, **e.fields}, code=1)
-    except KeyboardInterrupt:
-        reply({"error": "interrupted"}, code=1)
-    except Exception as e:
-        reply({"error": f"internal error: {e}"}, code=1)
 
 
 if __name__ == "__main__":

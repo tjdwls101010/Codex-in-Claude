@@ -6,11 +6,14 @@ Callers parse stdout, so the frame is the contract: one line of JSON per command
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
+import subprocess
+import sys
 import unittest
 
-from support.harness import BridgeCase, FIXTURES, engine
+from support.harness import ENTRY, BridgeCase, FIXTURES, engine
 
 
 class OutputFrame(BridgeCase):
@@ -30,6 +33,19 @@ class OutputFrame(BridgeCase):
         self.assertEqual(p.returncode, 2)
         self.assertEqual(p.stdout, "")
         self.assertIn("unrecognized arguments", p.stderr)
+
+    def test_a_reader_that_went_away_ends_the_command_quietly(self):
+        # A caller that pipes into `head` closes the pipe early; that is not an error worth a traceback, for a reply or a refusal.
+        for args in (("status",), ("status", "--run", "no-such-run")):
+            with self.subTest(args=args):
+                r, w = os.pipe()
+                os.close(r)
+                try:
+                    p = subprocess.run([sys.executable, str(ENTRY), *args], cwd=str(self.project), env=self.env,
+                                       stdout=w, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, timeout=60)
+                finally:
+                    os.close(w)
+                self.assertEqual(p.stderr, "")
 
     def test_log_streams_text_and_ends_with_a_cursor_naming_the_run(self):
         out = self.bridge("start", "x")

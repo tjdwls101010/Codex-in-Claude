@@ -40,21 +40,25 @@ def log(args):
             events, cursor[0] = read_events(events_path, cursor[0])
         except CursorOutOfRange as e:
             raise Refusal(str(e), run_id=run_id, since=cursor[0])
-        return format_events(events, args.level, rel_to)
+        for line in format_events(events, args.level, rel_to):
+            yield line + "\n"
 
     trailer = lambda: f"# cursor={cursor[0]} run={run_id}"  # noqa: E731
     if not args.follow:
-        for line in dump() + [trailer()]:
-            yield line + "\n"
+        yield from dump()
+        yield trailer() + "\n"
         return
 
     def step():
-        lines = dump()
+        yield from dump()
         m = reap(rd, read_meta(rd) or {})
         # The terminal line means the run stopped moving, so a run whose Codex still writes is not over.
         if not is_live(m):
-            return lines + dump() + [f"run.{m.get('state')} run={m.get('run_id')} exit={m.get('exit_code')}", trailer()], None
-        return lines, (1, [f"run.still-running run={m.get('run_id')} state={m.get('state')}", trailer()])
+            yield from dump()
+            yield f"run.{m.get('state')} run={m.get('run_id')} exit={m.get('exit_code')}\n"
+            yield trailer() + "\n"
+            return None
+        return 1, [f"run.still-running run={m.get('run_id')} state={m.get('state')}", trailer()]
 
     yield from follow(step, timeout=args.follow_timeout, heartbeat=args.heartbeat)
 
@@ -79,21 +83,22 @@ def log_group(args, project, runs_dir):
     cursors = [0] * len(members)
 
     def drain():
-        lines = []
         for i, (rd, m) in enumerate(members):
             events, cursors[i] = read_events(rd / "events.jsonl", cursors[i])
             for entry in format_events(events, args.level, Path(m.get("cwd") or project)):
-                lines.extend(prefixes[i] + line for line in entry.split("\n"))
-        return lines
+                for line in entry.split("\n"):
+                    yield prefixes[i] + line + "\n"
 
     def step():
-        lines = drain()
+        yield from drain()
         rows = [run_row(rd, read_meta(rd) or m, project) for rd, m in members]
         running, done, failed, gstate = group_snapshot(rows, len(never))
         if not running or not args.follow:
             # Drained again after the state was read, so events written just before the end are not lost.
-            return lines + drain() + [f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail], None
-        return lines, (len(running), [f"group.still-running group={args.group} running={len(running)} "
-                                      f"done={len(done)} failed={len(failed)}"])
+            yield from drain()
+            yield f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail + "\n"
+            return None
+        return len(running), [f"group.still-running group={args.group} running={len(running)} "
+                              f"done={len(done)} failed={len(failed)}"]
 
     yield from follow(step, timeout=args.follow_timeout, heartbeat=args.heartbeat)

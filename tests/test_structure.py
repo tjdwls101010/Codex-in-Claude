@@ -56,10 +56,59 @@ def imports(path):
                 yield node.lineno, 0, node.module
 
 
+MUTATORS = {"insert", "append", "extend", "remove", "pop", "clear", "__setitem__", "__delitem__", "__iadd__"}
+
+
+def sys_path_changes(tree):
+    """Lines that change `sys.path`, however it is reached: `sys.path`, `import sys as s` then `s.path`, or `from sys import path`. Calls to its mutators, assignment in any form (plain, chained, annotated, augmented, to an item or a slice, unpacking), deletion, and `setattr(sys, "path", …)` all count."""
+    sys_names, path_names = {"sys"}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            sys_names |= {a.asname or a.name for a in node.names if a.name == "sys"}
+        elif isinstance(node, ast.ImportFrom) and node.module == "sys":
+            path_names |= {a.asname or a.name for a in node.names if a.name == "path"}
+
+    def is_path(node):
+        return ((isinstance(node, ast.Attribute) and node.attr == "path"
+                 and isinstance(node.value, ast.Name) and node.value.id in sys_names)
+                or (isinstance(node, ast.Name) and node.id in path_names))
+
+    def touches(target):
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return any(touches(e) for e in target.elts)
+        if isinstance(target, ast.Starred):
+            return touches(target.value)
+        if isinstance(target, ast.Subscript):
+            return is_path(target.value)
+        return is_path(target)
+
+    for node in ast.walk(tree):
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets = [node.target]
+        elif isinstance(node, ast.Delete):
+            targets = node.targets
+        elif isinstance(node, ast.Call):
+            f = node.func
+            if isinstance(f, ast.Attribute) and f.attr in MUTATORS and is_path(f.value):
+                yield node.lineno
+                continue
+            if (isinstance(f, ast.Name) and f.id == "setattr" and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Name) and node.args[0].id in sys_names
+                    and isinstance(node.args[1], ast.Constant) and node.args[1].value == "path"):
+                yield node.lineno
+                continue
+        if any(touches(t) for t in targets):
+            yield node.lineno
+
+
 class Structure(unittest.TestCase):
 
     def test_scripts_holds_the_entry_point_and_one_package(self):
-        found = {p.name for p in SCRIPTS.iterdir() if p.name != "__pycache__" and not p.name.startswith(".")}
+        # Bytecode caches and Finder's metadata are not part of the tree; a maintainer's artifact such as `.pytest_cache` is, and fails here.
+        found = {p.name for p in SCRIPTS.iterdir() if p.name not in ("__pycache__", ".DS_Store")}
         self.assertEqual(found, {"cli.py", "codex"})
 
     def test_no_top_level_name_shadows_the_standard_library(self):
@@ -104,16 +153,7 @@ class Structure(unittest.TestCase):
     def test_nothing_changes_sys_path(self):
         wrong = []
         for path in skill_files() + [p for p in SCRIPTS.glob("*.py") if p.name != "cli.py"]:
-            for node in ast.walk(ast.parse(path.read_text())):
-                target = None
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                    target = node.func.value
-                elif isinstance(node, (ast.Assign, ast.AugAssign)):
-                    for t in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-                        target = t.value if isinstance(t, ast.Subscript) else t
-                if (isinstance(target, ast.Attribute) and target.attr == "path"
-                        and isinstance(target.value, ast.Name) and target.value.id == "sys"):
-                    wrong.append(f"{path.relative_to(SCRIPTS)}:{node.lineno}")
+            wrong += [f"{path.relative_to(SCRIPTS)}:{line}" for line in sys_path_changes(ast.parse(path.read_text()))]
         self.assertEqual(wrong, [])
 
     def test_the_entry_point_declares_its_runtime(self):

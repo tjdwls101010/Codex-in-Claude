@@ -25,7 +25,7 @@ def still_writing(meta: dict) -> bool:
 
     `orphaned` means "nothing is left to record this run's outcome", not "nothing is running": a supervisor lost to SIGKILL leaves its `codex exec` child alive and appending to the rollout.
     """
-    return pid_alive(meta.get("codex_pid"))
+    return pid_alive(meta.get("codex_pid"), meta.get("pgid"))
 
 
 def is_live(meta: dict) -> bool:
@@ -162,7 +162,7 @@ def reap(run_dir: Path, meta: dict) -> dict:
     if meta.get("state") not in ACTIVE_STATES:
         return meta
     sup = meta.get("supervisor_pid")
-    if sup and pid_alive(sup):
+    if sup and pid_alive(sup, meta.get("pgid")):
         return meta
     if meta.get("state") == "starting" and not sup:
         creator = meta.get("creator_pid")

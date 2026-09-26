@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
+import sys
 import time
 import unittest
 
@@ -224,6 +226,31 @@ class AnOrphanThatIsStillWriting(BridgeCase):
         wait_until(lambda: not alive(m["codex_pid"]), timeout=10)
         p = self.bridge_raw("log", "--run", out["run_id"], "--follow", "--follow-timeout", 10)
         self.assertIn(f"run.orphaned run={out['run_id']}", p.stdout)
+
+
+class APidAnotherProcessNowHolds(BridgeCase):
+    """The system hands an exited process's pid to the next process it starts, so a recorded pid that answers may be someone else's."""
+
+    def stand_in(self):
+        # In a process group of its own, as an unrelated process handed the pid would be.
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        return p.pid
+
+    def test_a_finished_run_whose_codex_pid_was_reused_is_not_live(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        self.write_meta(out["run_id"], {**self.meta(out["run_id"]), "codex_pid": self.stand_in()})
+        self.assertNotIn(out["run_id"], self.bridge("status")["running"])
+        self.assertNotIn("codex_still_running", self.row(out["run_id"]))
+        self.bridge("resume", out["run_id"], "again")
+
+    def test_a_running_run_whose_supervisor_pid_was_reused_is_orphaned(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        self.write_meta(out["run_id"], {**self.meta(out["run_id"]), "state": "running", "supervisor_pid": self.stand_in()})
+        self.assertEqual(self.row(out["run_id"])["state"], "orphaned")
 
 
 class LegacyWaitingRun(BridgeCase):

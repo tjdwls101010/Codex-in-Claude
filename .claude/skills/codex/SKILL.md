@@ -8,7 +8,7 @@ allowed-tools:
 
 # Codex as a managed subagent
 
-Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written out in full on one line: the pre-approval matches the command text, so a path kept in a shell variable or a command continued with `\` asks for permission every time. `--help` lists the commands, and `<command> --help` owns every flag, default, refusal and output shape.
+Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written out in full on one line: the pre-approval matches the command text, so a path kept in a shell variable, a `$(…)` or a pipe added to the call, or a command continued with `\` asks for permission every time. Replies are made to be read as printed — `result` gives the answer itself after a one-line header — so nothing needs parsing out of them. `--help` lists the commands, and `<command> --help` owns every flag, default, refusal, output shape and exit code.
 
 ## Handing work over
 
@@ -22,7 +22,7 @@ Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written 
 
 | Yours | Here | Not available |
 |---|---|---|
-| `Agent` | `start`, a background `log --run <id> --follow`, then `result` | — |
+| `Agent` | `start`, its reply's `next.command` in the background, then `result` | — |
 | `Workflow` `parallel()` | `batch start` with several `--task` | runs calling or messaging each other |
 | a next stage | `batch start --resume-from <group>` once every member has finished | a stage that starts itself: each round is computed and started from your context |
 
@@ -40,13 +40,13 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 
 ## Waiting and collecting
 
-**A detached run announces nothing.** Right after `start` or `batch start`, put a follower in a background Bash call: `log --run <id> --follow`, or `status --group <name> --follow` for a group. It exits when the work ends, and that exit notifies you. Then use the turn for other work or hand it back; don't invent work to fill the wait.
+**A detached run announces nothing.** Run the reply's `next.command` in a background Bash call, as given: it is the follower for that run, or for the group after `batch start`, written the way the pre-approval matches. It exits when the work ends, and that exit notifies you. Then use the turn for other work or hand it back; don't invent work to fill the wait.
 
 **Ended is not collected.** Take `result`, then check the claims and changes that matter before relying on them.
 
-**If this is your only turn** — nothing will wake you later — make a foreground follow the turn's last call, with the Bash call's own timeout set above `--follow-timeout`, then take `result`. If the budget runs out first, hand back the run id and say the work is unfinished.
+**If this is your only turn** — nothing will wake you later — make the follower the turn's last call in the foreground, with `--follow-timeout` added and the Bash call's own timeout set above it, then take `result`. If the budget runs out first, hand back the run id and say the work is unfinished.
 
-**Per-event notifications**, worth it only when you would act mid-run (stop a run going wrong, move members on as each lands), come from Monitor running the follower. Monitor ends at its own deadline and that end reads like the run's; set it longer than the run and re-arm it when it expires.
+**Per-event notifications**, worth it only when you would act mid-run, come from Monitor running a follower: `log --follow` to stop a run going wrong, since only the log shows what it is doing; a group's `status --follow` to move members on as each lands. Monitor ends at its own deadline and that end reads like the run's; set it longer than the run and re-arm it when it expires.
 
 `status` answers whether a run is live and how far along, `log` what it is doing (incrementally with `--since`), `result` what it concluded.
 
@@ -56,7 +56,7 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 
 ## Gotchas
 
-- A project's `AGENTS.md` reaches every run, isolated or not: a standing briefing, and also input you did not write into the prompt.
+- A project's `AGENTS.md` reaches every run, isolated or not — in a worktree, as committed at its base: a standing briefing, and also input you did not write into the prompt.
 - `--inherit-config` loads your config's MCP servers, plugins and agent roles. Use it when the run needs one of them, not as a precaution.
 
 ## When something goes wrong
@@ -64,4 +64,4 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 - `doctor` checks the environment a run would start in and spawns nothing. A run that fails right after starting says why in `status --run <id>` (`error`, `stderr_tail`).
 - Auth that works in your terminal but not here: first compare `doctor`'s `codex_home` with the terminal's, since two environments resolving different `CODEX_HOME`s is the likeliest cause.
 - What a turn actually ran under is in its rollout, `$CODEX_HOME/sessions/**/rollout-*-<thread_id>.jsonl`: one `turn_context` line per turn with its sandbox, model, effort and cwd.
-- If the command itself is not found, the skill's path did not resolve: `ls "${CLAUDE_SKILL_DIR}/scripts"`.
+- If the command itself is not found: without `uv` nothing here runs, and installing it is the fix (it also provides the Python the skill needs); with `uv`, the skill's path did not resolve: `ls "${CLAUDE_SKILL_DIR}/scripts"`.

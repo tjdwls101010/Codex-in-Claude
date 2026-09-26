@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run one S6 scenario against the draft or the control SKILL.md, isolated, and save what the session did.
+"""Run one S6 scenario against the draft, the control or the v0.8.0 skill, isolated, and save what the session did.
 
     python3 tests/e2e/run_e2e.py --scenario 1 --variant draft --out /tmp/e2e
 
-Writes <out>/<scenario>-<variant>/: transcript*.jsonl (stream-json), digest.txt (every tool call, with Bash's run_in_background and timeout), and the throwaway repo. Real Codex runs are made; this is opt-in and costs tokens.
+Writes <out>/<scenario>-<variant>/: transcript*.jsonl (stream-json), digest.txt (every tool call, with Bash's run_in_background and timeout, then a METRICS line), and the throwaway repo. Real Codex runs are made; this is opt-in and costs tokens.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -35,6 +36,14 @@ PROMPTS = {
     4: ["Ask Codex for a short summary of what this repository contains and tell me. This is a one-shot session: you get no later turn, so finish within this reply."],
 }
 HOST = {1: "stream", 2: "stream", 3: "resume", 4: "print"}
+BASELINE = "v0.8.0"
+
+
+def entry(plugin: Path, variant: str) -> str:
+    """The command line that calls the bridge, as the variant's SKILL.md writes it: the baseline ran on the python3 on PATH."""
+    if variant == "baseline":
+        return f'python3 "{plugin}/.claude/skills/codex/scripts/cli_codex.py"'
+    return f'uv run "{plugin}/.claude/skills/codex/scripts/cli.py"'
 
 
 def control_text(draft: str) -> str:
@@ -59,7 +68,12 @@ def setup(out: Path, scenario: int, variant: str):
     (plugin / ".claude-plugin").mkdir(parents=True)
     shutil.copy(REPO / ".claude-plugin" / "plugin.json", plugin / ".claude-plugin" / "plugin.json")
     dest = plugin / ".claude" / "skills" / "codex"
-    shutil.copytree(SKILL, dest, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".DS_Store"))
+    if variant == "baseline":
+        archive = subprocess.run(["git", "-C", str(REPO), "archive", BASELINE, ".claude/skills/codex"],
+                                 capture_output=True, check=True).stdout
+        subprocess.run(["tar", "-x", "-C", str(plugin)], input=archive, check=True)
+    else:
+        shutil.copytree(SKILL, dest, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".DS_Store"))
     if variant == "control":
         (dest / "SKILL.md").write_text(control_text((SKILL / "SKILL.md").read_text()))
     repo = out / "repo"
@@ -79,18 +93,18 @@ def setup(out: Path, scenario: int, variant: str):
         "enabled": True, "allowUnsandboxedCommands": False, "autoAllowBashIfSandboxed": True,
         "enableWeakerNetworkIsolation": True,
         # the bridge runs outside Claude's sandbox because Codex applies its own sandbox-exec, which cannot nest; permission to run it still comes only from the skill's allowed-tools
-        "excludedCommands": ["uv run *cli.py*"],
+        "excludedCommands": ["python3 *cli_codex.py*" if variant == "baseline" else "uv run *cli.py*"],
         "filesystem": {"allowWrite": [str(home)]},
         "network": {"allowedDomains": ["chatgpt.com", "*.chatgpt.com", "api.openai.com", "*.openai.com", "*.oaistatic.com"],
                     "strictAllowlist": True}}}))
     return plugin, repo, home, settings
 
 
-def base_cmd(plugin, settings, model):
+def base_cmd(plugin, settings, model, variant):
     return ["claude", "-p", "--setting-sources", "", "--strict-mcp-config", "--plugin-dir", str(plugin),
             "--settings", str(settings), "--tools", "Bash,Read,Edit,Write,Glob,Grep,Monitor,Skill",
             # a skill's allowed-tools covers only a user-typed /codex:codex; a skill the model picks itself needs the user's own permission rule, which this stands in for
-            "--allowedTools", f'Skill,Monitor,Bash(uv run "{plugin}/.claude/skills/codex/scripts/cli.py" *)', "--permission-mode", "acceptEdits", "--model", model, "--output-format", "stream-json", "--verbose"]
+            "--allowedTools", f"Skill,Monitor,Bash({entry(plugin, variant)} *)", "--permission-mode", "acceptEdits", "--model", model, "--output-format", "stream-json", "--verbose"]
 
 
 def run_stream(cmd, repo, env, prompt, transcript, idle, cap):
@@ -134,8 +148,14 @@ def run_print(cmd, repo, env, prompt, transcript, resume=None):
     return None
 
 
+# A call that reads the bridge's reply through a pipe or a parser, and one that holds a value in a shell variable or substitution: both mean the reply was not usable as printed, and the second no longer matches a pre-approval.
+# 성진: a regex over the command text, so a `|` or `$` inside a quoted prompt counts too; tokenise with shlex if such prompts start to move the comparison.
+PIPED = re.compile(r"cli(_codex)?\.py[^|]*\|")
+SHELL_VALUE = re.compile(r"\$[A-Za-z_{(]|`")
+
+
 def digest(out: Path):
-    lines = []
+    lines, calls, denials = [], [], 0
     for tr in sorted(out.glob("transcript*.jsonl")):
         lines.append(f"== {tr.name}")
         for raw in tr.read_text().splitlines():
@@ -149,11 +169,23 @@ def digest(out: Path):
                         i = c.get("input", {})
                         extra = " ".join(f"{k}={i[k]}" for k in ("run_in_background", "timeout") if k in i)
                         lines.append(f"{c['name']} {extra} :: {i.get('command') or i.get('file_path') or json.dumps(i)[:200]}")
+                        if c["name"] == "Bash" and re.search(r"cli(_codex)?\.py", i.get("command", "")):
+                            calls.append(i)
                     elif c.get("type") == "text" and c.get("text", "").strip():
                         lines.append("TEXT :: " + c["text"].strip().replace("\n", " ")[:400])
             elif ev.get("type") == "result":
+                denials += len(ev.get("permission_denials") or [])
                 lines.append(f"RESULT denials={ev.get('permission_denials')} turns={ev.get('num_turns')} :: "
                              + (ev.get("result") or "").replace("\n", " ")[:600])
+    commands = [i.get("command", "") for i in calls]
+    lines.append("METRICS " + " ".join(f"{k}={v}" for k, v in {
+        "bridge_calls": len(calls),
+        "piped": sum(bool(PIPED.search(c)) for c in commands),
+        "shell_values": sum(bool(SHELL_VALUE.search(c)) for c in commands),
+        "denials": denials,
+        "background_follows": sum(bool(i.get("run_in_background")) and "--follow" in i.get("command", "") for i in calls),
+        "results": sum(" result " in f" {c} " for c in commands),
+    }.items()))
     (out / "digest.txt").write_text("\n".join(lines) + "\n")
     return lines
 
@@ -161,7 +193,8 @@ def digest(out: Path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scenario", type=int, choices=sorted(PROMPTS), required=True, help="which scenario in scenarios.md")
-    ap.add_argument("--variant", choices=("draft", "control"), required=True, help="the SKILL.md as written, or only its frontmatter and call paragraph")
+    ap.add_argument("--variant", choices=("draft", "control", "baseline"), required=True,
+                    help=f"the SKILL.md as written, only its frontmatter and call paragraph, or the whole skill as released in {BASELINE}")
     ap.add_argument("--out", type=Path, required=True, help="directory to write <scenario>-<variant>/ under")
     ap.add_argument("--model", default="opus", help="model the session runs (default: opus)")
     ap.add_argument("--idle", type=float, default=240, help="stream hosts: seconds of quiet after a result before stdin is closed (default: 240)")
@@ -171,7 +204,7 @@ def main():
     out = args.out.resolve() / f"{args.scenario}-{args.variant}"
     plugin, repo, home, settings = setup(out, args.scenario, args.variant)
     env = {**os.environ, "CODEX_HOME": str(home)}
-    cmd = base_cmd(plugin, settings, args.model)
+    cmd = base_cmd(plugin, settings, args.model, args.variant)
     prompts = PROMPTS[args.scenario]
     host = HOST[args.scenario]
     try:

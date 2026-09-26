@@ -120,10 +120,10 @@ class TheSkillTextPointsAtRealThings(unittest.TestCase):
     def test_every_field_named_is_a_key_the_code_writes(self):
         # Catches a renamed or misspelt field; a key the code writes only into its own records would still pass.
         code = "\n".join(p.read_text() for p in SCRIPTS.rglob("*.py"))
-        # Names Codex owns rather than this skill's replies.
-        codex_owned = {"turn_context"}
+        # Names Codex or a program owns rather than this skill's replies.
+        not_ours = {"turn_context", "uv"}
         commands = {path[0] for path in self.flags if path}
-        fields = set(re.findall(r"`([a-z][a-z_]*)`", self.body)) - codex_owned - commands
+        fields = set(re.findall(r"`([a-z][a-z_]*)`", self.body)) - not_ours - commands
         self.assertTrue(fields, "the check found no field names to check")
         self.assertEqual(sorted(f for f in fields if not re.search(rf'"{f}"\s*:|\["{f}"\]', code)), [])
 

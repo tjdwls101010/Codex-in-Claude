@@ -26,6 +26,7 @@ The skill's code takes the layout every bundled skill shares and runs under `uv`
 - **A missing `--schema` or `--image` left an empty run directory** that no listing showed. Both are checked before the directory is claimed.
 - **`config.toml` was read by a regex over `key = value` lines**, so quoted keys, escapes and multi-line strings were misread, and a number or a list came back as a string. It is read with `tomllib`; only top-level strings count, and a file that does not parse reads as empty.
 - **A prompt file, a prompt on stdin or a tasks file that is not UTF-8 was an internal error.** It is refused with exit 2. A `--schema` run whose final message is not UTF-8 is refused instead of crashing, and a text answer shows such bytes as U+FFFD.
+- **A finished run whose Codex pid had been handed to another process counted as live**, so it stayed in `status`'s `running`, its thread's `resume` was refused as a live turn and `batch clean` refused its group; a dead supervisor whose pid was reused kept its run `running` instead of `orphaned`. A recorded pid now counts only while it is still in the run's process group.
 
 ## [0.8.0] — 2026-09-25
 

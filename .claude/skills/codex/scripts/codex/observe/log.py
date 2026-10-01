@@ -56,9 +56,9 @@ def log(args):
             yield f"run.{m.get('state')} run={m.get('run_id')} exit={m.get('exit_code')}\n"
             yield trailer() + "\n"
             return None
-        return 1, [f"run.still-running run={m.get('run_id')} state={m.get('state')}", trailer()]
+        return [f"run.still-running run={m.get('run_id')} state={m.get('state')}", trailer()]
 
-    yield from follow(step, timeout=args.follow_timeout, heartbeat=args.heartbeat)
+    yield from follow(step, timeout=args.follow_timeout)
 
 
 def log_group(args, project, runs_dir):
@@ -96,7 +96,6 @@ def log_group(args, project, runs_dir):
             yield from drain()
             yield f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail + "\n"
             return None
-        return len(running), [f"group.still-running group={args.group} running={len(running)} "
-                              f"done={len(done)} failed={len(failed)}"]
+        return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
 
-    yield from follow(step, timeout=args.follow_timeout, heartbeat=args.heartbeat)
+    yield from follow(step, timeout=args.follow_timeout)

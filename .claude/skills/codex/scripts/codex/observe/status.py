@@ -70,7 +70,6 @@ def follow_group(args, project, runs_dir):
         if not running:
             yield f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail + "\n"
             return None
-        return len(running), [f"group.still-running group={args.group} running={len(running)} "
-                              f"done={len(done)} failed={len(failed)}"]
+        return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
 
-    yield from follow(step, timeout=args.follow_timeout, heartbeat=getattr(args, "heartbeat", None))
+    yield from follow(step, timeout=args.follow_timeout)

@@ -129,10 +129,9 @@ def group_name(text):
 
 
 def refuse_unusable_follow_options(args):
-    """`--follow-timeout` and `--heartbeat` only mean something to a follower; accepted otherwise they would read as obeyed."""
-    for flag in ("--follow-timeout", "--heartbeat"):
-        if getattr(args, flag[2:].replace("-", "_"), None) is not None and not args.follow:
-            raise Refusal(f"{flag} requires --follow", arguments=True)
+    """`--follow-timeout` only means something to a follower; accepted otherwise it would read as obeyed."""
+    if args.follow_timeout is not None and not args.follow:
+        raise Refusal("--follow-timeout requires --follow", arguments=True)
 
 
 def cmd_resume(args):
@@ -186,8 +185,6 @@ def add_common(p):
 def add_follow_options(p, *, closing):
     p.add_argument("--follow-timeout", type=positive_seconds, metavar="SEC",
                    help=f"stop following after SEC seconds with {closing} (default: follow until the end). Requires --follow; SEC must be positive")
-    p.add_argument("--heartbeat", type=positive_seconds, metavar="SEC",
-                   help="print `still-running elapsed=<s> running=<n>` on the first poll at or after every SEC seconds of following (default: off). Requires --follow; SEC must be positive")
 
 
 def add_run_options(p, *, kind):

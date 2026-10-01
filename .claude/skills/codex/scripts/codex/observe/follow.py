@@ -13,25 +13,20 @@ from codex.registry import group_gaps, unreadable_runs
 FOLLOW_INTERVAL = 1.0
 
 
-def follow(step, *, timeout, heartbeat):
+def follow(step, *, timeout):
     """Run `step()` every FOLLOW_INTERVAL until it is done or `timeout` passes, passing each line on as soon as it is produced.
 
-    `step()` is a generator that yields this tick's lines, newline included, as it produces them — so a failure later in the tick does not take earlier lines with it — and returns None once it has yielded the terminal line, else `(live count, lines to print if the deadline has passed)`. With `heartbeat`, a `still-running` line is printed on the first tick at or after each interval.
+    `step()` is a generator that yields this tick's lines, newline included, as it produces them — so a failure later in the tick does not take earlier lines with it — and returns None once it has yielded the terminal line, else the lines to print if the deadline has passed.
     """
-    started = beat_at = time.time()
+    started = time.time()
     while True:
-        pending = yield from step()
-        if pending is None:
+        deadline_lines = yield from step()
+        if deadline_lines is None:
             return
-        running, deadline_lines = pending
-        now = time.time()
-        if timeout and now - started >= timeout:
+        if timeout and time.time() - started >= timeout:
             for line in deadline_lines:
                 yield line + "\n"
             return
-        if heartbeat and now - beat_at >= heartbeat:
-            yield f"still-running elapsed={int(now - started)} running={running}\n"
-            beat_at = now
         time.sleep(FOLLOW_INTERVAL)
 
 

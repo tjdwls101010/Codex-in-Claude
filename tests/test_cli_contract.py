@@ -212,11 +212,9 @@ class FlagsThatWouldDecideNothing(BridgeCase):
         self.wait_all(self.bridge("batch", "start", "--group", "g", "--task", "x"))
         cases = [("status", "--follow"),
                  ("status", "--group", "g", "--follow-timeout", "5"),
-                 ("log", "--run", out["run_id"], "--heartbeat", "5"),
                  ("log", "--run", out["run_id"], "--follow-timeout", "5"),
                  ("log", "--run", out["run_id"], "--follow", "--follow-timeout", "0"),
                  ("status", "--group", "g", "--follow", "--follow-timeout", "-1"),
-                 ("log", "--run", out["run_id"], "--follow", "--heartbeat", "0"),
                  ("log", "--group", "g", "--since", "0"),
                  ("batch", "start", "--group", "h", "--base", "HEAD", "--task", "x")]
         for args in cases:
@@ -338,6 +336,8 @@ class RemovedSurface(BridgeCase):
     def test_each_is_refused_by_the_parser_before_anything_is_claimed(self):
         for args in (("start", "--foreground", "x"), ("resume", "--foreground", "r", "x"),
                      ("status", "--include-external"), ("status", "--thread", "t"),
+                     ("log", "--run", "r", "--follow", "--heartbeat", "5"),
+                     ("status", "--group", "g", "--follow", "--heartbeat", "5"),
                      ("batch", "start", "--group", "g", "--resume-from", "p", "--as-ready", "--task", "x")):
             with self.subTest(args=args):
                 self.assertIn("unrecognized arguments", self.bridge(*args, rc=2)["error"])

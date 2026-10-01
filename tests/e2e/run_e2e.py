@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one S6 scenario against the draft, the control or the v0.8.0 skill, isolated, and save what the session did.
+"""Run one S6 scenario against the draft, the control or the v0.9.0 skill, isolated, and save what the session did.
 
     python3 tests/e2e/run_e2e.py --scenario 1 --variant draft --out /tmp/e2e
 
@@ -36,13 +36,11 @@ PROMPTS = {
     4: ["Ask Codex for a short summary of what this repository contains and tell me. This is a one-shot session: you get no later turn, so finish within this reply."],
 }
 HOST = {1: "stream", 2: "stream", 3: "resume", 4: "print"}
-BASELINE = "v0.8.0"
+BASELINE = "v0.9.0"
 
 
-def entry(plugin: Path, variant: str) -> str:
-    """The command line that calls the bridge, as the variant's SKILL.md writes it: the baseline ran on the python3 on PATH."""
-    if variant == "baseline":
-        return f'python3 "{plugin}/.claude/skills/codex/scripts/cli_codex.py"'
+def entry(plugin: Path) -> str:
+    """The command line that calls the bridge, as every variant's SKILL.md writes it, the baseline's included."""
     return f'uv run "{plugin}/.claude/skills/codex/scripts/cli.py"'
 
 
@@ -93,18 +91,18 @@ def setup(out: Path, scenario: int, variant: str):
         "enabled": True, "allowUnsandboxedCommands": False, "autoAllowBashIfSandboxed": True,
         "enableWeakerNetworkIsolation": True,
         # the bridge runs outside Claude's sandbox because Codex applies its own sandbox-exec, which cannot nest; permission to run it still comes only from the skill's allowed-tools
-        "excludedCommands": ["python3 *cli_codex.py*" if variant == "baseline" else "uv run *cli.py*"],
+        "excludedCommands": ["uv run *cli.py*"],
         "filesystem": {"allowWrite": [str(home)]},
         "network": {"allowedDomains": ["chatgpt.com", "*.chatgpt.com", "api.openai.com", "*.openai.com", "*.oaistatic.com"],
                     "strictAllowlist": True}}}))
     return plugin, repo, home, settings
 
 
-def base_cmd(plugin, settings, model, variant):
+def base_cmd(plugin, settings, model):
     return ["claude", "-p", "--setting-sources", "", "--strict-mcp-config", "--plugin-dir", str(plugin),
             "--settings", str(settings), "--tools", "Bash,Read,Edit,Write,Glob,Grep,Monitor,Skill",
             # a skill's allowed-tools covers only a user-typed /codex:codex; a skill the model picks itself needs the user's own permission rule, which this stands in for
-            "--allowedTools", f"Skill,Monitor,Bash({entry(plugin, variant)} *)", "--permission-mode", "acceptEdits", "--model", model, "--output-format", "stream-json", "--verbose"]
+            "--allowedTools", f"Skill,Monitor,Bash({entry(plugin)} *)", "--permission-mode", "acceptEdits", "--model", model, "--output-format", "stream-json", "--verbose"]
 
 
 def run_stream(cmd, repo, env, prompt, transcript, idle, cap):
@@ -150,8 +148,17 @@ def run_print(cmd, repo, env, prompt, transcript, resume=None):
 
 # A call that reads the bridge's reply through a pipe or a parser, and one that holds a value in a shell variable or substitution: both mean the reply was not usable as printed, and the second no longer matches a pre-approval.
 # 성진: a regex over the command text, so a `|` or `$` inside a quoted prompt counts too; tokenise with shlex if such prompts start to move the comparison.
-PIPED = re.compile(r"cli(_codex)?\.py[^|]*\|")
+PIPED = re.compile(r"cli\.py[^|]*\|")
 SHELL_VALUE = re.compile(r"\$[A-Za-z_{(]|`")
+
+
+def calls_to_result(commands):
+    """Bridge calls between the first one that starts work and the first that collects it, neither counted: the follower, status checks or polls a session needed before it had the answer. None when either never happened."""
+    starts = [n for n, c in enumerate(commands) if re.search(r"cli\.py\S*\s+(start|resume|batch)\b", c)]
+    if not starts:
+        return None
+    ends = [n for n, c in enumerate(commands) if n > starts[0] and re.search(r"cli\.py\S*\s+result\b", c)]
+    return ends[0] - starts[0] - 1 if ends else None
 
 
 def digest(out: Path):
@@ -169,7 +176,7 @@ def digest(out: Path):
                         i = c.get("input", {})
                         extra = " ".join(f"{k}={i[k]}" for k in ("run_in_background", "timeout") if k in i)
                         lines.append(f"{c['name']} {extra} :: {i.get('command') or i.get('file_path') or json.dumps(i)[:200]}")
-                        if c["name"] == "Bash" and re.search(r"cli(_codex)?\.py", i.get("command", "")):
+                        if c["name"] == "Bash" and "cli.py" in i.get("command", ""):
                             calls.append(i)
                     elif c.get("type") == "text" and c.get("text", "").strip():
                         lines.append("TEXT :: " + c["text"].strip().replace("\n", " ")[:400])
@@ -183,8 +190,10 @@ def digest(out: Path):
         "piped": sum(bool(PIPED.search(c)) for c in commands),
         "shell_values": sum(bool(SHELL_VALUE.search(c)) for c in commands),
         "denials": denials,
-        "background_follows": sum(bool(i.get("run_in_background")) and "--follow" in i.get("command", "") for i in calls),
+        "background_waits": sum(bool(i.get("run_in_background")) and ("--follow" in c or "--wait" in c)
+                                for i, c in zip(calls, commands)),
         "results": sum(" result " in f" {c} " for c in commands),
+        "calls_to_result": calls_to_result(commands),
     }.items()))
     (out / "digest.txt").write_text("\n".join(lines) + "\n")
     return lines
@@ -204,7 +213,7 @@ def main():
     out = args.out.resolve() / f"{args.scenario}-{args.variant}"
     plugin, repo, home, settings = setup(out, args.scenario, args.variant)
     env = {**os.environ, "CODEX_HOME": str(home)}
-    cmd = base_cmd(plugin, settings, args.model, args.variant)
+    cmd = base_cmd(plugin, settings, args.model)
     prompts = PROMPTS[args.scenario]
     host = HOST[args.scenario]
     try:

@@ -7,11 +7,9 @@ import json
 from codex.errors import Refusal
 from codex.git import resolve_project
 from codex.observe.collect import final_message, member_result, overlaps, written_paths
-from codex.observe.follow import wait_until
-from codex.observe.rows import group_snapshot, member_rows, progress, turn_failed_excerpt
-from codex.registry import (
-    TERMINAL_STATES, group_gaps, group_runs, is_live, read_meta, reap, resolve_runs_dir, run, still_writing,
-)
+from codex.observe.follow import GroupWatch, wait_until
+from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
+from codex.registry import TERMINAL_STATES, group_view, is_live, read_meta, reap, resolve_runs_dir, run, still_writing
 
 
 def result(args):
@@ -19,9 +17,9 @@ def result(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
         if args.wait:
-            # Ended as `status --group --follow` closes: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them. The members are read again every time, so one a still-starting batch adds is waited for too.
-            wait_until(lambda: not group_snapshot(member_rows(group_runs(runs_dir, args.group), project))[0],
-                       args.wait_timeout)
+            # Ended as `status --group --follow` closes, through the same watch: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
+            watch = GroupWatch(runs_dir, args.group, project)
+            wait_until(lambda: not group_snapshot(watch.now()[0])[0], args.wait_timeout)
         return result_group(args, project, runs_dir)
     rd, meta = run(runs_dir, args.run)
     if args.wait:
@@ -75,7 +73,8 @@ def result(args):
 
 def result_group(args, project, runs_dir):
     members, shown, per_run_paths, totals = [], [], {}, {"input_tokens": 0, "output_tokens": 0}
-    for index, (rd, meta) in enumerate(group_runs(runs_dir, args.group)):
+    found_members, never = group_view(runs_dir, args.group)
+    for index, (rd, meta) in enumerate(found_members):
         meta = reap(rd, meta)
         row, info, text = member_result(rd, meta)
         members.append({"index": index, **row})
@@ -85,7 +84,6 @@ def result_group(args, project, runs_dir):
         for key in totals:
             totals[key] += int((info["usage"] or {}).get(key) or 0)
     found = overlaps(per_run_paths)
-    never = group_gaps(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(members, len(never))
     header = {"group": args.group, "group_state": gstate, "done": done, "failed": failed, "running": running,
               "unstarted": never, "overlaps": found,

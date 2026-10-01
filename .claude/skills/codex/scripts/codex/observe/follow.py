@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import time
 
-from codex.observe.rows import group_snapshot
-from codex.registry import group_gaps, unreadable_runs
+from codex.errors import Refusal
+from codex.observe.rows import group_snapshot, run_row
+from codex.registry import group_view, read_meta, unreadable_runs
 
 # How often a follower asks whether anything changed. A tick reads forward from a byte offset, so it is cheap.
 FOLLOW_INTERVAL = 1.0
@@ -40,16 +41,37 @@ def wait_until(ended, timeout):
         time.sleep(FOLLOW_INTERVAL)
 
 
-def closing_line(runs_dir, name, rows, gone):
-    """The line a group's follow ends on. `gone` counts the members the follow can no longer show — the gaps it found when it began, and its members whose meta.json has stopped parsing since, which `rows` therefore lacks — so each member counts once, from what the follow itself saw, even after `clean` has released the manifest."""
-    _running, done, failed, gstate = group_snapshot(rows, gone)
-    bad = len(unreadable_runs(runs_dir))
-    return (f"group.{gstate} group={name} done={len(done)} failed={len(failed)}"
-            + (f" unstarted={gone}" if gone else "") + (f" unreadable={bad}" if bad else "") + "\n")
+class GroupWatch:
+    """A group as a follower or a wait sees it, tick by tick: its members' rows and the slots no row stands for, both from one read of the manifest, so a member counts once and one a still-starting batch adds is seen. Once `clean` has released the name, or the manifest stops parsing, what was last read stands, its members re-read, so a slot that never started is not forgotten."""
+
+    def __init__(self, runs_dir, name, project):
+        self.runs_dir, self.name, self.project = runs_dir, name, project
+        # Refuses an unknown or unreadable group before anything is followed.
+        self.members, self.gaps = group_view(runs_dir, name)
+
+    def now(self):
+        """`(rows, gaps)` as they stand, each row reaped."""
+        try:
+            self.members, self.gaps = group_view(self.runs_dir, self.name)
+            members, gaps = self.members, self.gaps
+        except Refusal:
+            members, gaps = [], list(self.gaps)
+            for rd, m in self.members:
+                fresh = read_meta(rd)
+                if fresh:
+                    members.append((rd, fresh))
+                else:
+                    gaps.append({"run_id": m.get("run_id"), "label": m.get("label"), "error": "its meta.json will not parse"})
+        return [run_row(rd, m, self.project) for rd, m in members], gaps
 
 
-def group_tail(runs_dir, name):
+def tail(runs_dir, gaps):
     """The counts a group's closing line appends when non-zero."""
-    never = group_gaps(runs_dir, name)
     bad = len(unreadable_runs(runs_dir))
-    return never, (f" unstarted={len(never)}" if never else "") + (f" unreadable={bad}" if bad else "")
+    return (f" unstarted={len(gaps)}" if gaps else "") + (f" unreadable={bad}" if bad else "")
+
+
+def closing_line(runs_dir, name, rows, gaps):
+    """The line a group's follow ends on."""
+    _running, done, failed, gstate = group_snapshot(rows, len(gaps))
+    return f"group.{gstate} group={name} done={len(done)} failed={len(failed)}" + tail(runs_dir, gaps) + "\n"

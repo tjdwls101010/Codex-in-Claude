@@ -16,8 +16,8 @@ Locks, atomic writes, staging names, run-id claims and the compare-and-set on `s
 """
 
 from codex.registry.groups import (
-    claim_group, derived_groups, group_gaps, group_manifest, group_path, group_runs, group_unreadable, list_groups,
-    member_run_ids, owned_run_ids, record_members, release_group, valid_group_name,
+    claim_group, derived_groups, group_gaps, group_manifest, group_path, group_runs, group_unreadable, group_view,
+    list_groups, member_run_ids, owned_run_ids, record_members, release_group, valid_group_name,
 )
 from codex.registry.runs import (
     TERMINAL_STATES, ensure_runs_dir, find_run, implicit_run, is_live, iter_runs, live_runs, meta_unreadable,
@@ -35,7 +35,7 @@ __all__ = [
     # writing runs
     "publish_run", "write_meta", "update_meta", "record_if_active",
     # groups
-    "valid_group_name", "claim_group", "record_members", "group_manifest", "group_runs", "group_gaps",
+    "valid_group_name", "claim_group", "record_members", "group_manifest", "group_view", "group_runs", "group_gaps",
     "owned_run_ids", "member_run_ids", "derived_groups", "list_groups", "group_path", "group_unreadable",
     "release_group",
 ]

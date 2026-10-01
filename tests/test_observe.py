@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import time
 import unittest
 
@@ -510,6 +511,24 @@ class WaitingForTheResult(BridgeCase):
         (self.runs_dir / quick / "meta.json").write_text("{ truncated")
         followed, _ = follower.communicate(timeout=30)
         self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1 unreadable=1")
+
+    def test_a_follower_started_while_a_batch_spawns_follows_the_members_it_adds(self):
+        # The second member gets its run while the first is still live, so the follow sees it start. A slot still unspawned when every run it knows has ended counts as unstarted, as the contract says: it looks the same as a slot a killed batch left.
+        for command in (("status", "--group", "g", "--follow"), ("log", "--group", "g", "--follow")):
+            with self.subTest(command=command[0]):
+                for d in self.runs_dir.glob("*"):
+                    subprocess.run(["rm", "-rf", str(d)])
+                p = self.spawn("batch", "--group", "g", "--task", "first", "--task", "second",
+                               env={"FAKE_CODEX_WHEN": json.dumps({"first": {"FAKE_CODEX_HANG": 6},
+                                                                   "second": {"FAKE_CODEX_PRE_DELAY": 2}})})
+                manifest = self.runs_dir / ".groups" / "g.json"
+                wait_until(lambda: manifest.exists() and any(m.get("run_id") for m in json.loads(manifest.read_text())["members"]),
+                           timeout=30)
+                followed = self.bridge_raw(*command, timeout=120).stdout
+                p.communicate(timeout=60)
+                self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=2 failed=0", followed)
+                if command[0] == "log":
+                    self.assertIn("[1] msg OK", followed.splitlines(), "the later member's events are shown too")
 
     def test_a_wait_timeout_must_be_a_finite_number(self):
         out = self.bridge("start", "x")

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from codex.git import resolve_project
-from codex.observe.follow import closing_line, follow, group_tail
-from codex.observe.rows import group_snapshot, member_rows, note_unreadable, row_is_live, run_row, summary_row
-from codex.registry import group_gaps, group_runs, iter_runs, list_groups, resolve_runs_dir, run
+from codex.observe.follow import GroupWatch, closing_line, follow, tail
+from codex.observe.rows import group_snapshot, note_unreadable, row_is_live, run_row, summary_row
+from codex.registry import group_view, iter_runs, list_groups, resolve_runs_dir, run
 
 # The default listing keeps every live run plus this many newest.
 LISTING_ROWS = 20
@@ -34,8 +34,8 @@ def status(args):
 
 
 def status_group(args, project, runs_dir):
-    rows = [run_row(rd, m, project) for rd, m in group_runs(runs_dir, args.group)]
-    never = group_gaps(runs_dir, args.group)
+    members, never = group_view(runs_dir, args.group)
+    rows = [run_row(rd, m, project) for rd, m in members]
     running, done, failed, gstate = group_snapshot(rows, len(never))
     out = {"group": args.group, "group_state": gstate, "running": running, "done": done, "failed": failed,
            "total_runs": len(rows), "runs_truncated": 0}
@@ -47,15 +47,14 @@ def status_group(args, project, runs_dir):
 
 def follow_group(args, project, runs_dir):
     """One line per member state change, then one terminal line."""
-    members = group_runs(runs_dir, args.group)
-    never, tail = group_tail(runs_dir, args.group)
-    if not members:
-        yield f"group.empty group={args.group}" + tail + "\n"
+    watch = GroupWatch(runs_dir, args.group, project)
+    if not watch.members:
+        yield f"group.empty group={args.group}" + tail(runs_dir, watch.gaps) + "\n"
         return
     seen = {}
 
     def step():
-        rows = member_rows(members, project)
+        rows, gaps = watch.now()
         for row in rows:
             prev = seen.get(row["run_id"])
             if prev != row["state"]:
@@ -66,7 +65,7 @@ def follow_group(args, project, runs_dir):
                 seen[row["run_id"]] = row["state"]
         running, done, failed, _ = group_snapshot(rows)
         if not running:
-            yield closing_line(runs_dir, args.group, rows, len(never) + len(members) - len(rows))
+            yield closing_line(runs_dir, args.group, rows, gaps)
             return None
         return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
 

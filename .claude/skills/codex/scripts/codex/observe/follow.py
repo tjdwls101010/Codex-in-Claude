@@ -1,6 +1,6 @@
-"""The loop every `--follow` runs, and the closing line a group's follow ends on.
+"""The loop every `--follow` runs, the closing line a group's follow ends on, and the silent wait `result --wait` makes.
 
-A follower holds no state `status --group` could not re-derive, so one that dies loses nothing, and every follow ends on a terminal line — including on `--follow-timeout` — so silence never stands in for an outcome.
+A follower holds no state `status --group` could not re-derive, so one that dies loses nothing, and every follow ends on a terminal line — including on `--follow-timeout` — so silence never stands in for an outcome. A wait is the opposite contract: it prints nothing at all, so the result printed after it is the whole output.
 """
 
 from __future__ import annotations
@@ -26,6 +26,15 @@ def follow(step, *, timeout):
         if timeout and time.time() - started >= timeout:
             for line in deadline_lines:
                 yield line + "\n"
+            return
+        time.sleep(FOLLOW_INTERVAL)
+
+
+def wait_until(ended, timeout):
+    """Ask `ended()` every FOLLOW_INTERVAL until it holds or `timeout` seconds have passed (None: no limit)."""
+    started = time.time()
+    while not ended():
+        if timeout and time.time() - started >= timeout:
             return
         time.sleep(FOLLOW_INTERVAL)
 

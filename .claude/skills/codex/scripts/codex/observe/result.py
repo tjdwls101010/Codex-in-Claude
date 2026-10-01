@@ -1,4 +1,4 @@
-"""`result`: what a run or a group concluded. The answer is read, not parsed, so it comes as text after a JSON header whose byte counts say where each answer ends; a --schema run's answer is parsed, so it stays one JSON document, indented to be read as printed."""
+"""`result`: what a run or a group concluded, at once or — with `--wait` — once it has ended. The answer is read, not parsed, so it comes as text after a JSON header whose byte counts say where each answer ends; a --schema run's answer is parsed, so it stays one JSON document, indented to be read as printed."""
 
 from __future__ import annotations
 
@@ -7,16 +7,27 @@ import json
 from codex.errors import Refusal
 from codex.git import resolve_project
 from codex.observe.collect import final_message, member_result, overlaps, written_paths
-from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
-from codex.registry import TERMINAL_STATES, group_gaps, group_runs, is_live, reap, resolve_runs_dir, run, still_writing
+from codex.observe.follow import wait_until
+from codex.observe.rows import group_snapshot, member_rows, progress, turn_failed_excerpt
+from codex.registry import (
+    TERMINAL_STATES, group_gaps, group_runs, is_live, read_meta, reap, resolve_runs_dir, run, still_writing,
+)
 
 
 def result(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
+        if args.wait:
+            # Ended as `status --group --follow` closes: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
+            members = group_runs(runs_dir, args.group)
+            wait_until(lambda: not group_snapshot(member_rows(members, project))[0], args.wait_timeout)
         return result_group(args, project, runs_dir)
     rd, meta = run(runs_dir, args.run)
+    if args.wait:
+        # The run found now is the one waited for, even if a later turn on its thread starts meanwhile.
+        wait_until(lambda: not is_live(reap(rd, read_meta(rd) or meta)), args.wait_timeout)
+        meta = read_meta(rd) or meta
     meta = reap(rd, meta)
     info = progress(rd, meta)
     # A live run has no final answer yet: what it has said so far is not the object its schema shapes.

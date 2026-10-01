@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from codex.git import resolve_project
 from codex.observe.follow import follow, group_tail
-from codex.observe.rows import group_snapshot, note_unreadable, row_is_live, run_row, summary_row
-from codex.registry import group_gaps, group_runs, iter_runs, list_groups, read_meta, resolve_runs_dir, run
+from codex.observe.rows import group_snapshot, member_rows, note_unreadable, row_is_live, run_row, summary_row
+from codex.registry import group_gaps, group_runs, iter_runs, list_groups, resolve_runs_dir, run
 
 # The default listing keeps every live run plus this many newest.
 LISTING_ROWS = 20
@@ -55,10 +55,8 @@ def follow_group(args, project, runs_dir):
     seen = {}
 
     def step():
-        rows = []
-        for rd, m in members:
-            row = run_row(rd, read_meta(rd) or m, project)
-            rows.append(row)
+        rows = member_rows(members, project)
+        for row in rows:
             prev = seen.get(row["run_id"])
             if prev != row["state"]:
                 line = f"run {row['run_id']} {prev or '-'} -> {row['state']}"

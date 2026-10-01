@@ -8,7 +8,7 @@ from codex.codex_cli import CursorOutOfRange, event_lines
 from codex.errors import Refusal
 from codex.git import resolve_project
 from codex.observe.follow import follow, group_tail
-from codex.observe.rows import group_snapshot, run_row
+from codex.observe.rows import group_snapshot, member_rows
 from codex.registry import (
     group_manifest, group_runs, implicit_run, is_live, iter_runs, read_meta, reap, resolve_runs_dir, run,
 )
@@ -89,7 +89,7 @@ def log_group(args, project, runs_dir):
 
     def step():
         yield from drain()
-        rows = [run_row(rd, read_meta(rd) or m, project) for rd, m in members]
+        rows = member_rows(members, project)
         running, done, failed, gstate = group_snapshot(rows, len(never))
         if not running or not args.follow:
             # Drained again after the state was read, so events written just before the end are not lost.

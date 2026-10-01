@@ -169,6 +169,12 @@ def cmd_batch(args):
     return batch(args)
 
 
+def cmd_result(args):
+    if args.wait_timeout is not None and not args.wait:
+        raise Refusal("--wait-timeout requires --wait", arguments=True)
+    return result(args)
+
+
 def doctor_reply(args):
     """The report, with the exit code that says whether a blocker would stop a run."""
     report = doctor(args)
@@ -286,7 +292,9 @@ def build_parser():
     selector = p.add_mutually_exclusive_group(required=True)
     selector.add_argument("--run", metavar="REF", help="one run: a header with its state, exit code, thread, `message_bytes`, changed files, commands and usage, and `turn_failed` when the turn failed, then its whole final message; while the run is live, what it has said so far, with `note` saying it is partial. A --schema run is one JSON document carrying `json`, the parsed message, and fails while its final message is missing or not JSON")
     selector.add_argument("--group", help=f"every member: a header with `group_state`, usage totals, `overlaps` (the paths more than one member wrote), `unstarted` (members that never started) and each member's state and sizes, then each member's message after its separator line, capped at {GROUP_MESSAGE_CAP} B and cut at a character boundary, the full size stated")
-    p.set_defaults(func=result)
+    p.add_argument("--wait", action="store_true", help="wait until the run or group has ended, printing nothing meanwhile, then print what `result` without it would. A run has ended once it is terminal and its Codex no longer writes; a group once no readable member is live — a slot that never started and a member whose meta.json will not parse are not waited for")
+    p.add_argument("--wait-timeout", type=positive_seconds, metavar="SEC", help="stop waiting after SEC seconds and print the result as it stands then, partial and saying so (default: wait until the end). Requires --wait; SEC must be positive")
+    p.set_defaults(func=cmd_result)
 
     b = command("batch", "start N runs as one group", epilog=BATCH_EPILOG,
                 description="A group is the set of runs one `batch` created, addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `clean`, and by `batch --resume-from`. It outlives the session that started it, and its name stays reserved until `clean` releases it.")

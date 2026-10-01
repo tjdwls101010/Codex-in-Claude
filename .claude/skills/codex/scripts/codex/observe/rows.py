@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from codex.codex_cli import scan_progress, stderr_tail as read_stderr_tail
-from codex.registry import TERMINAL_STATES, is_live, reap, still_writing, unreadable_runs
+from codex.registry import TERMINAL_STATES, is_live, read_meta, reap, still_writing, unreadable_runs
 from codex.util import clip
 
 # Advisory: a run idle this long is shown `stalled`, never killed for it. One long command is legitimately silent, which is why `in_progress_item` is reported beside it.
@@ -96,6 +96,11 @@ def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
         "codex_pid": meta.get("codex_pid"), "pgid": meta.get("pgid"), "events": str(events_path),
         **some("waits_for", "predecessor_state"),
     }
+
+
+def member_rows(members, project: Path):
+    """The rows of a group's members as they stand now, each re-read from disk — falling back to the meta it was resolved with if that will not parse — and reaped."""
+    return [run_row(rd, read_meta(rd) or m, project) for rd, m in members]
 
 
 def group_snapshot(rows, unstarted=0):

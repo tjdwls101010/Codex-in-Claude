@@ -19,6 +19,7 @@ through the environment so the bridge cannot tell it from the real CLI:
   FAKE_CODEX_IGNORE_SIGINT  sit through SIGINT so a signal ladder has to escalate
   FAKE_CODEX_IGNORE_SIGTERM  sit through SIGTERM too
   FAKE_CODEX_GRANDCHILD  start a child in codex's process group that ignores SIGINT (and SIGTERM when codex does); it writes its own pid to this path once its handlers are installed
+  FAKE_CODEX_WHEN       JSON object: for each key the prompt contains, its object of FAKE_CODEX_* settings applies to this run, so batch members can differ
 """
 
 import json
@@ -132,6 +133,9 @@ def main():
     if prompt_of(argv) is None:
         sys.stderr.write("Reading prompt from stdin...\nNo prompt provided via stdin.\n")
         return 1
+    for key, settings in json.loads(os.environ.get("FAKE_CODEX_WHEN") or "{}").items():
+        if key in prompt_of(argv):
+            os.environ.update({k: str(v) for k, v in settings.items()})
 
     sys.stderr.write("Reading additional input from stdin...\n")
     if os.environ.get("FAKE_CODEX_STDERR"):

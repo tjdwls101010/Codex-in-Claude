@@ -266,22 +266,22 @@ class ItemsAndPaths(unittest.TestCase):
                            {"type": "item.completed", "item": self.MESSAGE})
 
     def test_a_command_comes_without_its_shell_wrapper_and_with_its_whole_output(self):
-        self.assertEqual(self.codex_cli.find_item(self.path, "item_1"),
+        self.assertEqual(self.codex_cli.find_item(self.path, "item_1")[0],
                          {"kind": "command", "type": "command_execution", "command": "make test",
                           "exit_code": 2, "output": "ok\n"})
 
     def test_a_file_change_comes_with_its_changes(self):
-        self.assertEqual(self.codex_cli.find_item(self.path, "item_2"),
+        self.assertEqual(self.codex_cli.find_item(self.path, "item_2")[0],
                          {"kind": "file_change", "type": "file_change", "changes": self.CHANGE["changes"]})
 
     def test_any_other_item_comes_as_recorded(self):
-        self.assertEqual(self.codex_cli.find_item(self.path, "item_3"),
+        self.assertEqual(self.codex_cli.find_item(self.path, "item_3")[0],
                          {"kind": "other", "type": "agent_message", "item": self.MESSAGE})
 
-    def test_an_unknown_item_is_none_and_the_ids_say_what_exists(self):
-        self.assertIsNone(self.codex_cli.find_item(self.path, "item_9"))
-        self.assertEqual(self.codex_cli.item_ids(self.path),
-                         ["item_1:command_execution", "item_2:file_change", "item_3:agent_message"])
+    def test_an_unknown_item_is_none_beside_what_exists_in_the_same_read(self):
+        # One read for both, so a refusal never lists an item the lookup did not see, however fast the run appends.
+        self.assertEqual(self.codex_cli.find_item(self.path, "item_9"),
+                         (None, ["item_1:command_execution", "item_2:file_change", "item_3:agent_message"]))
 
     def test_changed_paths_are_every_path_a_file_change_names(self):
         self.assertEqual(self.codex_cli.changed_paths(self.path), {"/p/a.py", "/p/b.py"})

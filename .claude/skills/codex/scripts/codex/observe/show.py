@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from codex.codex_cli import find_item, item_ids
+from codex.codex_cli import find_item
 from codex.errors import Refusal
 from codex.git import resolve_project
 from codex.registry import resolve_runs_dir, run
@@ -15,9 +15,9 @@ def show(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     rd, meta = run(runs_dir, args.run)
-    found = find_item(rd / "events.jsonl", args.item)
+    found, available = find_item(rd / "events.jsonl", args.item)
     if not found:
-        raise Refusal(f"no item {args.item!r} in run {meta['run_id']}", available=item_ids(rd / "events.jsonl")[:60])
+        raise Refusal(f"no item {args.item!r} in run {meta['run_id']}", available=available[:60])
     out = {"run_id": meta["run_id"], "item_id": args.item, "item_type": found["type"]}
     if found["kind"] == "command":
         text = found["output"]

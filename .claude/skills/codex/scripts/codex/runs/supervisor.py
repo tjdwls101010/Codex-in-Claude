@@ -35,17 +35,17 @@ def spawn_supervised(run_dir: Path) -> int:
     return p.pid
 
 
-def end_group(pgid, *, grace, done, before_kill=None, every_rung=False, sent=None):
+def end_group(pgid, *, grace, done, before_kill=None, every_rung=False, sent=None, kill=os.killpg):
     """SIGINT, then SIGTERM, then SIGKILL to a process group, then a SIGKILL sweep, because a descendant can outlive Codex.
 
-    Each rung waits up to its time for `done()`. By default the ladder stops at the first rung after which `done()` holds (a stop ends once the run's own processes are gone); with `every_rung` SIGTERM is sent even so, so leftovers get the chance to exit cleanly before SIGKILL. `before_kill` runs before any SIGKILL — a supervisor ending its own group records its outcome there. Signals actually sent are appended to `sent` (returned), which survives a PermissionError the caller catches.
+    Each rung waits up to its time for `done()`. By default the ladder stops at the first rung after which `done()` holds (a stop ends once the run's own processes are gone); with `every_rung` SIGTERM is sent even so, so leftovers get the chance to exit cleanly before SIGKILL. `before_kill` runs before any SIGKILL — a supervisor ending its own group records its outcome there. Signals actually sent are appended to `sent` (returned), which survives a PermissionError the caller catches. `kill(pgid, signal)` delivers each one.
     """
     sent = [] if sent is None else sent
     for sig, wait in ((signal.SIGINT, grace), (signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
         if sig == signal.SIGKILL and before_kill:
             before_kill()
         try:
-            os.killpg(int(pgid), sig)
+            kill(int(pgid), sig)
         except ProcessLookupError:
             return sent
         sent.append(sig.name)
@@ -58,7 +58,7 @@ def end_group(pgid, *, grace, done, before_kill=None, every_rung=False, sent=Non
         if before_kill:
             before_kill()
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(int(pgid), signal.SIGKILL)
+            kill(int(pgid), signal.SIGKILL)
             sent.append("SIGKILL")
     return sent
 

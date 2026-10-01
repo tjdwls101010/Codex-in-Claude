@@ -10,7 +10,7 @@ from codex.git import (
     resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
 )
 from codex.registry import find_run
-from codex.runs import settings
+from codex.runs import settings_for
 
 
 def wants_worktree(item, args):
@@ -37,7 +37,7 @@ def writers_by_directory(tasks, args, project, runs_dir):
         if item["kind"] == "resume" and item.get("resume"):
             _rd, parent = find_run(runs_dir, item["resume"])
         ns = task_args(args, item)
-        r = settings.resolve(sandbox=ns.sandbox, cwd=getattr(ns, "cwd", None), base=parent)
+        r = settings_for(sandbox=ns.sandbox, cwd=getattr(ns, "cwd", None), base=parent)
         if r["sandbox"] in WRITING_SANDBOXES:
             dirs.setdefault(str(r["cwd"] or project), []).append(i)
     return dirs

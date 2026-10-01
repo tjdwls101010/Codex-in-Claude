@@ -9,7 +9,7 @@ from pathlib import Path
 from codex.codex_cli import check_model_effort, model_catalog, user_defaults
 from codex.errors import Refusal
 from codex.registry import find_run
-from codex.runs import settings
+from codex.runs import settings_for
 from codex.util import clip
 
 
@@ -88,7 +88,7 @@ def check_task_settings(tasks, args, runs_dir):
     for n, item in enumerate(tasks, 1):
         ns = task_args(args, item)
         base = find_run(runs_dir, item["resume"])[1] if item["kind"] == "resume" else None
-        adopted.append((n, settings.resolve(
+        adopted.append((n, settings_for(
             sandbox=ns.sandbox, model=ns.model, effort=ns.effort, priority=getattr(ns, "priority", None),
             inherit_config=getattr(ns, "inherit_config", False), base=base, user=user)["adopted"]))
     if not any(a["model"] or a["effort"] for _n, a in adopted):

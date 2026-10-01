@@ -1,4 +1,4 @@
-"""`start`, `resume` and `stop`."""
+"""`start`, `resume` and `stop`, and the `next` a started run's reply names."""
 
 from __future__ import annotations
 
@@ -9,10 +9,16 @@ from codex.git import resolve_project
 from codex.registry import find_run, group_runs, implicit_run, iter_runs, live_runs, resolve_runs_dir, run
 from codex.runs.create import create_run
 from codex.runs.supervisor import stop_run
+from codex.util import with_next
 
 
 def start(args):
-    return create_run(args, kind="start")
+    return follow_up(create_run(args, kind="start"), args)
+
+
+def follow_up(out, args):
+    """The reply with its `next`: the follower of the run it made."""
+    return with_next(out, "state", "log", "--run", out["run_id"], "--follow", project=args.project, runs_dir=args.runs_dir)
 
 
 def resume(args):
@@ -40,7 +46,7 @@ def resume(args):
     if args.last:
         # Say which run was inherited, and so which label and sandbox.
         out.update(resolved_from_run_id=base.get("run_id"), resolved_from=resolved_from, label=base.get("label"))
-    return out
+    return follow_up(out, args)
 
 
 def stop(args):

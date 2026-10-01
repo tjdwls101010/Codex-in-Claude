@@ -5,7 +5,7 @@ from __future__ import annotations
 from codex.batch.tasks import task_args
 from codex.errors import Refusal
 from codex.registry import find_run, record_members
-from codex.runs.create import create_run
+from codex.runs import create_run
 
 
 def spawn_task(ns, item, *, group, runs_dir, batch=None, worktree_base=None):

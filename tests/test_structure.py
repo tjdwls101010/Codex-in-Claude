@@ -351,7 +351,6 @@ class Structure(unittest.TestCase):
         wrong, _ = interface_violations(skill_files(), here_of=skill_here)
         self.assertEqual(wrong, [])
 
-    @unittest.expectedFailure
     def test_no_test_reaches_past_a_units_interface(self):
         wrong, seen = interface_violations(test_files())
         self.assertEqual(wrong, [])

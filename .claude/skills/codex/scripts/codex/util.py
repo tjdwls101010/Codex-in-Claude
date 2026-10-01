@@ -75,3 +75,15 @@ def invocation(*words):
     # Double quotes are what the pre-approval pattern has; a path they cannot hold safely gets shell quoting instead.
     quoted = shlex.quote(path) if any(c in path for c in '"$`\\') else f'"{path}"'
     return " ".join(["uv run", quoted, *(shlex.quote(str(w)) for w in words)])
+
+
+def with_next(out: dict, after: str, *words, project=None, runs_dir=None) -> dict:
+    """`out` with `next` right after its key `after`: this CLI called again with `words`, to run in the background, written out whole so it matches the pre-approval. A registry the caller named — `project`, `runs_dir` as typed — is named in it too."""
+    where = []
+    if project:
+        where += ["--project", os.path.abspath(os.path.expanduser(project))]
+    if runs_dir:
+        where += ["--runs-dir", os.path.abspath(os.path.expanduser(runs_dir))]
+    items = list(out.items())
+    at = next((i + 1 for i, (k, _v) in enumerate(items) if k == after), 1)
+    return dict(items[:at] + [("next", {"command": invocation(*words, *where), "run_in_background": True})] + items[at:])

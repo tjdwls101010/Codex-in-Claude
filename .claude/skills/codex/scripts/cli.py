@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -30,9 +29,8 @@ from codex.observe.rows import STALL_SECONDS
 from codex.observe.show import SHOW_MAX_BYTES, show
 from codex.observe.status import LISTING_ROWS
 from codex.registry import valid_group_name
-from codex.runs import commands as run_commands
-from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
-from codex.util import invocation
+from codex.runs import DEFAULT_GRACE, THREAD_ID_WAIT, resume, start, stop, supervise
+from codex.util import invocation, with_next
 
 EXIT_REFUSED, EXIT_ARGUMENTS, EXIT_BLOCKED = 1, 2, 3
 
@@ -142,24 +140,6 @@ def refuse_unusable_follow_options(args):
             raise Refusal(f"{flag} requires --follow", arguments=True)
 
 
-def with_next(out, args, *words):
-    """The reply with `next` after its handle: the follower to run in the background, written out whole so it matches the pre-approval, and carrying the registry the command line named."""
-    where = []
-    if args.project:
-        where += ["--project", os.path.abspath(os.path.expanduser(args.project))]
-    if args.runs_dir:
-        where += ["--runs-dir", os.path.abspath(os.path.expanduser(args.runs_dir))]
-    items = list(out.items())
-    # Right after the handle: a run's state, or a batch's counts.
-    at = next((i + 1 for i, (k, _v) in enumerate(items) if k in ("state", "requested")), 1)
-    return dict(items[:at] + [("next", {"command": invocation(*words, *where), "run_in_background": True})] + items[at:])
-
-
-def cmd_start(args):
-    out = run_commands.start(args)
-    return with_next(out, args, "log", "--run", out["run_id"], "--follow")
-
-
 def cmd_resume(args):
     # `[REF] PROMPT` is two optional positionals argparse cannot tell apart; with --last everything positional is the prompt.
     rest = list(args.rest)
@@ -170,8 +150,7 @@ def cmd_resume(args):
     args.prompt = rest[0] if rest else None
     if not args.last and not args.ref:
         raise Refusal("resume needs a run id, thread id, thread name, or --last", arguments=True)
-    out = run_commands.resume(args)
-    return with_next(out, args, "log", "--run", out["run_id"], "--follow")
+    return resume(args)
 
 
 def cmd_status(args):
@@ -194,7 +173,8 @@ def cmd_batch_start(args):
         # Refused before the claim, so a typo does not burn the name.
         raise Refusal("--base requires --worktree", arguments=True, base=args.base)
     out = batch_commands.start(args)
-    return with_next(out, args, "status", "--group", out["group"], "--follow") if out["spawned"] else out
+    return (with_next(out, "requested", "status", "--group", out["group"], "--follow", project=args.project,
+                      runs_dir=args.runs_dir) if out["spawned"] else out)
 
 
 def doctor_reply(args):
@@ -258,7 +238,7 @@ def build_parser():
     add_common(p)
     add_run_options(p, kind="start")
     p.add_argument("prompt", nargs="?", help="the prompt; `-` or omitted reads stdin when it is not a terminal")
-    p.set_defaults(func=cmd_start)
+    p.set_defaults(func=start)
 
     p = command("resume", "run another turn on an existing thread", epilog=RESUME_EPILOG)
     add_common(p)
@@ -309,7 +289,7 @@ def build_parser():
     selector.add_argument("--group", help="every live member of a batch group")
     selector.add_argument("--all", action="store_true", help="every live run in this registry, including an orphaned run whose Codex is still writing")
     p.add_argument("--grace", type=float, default=DEFAULT_GRACE, metavar="SEC", help=f"seconds after SIGINT before SIGTERM (default: {DEFAULT_GRACE}); SIGKILL follows 3 s later, and whatever of the run is left is swept with SIGKILL. SIGINT first lets Codex flush its rollout, so the thread can be resumed")
-    p.set_defaults(func=run_commands.stop)
+    p.set_defaults(func=stop)
 
     p = command("result", "what a run or a group concluded",
                 description="An answer is read rather than parsed, so it comes as text after a one-line JSON header, and the header's byte counts, not the text, say where each answer ends. A --schema run's answer is parsed, so it stays one JSON document. One of --run or --group is required.")

@@ -21,7 +21,7 @@ from codex.registry import (
     TERMINAL_STATES, ensure_runs_dir, iter_runs, live_runs, publish_run, read_meta, resolve_runs_dir, still_writing,
     unreadable_runs, write_meta,
 )
-from codex.runs import settings
+from codex.runs.settings import settings_for
 from codex.runs.supervisor import THREAD_ID_WAIT, spawn_supervised
 from codex.util import clip, is_within, now_iso
 
@@ -116,10 +116,10 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
         raise Refusal("nothing to resume: that run has no thread id; `status --run` shows why",
                       run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
-    r = settings.resolve(sandbox=args.sandbox, model=args.model, effort=args.effort,
-                         priority=getattr(args, "priority", None),
-                         inherit_config=getattr(args, "inherit_config", False),
-                         base=base, user=user_defaults())
+    r = settings_for(sandbox=args.sandbox, model=args.model, effort=args.effort,
+                     priority=getattr(args, "priority", None),
+                     inherit_config=getattr(args, "inherit_config", False),
+                     base=base, user=user_defaults())
     adopted = r["adopted"]
     # Guarded because the catalog lookup is a subprocess on the path of every run.
     if adopted["model"] or adopted["effort"]:

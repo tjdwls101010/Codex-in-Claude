@@ -103,15 +103,18 @@ class AStaleReap(unittest.TestCase):
         self.assertEqual(self.registry.reap(self.run_dir, self.registry.read_meta(self.run_dir))["state"], "orphaned")
 
 
-def _publish_on_one_thread(runs_dir, n, results):
-    """One contender: publish a run on thread `t` unless one is already there — the check `resume` makes under the lock."""
+def _publish_on_one_thread(runs_dir, n, start, results):
+    """One contender: publish a run on thread `t` unless one is already there — the check `resume` makes under the lock. Every contender starts at once, and the check dawdles between reading the registry and answering, so without the lock they would all see the thread free."""
     registry = engine("codex.registry")
     errors = engine("codex.errors")
 
     def check():
-        if any(m.get("thread_id") == "t" for _rd, m in registry.iter_runs(Path(runs_dir))):
+        taken = any(m.get("thread_id") == "t" for _rd, m in registry.iter_runs(Path(runs_dir)))
+        time.sleep(0.3)
+        if taken:
             raise errors.Refusal("thread already has a turn")
 
+    start.wait()
     try:
         run_id, _rd, _m = registry.publish_run(
             Path(runs_dir), thread_ref="t", label=f"c{n}", check=check,
@@ -131,8 +134,8 @@ class OnePublishPerThreadCheck(unittest.TestCase):
         runs_dir = Path(tempfile.mkdtemp(prefix="codex-publish-")).resolve()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(runs_dir)]))
         ctx = mp.get_context("spawn")
-        results = ctx.Queue()
-        procs = [ctx.Process(target=_publish_on_one_thread, args=(str(runs_dir), n, results)) for n in range(6)]
+        results, start = ctx.Queue(), ctx.Barrier(6)
+        procs = [ctx.Process(target=_publish_on_one_thread, args=(str(runs_dir), n, start, results)) for n in range(6)]
         for p in procs:
             p.start()
         for p in procs:

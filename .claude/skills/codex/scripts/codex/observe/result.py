@@ -1,4 +1,4 @@
-"""`result`: what a run or a group concluded. The answer is read, not parsed, so it comes as text after a JSON header whose byte counts say where each answer ends; a --schema run's answer is parsed, so it stays JSON."""
+"""`result`: what a run or a group concluded. The answer is read, not parsed, so it comes as text after a JSON header whose byte counts say where each answer ends; a --schema run's answer is parsed, so it stays one JSON document, indented to be read as printed."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from codex.errors import Refusal
 from codex.git import resolve_project
 from codex.observe.collect import final_message, member_result, overlaps, written_paths
 from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
-from codex.registry import TERMINAL_STATES, group_gaps, group_runs, reap, resolve_runs_dir, run, still_writing
+from codex.registry import TERMINAL_STATES, group_gaps, group_runs, is_live, reap, resolve_runs_dir, run, still_writing
 
 
 def result(args):
@@ -19,9 +19,11 @@ def result(args):
     rd, meta = run(runs_dir, args.run)
     meta = reap(rd, meta)
     info = progress(rd, meta)
+    # A live run has no final answer yet: what it has said so far is not the object its schema shapes.
+    answer_due = meta.get("schema_path") and not is_live(meta)
     try:
         # A --schema answer is parsed, and a replaced byte would parse into a different object than the one written.
-        message = final_message(rd, info, errors="strict" if meta.get("schema_path") else "replace")
+        message = final_message(rd, info, errors="strict" if answer_due else "replace")
     except UnicodeDecodeError as e:
         raise Refusal("the final message of a --schema run is not valid UTF-8", run_id=meta["run_id"], parse_error=str(e))
     out = {"run_id": meta["run_id"], "state": meta.get("state"), "exit_code": meta.get("exit_code"),
@@ -38,8 +40,11 @@ def result(args):
     if info["unparsed_events"]:
         out["unparsed_events"] = info["unparsed_events"]
     if meta.get("schema_path"):
-        # The caller parses this answer, so it stays one JSON document: the object itself, never the text again beside it.
+        # The answer stays one JSON document: the object itself, never the text again beside it, and `json` null until there is one.
         out["schema_path"] = meta["schema_path"]
+        if not answer_due:
+            out["json"] = None
+            return [json.dumps(out, ensure_ascii=False, indent=2) + "\n"]
         if not message:
             raise Refusal("the --schema run has no final message", run_id=meta["run_id"], state=meta.get("state"))
         try:
@@ -48,7 +53,7 @@ def result(args):
             # Loud rather than lenient: a malformed object handed back as if it had the schema's shape is worse.
             raise Refusal("the final message of a --schema run is not valid JSON",
                           run_id=meta["run_id"], parse_error=str(e), message=message)
-        return out
+        return [json.dumps(out, ensure_ascii=False, indent=2) + "\n"]
     # The caller reads this answer rather than parsing it, so it follows the header as written, its extent given in bytes.
     out["message_bytes"] = len(message.encode("utf-8"))
     return [json.dumps(out, ensure_ascii=False) + "\n"] + ([message + "\n"] if message else [])

@@ -25,6 +25,37 @@ def answer_fixture(path, text, thread="t-answer"):
 
 class Result(BridgeCase):
 
+    def schema_result(self, *args, rc=0):
+        """A --schema run's `result`: one JSON document over however many lines, indented by two spaces so it reads as printed."""
+        p = self.bridge_raw("result", *args)
+        self.assertEqual(p.returncode, rc, p.stdout + p.stderr)
+        doc = json.loads(p.stdout)
+        self.assertEqual(p.stdout, json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+        return doc
+
+    def schema_run(self, text, *, live=False):
+        schema = self.tmp / "s.json"
+        schema.write_text("{}")
+        fixture = answer_fixture(self.tmp / "a.jsonl", text)
+        if live:
+            return self.running("--schema", schema, "x", FAKE_CODEX_FIXTURE=fixture)[0]
+        out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
+        self.wait_state(out["run_id"])
+        return out
+
+    def test_a_schema_answer_is_one_document_indented_to_be_read(self):
+        out = self.schema_run('{"findings": [{"id": "F1", "claim": "a"}, {"id": "F2", "claim": "b"}]}')
+        doc = self.schema_result("--run", out["run_id"])
+        self.assertEqual(doc["json"], {"findings": [{"id": "F1", "claim": "a"}, {"id": "F2", "claim": "b"}]})
+        self.assertEqual((doc["state"], doc["run_id"]), ("completed", out["run_id"]))
+
+    def test_a_live_schema_run_has_no_answer_yet_rather_than_a_broken_one(self):
+        out = self.schema_run("Still thinking, not JSON yet", live=True)
+        doc = self.schema_result("--run", out["run_id"])
+        self.assertIsNone(doc["json"])
+        self.assertEqual(doc["state"], "running")
+        self.assertIn("partial", doc["note"])
+
     def test_a_finished_run_hands_back_its_message_and_usage(self):
         out = self.bridge("start", "x")
         self.wait_state(out["run_id"])
@@ -86,7 +117,7 @@ class Result(BridgeCase):
         fixture = answer_fixture(self.tmp / "a.jsonl", '{"verdict": "ok", "count": 3}')
         out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_state(out["run_id"])
-        res = self.bridge("result", "--run", out["run_id"])
+        res = self.schema_result("--run", out["run_id"])
         self.assertEqual(res["json"], {"verdict": "ok", "count": 3})
         self.assertNotIn("message", res, "the parsed answer is not handed back twice")
 
@@ -111,7 +142,7 @@ class Result(BridgeCase):
         self.wait_state(second["run_id"])
         argv = self.last_argv()
         self.assertEqual(argv[argv.index("--output-schema") + 1], str(schema))
-        self.assertEqual(self.bridge("result", "--run", second["run_id"])["json"], {"n": 1})
+        self.assertEqual(self.schema_result("--run", second["run_id"])["json"], {"n": 1})
 
 
 class StatusOfOneRun(BridgeCase):

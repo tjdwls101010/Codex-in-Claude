@@ -34,7 +34,7 @@ def doctor(args):
     _check_codex(report, blockers, warnings)
     _check_config(report, warnings)
     report["skill_dir"] = str(ENTRY.parent.parent)
-    report["bridge_path"] = str(ENTRY)
+    report["entry"] = str(ENTRY)
     report["plugin_root_env"] = os.environ.get("CLAUDE_PLUGIN_ROOT")
     report["project"] = str(project)
     report["project_is_git_repo"] = git_toplevel(project) is not None

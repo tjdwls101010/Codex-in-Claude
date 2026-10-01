@@ -4,39 +4,32 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codex.codex_cli.events import read_events
-from codex.git.repo import repo_identity
+from codex.codex_cli import changed_paths
+from codex.git import repo_identity
 from codex.observe.rows import progress, turn_failed_excerpt
-from codex.registry.runs import still_writing
+from codex.registry import still_writing
 from codex.util import nfc
 
 # Per member, in bytes, in `result --group`; `result --run` returns the whole message.
 GROUP_MESSAGE_CAP = 4000
 
 
-def changed_paths(events_path: Path, root=None):
+def written_paths(events_path: Path, root=None):
     """Paths a run wrote, as `(repository, repo-relative path)` pairs.
 
     Codex reports absolute paths and every checkout has its own prefix, so paths are made relative to the repository's top level; the repository (`--git-common-dir`) stays in the key so two repositories' `output.txt` are two files. A path outside any repository stays absolute.
     """
     repo, top = repo_identity(Path(root)) if root else (None, None)
     paths = set()
-    for ev in read_events(events_path, 0)[0]:
-        item = ev.get("item") or {}
-        if item.get("type") != "file_change":
-            continue
-        for ch in item.get("changes") or []:
-            p = ch.get("path") if isinstance(ch, dict) else ch
-            if not p:
+    for p in changed_paths(events_path):
+        p = Path(p)
+        if top:
+            try:
+                paths.add((repo, str(p.relative_to(Path(nfc(str(top)))))))
                 continue
-            p = Path(nfc(str(p)))
-            if top:
-                try:
-                    paths.add((repo, str(p.relative_to(Path(nfc(str(top)))))))
-                    continue
-                except ValueError:
-                    pass
-            paths.add((None, str(p)))
+            except ValueError:
+                pass
+        paths.add((None, str(p)))
     return paths
 
 

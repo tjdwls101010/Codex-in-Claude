@@ -1,10 +1,12 @@
-"""Primitives with no knowledge of runs, events or Codex: time, text, paths, process liveness, and where the entrypoint is."""
+"""Primitives with no knowledge of runs, events or Codex: time, text, paths, process liveness, and where the entrypoint is and how it is called again."""
 
 from __future__ import annotations
 
 import errno
 import os
 import re
+import shlex
+import sys
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,3 +67,23 @@ def is_within(path, parent) -> bool:
         return p == q or q in p.parents
     except Exception:
         return False
+
+
+def invocation(*words):
+    """This CLI called again the way SKILL.md calls it: `uv run "<this file, as the caller named it>" <words>`. The path is not resolved, so a symlinked install keeps the path its pre-approval matches."""
+    path = os.path.abspath(sys.argv[0])
+    # Double quotes are what the pre-approval pattern has; a path they cannot hold safely gets shell quoting instead.
+    quoted = shlex.quote(path) if any(c in path for c in '"$`\\') else f'"{path}"'
+    return " ".join(["uv run", quoted, *(shlex.quote(str(w)) for w in words)])
+
+
+def with_next(out: dict, after: str, *words, project=None, runs_dir=None) -> dict:
+    """`out` with `next` right after its key `after`: this CLI called again with `words`, to run in the background, written out whole so it matches the pre-approval. A registry the caller named — `project`, `runs_dir` as typed — is named in it too."""
+    where = []
+    if project:
+        where += ["--project", os.path.abspath(os.path.expanduser(project))]
+    if runs_dir:
+        where += ["--runs-dir", os.path.abspath(os.path.expanduser(runs_dir))]
+    items = list(out.items())
+    at = next((i + 1 for i, (k, _v) in enumerate(items) if k == after), 1)
+    return dict(items[:at] + [("next", {"command": invocation(*words, *where), "run_in_background": True})] + items[at:])

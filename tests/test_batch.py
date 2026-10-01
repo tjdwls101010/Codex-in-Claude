@@ -302,5 +302,17 @@ class FollowingAGroup(BatchCase):
         self.assertEqual(p.stdout.splitlines()[-1], "group.partial group=g done=0 failed=2")
 
 
+class AMalformedRegistry(BridgeCase):
+
+    def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
+        self.runs_dir.mkdir()
+        (self.runs_dir / ".groups").write_text("not a directory")
+        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        self.assertIn("'g'", out["error"])
+        self.assertNotIn("internal error", out["error"])
+        self.assertEqual((out["created_at"], out["members"]), (None, 0))
+        self.assertEqual(self.run_dirs(), [], "nothing spawns behind a refused claim")
+
+
 if __name__ == "__main__":
     unittest.main()

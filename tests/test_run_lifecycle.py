@@ -114,17 +114,12 @@ class TerminalStates(BridgeCase):
 
 
 class TheLadderOrder(unittest.TestCase):
-    """`codex.runs.supervisor.end_group`'s order of signals, observed at `os.killpg` — the only place the order is visible."""
+    """`codex.runs.end_group`'s order of signals, observed where they are delivered — the only place the order is visible."""
 
     def ladder(self, **kw):
-        supervisor = engine("codex.runs.supervisor")
         calls = []
-        real = supervisor.os.killpg
-        supervisor.os.killpg = lambda pgid, sig: calls.append(signal.Signals(sig).name)
-        try:
-            sent = supervisor.end_group(4242, grace=0, before_kill=lambda: calls.append("record"), **kw)
-        finally:
-            supervisor.os.killpg = real
+        sent = engine("codex.runs").end_group(4242, grace=0, before_kill=lambda: calls.append("record"),
+                                              kill=lambda pgid, sig: calls.append(signal.Signals(sig).name), **kw)
         return calls, sent
 
     def test_a_deadline_sends_sigterm_even_after_codex_has_exited(self):

@@ -15,7 +15,8 @@ CATALOG_TIMEOUT = 5.0
 _CATALOG_CACHE = []
 
 
-def codex_version():
+def codex_version(strict=False):
+    """What `codex --version` prints, or None when there is no codex or it prints nothing. A failure to run it answers None too, unless `strict`, which lets it propagate so the caller can say why."""
     exe = shutil.which("codex")
     if not exe:
         return None
@@ -23,6 +24,8 @@ def codex_version():
         r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=20,
                            stdin=subprocess.DEVNULL)
     except Exception:
+        if strict:
+            raise
         return None
     return (r.stdout or r.stderr).strip() or None
 

@@ -6,12 +6,11 @@ import shlex
 from pathlib import Path
 
 from codex.errors import Refusal
-from codex.git.repo import is_dirty as worktree_dirty
-from codex.git.worktree import prune as worktree_prune, remove as worktree_remove
-from codex.registry.groups import (
-    derived_groups, group_path, group_unreadable, list_groups, member_run_ids, owned_run_ids, read_group,
+from codex.git import is_dirty as worktree_dirty, worktree_prune, worktree_remove
+from codex.registry import (
+    derived_groups, find_run, group_manifest, group_path, group_unreadable, is_live, iter_runs, list_groups, live_runs,
+    member_run_ids, meta_unreadable, owned_run_ids, release_group, still_writing,
 )
-from codex.registry.runs import find_run, is_live, iter_runs, meta_unreadable, reap, still_writing
 from codex.util import is_within
 
 
@@ -33,8 +32,8 @@ def clean_group(project, runs_dir, name, *, force, explicit_registry):
 
     Live work is never removed, `--force` or not: a live member refuses the call, and a worktree another live run is working in (or a member whose state cannot be read) is kept. `force` lifts the rest — an unreadable manifest or member, a derived group, git's refusal of a dirty tree — and the reply says what it overrode.
     """
-    lost_manifest = read_group(runs_dir, name) is None and group_unreadable(runs_dir, name)
-    if read_group(runs_dir, name) is None and not lost_manifest:
+    lost_manifest = group_manifest(runs_dir, name) is None and group_unreadable(runs_dir, name)
+    if group_manifest(runs_dir, name) is None and not lost_manifest:
         raise Refusal(f"no such group in this project: {name}", known_groups=list_groups(runs_dir)[:20])
     live, unknown = _member_liveness(runs_dir, name)
     if live:
@@ -46,7 +45,7 @@ def clean_group(project, runs_dir, name, *, force, explicit_registry):
 
     released = not kept and not unknown
     if released:
-        group_path(runs_dir, name).unlink(missing_ok=True)
+        release_group(runs_dir, name)
         note = None
     elif unknown or any(k.get("stop") for k in kept):
         note = ("the name stays reserved until nothing is left: "
@@ -64,7 +63,7 @@ def clean_group(project, runs_dir, name, *, force, explicit_registry):
 
 def _member_liveness(runs_dir, name):
     """`(live members, members whose meta.json will not parse)` — unknown is kept apart from dead."""
-    live, unknown = [], []
+    readable, ids, unknown = [], {}, []
     for rid in owned_run_ids(runs_dir, name) or []:
         rd, meta = find_run(runs_dir, rid)
         if not meta:
@@ -73,10 +72,11 @@ def _member_liveness(runs_dir, name):
                                 "reason": "its meta.json will not parse, so whether "
                                           "it is still running cannot be determined"})
             continue
-        meta = reap(rd, meta)
-        if is_live(meta):
-            live.append({"run_id": rid, "state": meta.get("state"), "group": meta.get("group"),
-                         **({"codex_still_running": True} if still_writing(meta) else {})})
+        readable.append((rd, meta))
+        ids[rd] = rid
+    live = [{"run_id": ids[rd], "state": meta.get("state"), "group": meta.get("group"),
+             **({"codex_still_running": True} if still_writing(meta) else {})}
+            for rd, meta in live_runs(runs_dir, among=readable)]
     return live, unknown
 
 

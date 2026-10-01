@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from codex.registry.locks import meta_lock, write_json_atomic
+from codex.registry.locks import meta_lock, thread_turn_lock, write_json_atomic
 from codex.errors import Refusal
 from codex.util import now_iso, pid_alive
 
@@ -96,6 +96,11 @@ def update_meta(run_dir: Path, **fields):
         return meta
 
 
+def record_if_active(run_dir: Path, **fields):
+    """Merge `fields` only while the run is still in an active state on disk, and return what is on disk: a caller deciding from a snapshot — that the run is dead, that it was stopped — commits this way so an outcome its supervisor wrote in between wins."""
+    return update_meta_if(run_dir, ACTIVE_STATES, **fields)
+
+
 def update_meta_if(run_dir: Path, expected_states, **fields):
     """Compare-and-set on `state`: merge only if the state on disk is still one of `expected_states`, and return what is on disk. A caller deciding from a snapshot commits this way so an outcome written in between wins."""
     with meta_lock(run_dir):
@@ -173,10 +178,16 @@ def reap(run_dir: Path, meta: dict) -> dict:
                 return meta
         except OSError:
             pass
-    return update_meta_if(run_dir, ACTIVE_STATES, state="orphaned", ended_at=now_iso())
+    return record_if_active(run_dir, state="orphaned", ended_at=now_iso())
 
 
-def resolve_implicit_run(candidates):
+def live_runs(runs_dir: Path, among=None):
+    """`(run_dir, meta)` of each run that is live once reaped, oldest first: of `among` — pairs as `iter_runs` yields them — when given, else of the whole registry. Only the runs asked about are reaped."""
+    pool = iter_runs(runs_dir) if among is None else among
+    return [(rd, m) for rd, m in ((rd, reap(rd, m)) for rd, m in pool) if is_live(m)]
+
+
+def implicit_run(candidates):
     """Pick a run nobody named, from `candidates` in `iter_runs` order: the one live run, else the newest with a note saying so. Two or more live runs are refused with the candidates listed, because guessing would hand the caller another run's label and sandbox."""
     reaped = [(rd, reap(rd, m)) for rd, m in candidates]
     live = [(rd, m) for rd, m in reaped if is_live(m)]
@@ -194,11 +205,29 @@ def resolve_implicit_run(candidates):
     return rd, m, "the newest run (no non-terminal runs)"
 
 
-def refuse_unresolved_run(ref, run_dir, meta, runs_dir):
-    """"Cannot read that run" and "no such run" are different answers: the first still has an event stream on disk."""
+def run(runs_dir: Path, ref: str):
+    """The run `ref` names, as `find_run` resolves it, with a readable meta.json; refused otherwise. "Cannot read that run" and "no such run" are different refusals: the first still has an event stream on disk."""
+    run_dir, meta = find_run(runs_dir, ref)
     if meta:
-        return
+        return run_dir, meta
     if run_dir is not None and meta_unreadable(run_dir):
         raise Refusal(f"run {ref} has a meta.json that will not parse, so its state is unknown; its event stream may still be readable",
                       run_id=run_dir.name, run_dir=str(run_dir), events=str(run_dir / "events.jsonl"))
     raise Refusal(f"no such run: {ref}", runs_dir=str(runs_dir))
+
+
+# -- publishing a run -----------------------------------------------------------
+
+def publish_run(runs_dir: Path, *, thread_ref, label, check, make_meta):
+    """Publish a new run under its thread's turn lock: `check()` may refuse while the lock is held — the thread is not free, say — then a fresh run directory is claimed and `make_meta(run_id, run_dir)` is written as its meta.json. Returns `(run_id, run_dir, meta)`.
+
+    The lock covers check-and-publish only, never the turn: without it two resumes a moment apart both see an idle thread and start two turns on one rollout file."""
+    with thread_turn_lock(runs_dir, thread_ref):
+        check()
+        try:
+            run_id, run_dir = claim_run_dir(runs_dir, label)
+        except FileExistsError as e:
+            raise Refusal(str(e), runs_dir=str(runs_dir))
+        meta = make_meta(run_id, run_dir)
+        write_meta(run_dir, meta)
+    return run_id, run_dir, meta

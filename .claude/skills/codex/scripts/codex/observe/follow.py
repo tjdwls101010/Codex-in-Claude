@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import time
 
-from codex.codex_cli.events import FOLLOW_INTERVAL
-from codex.registry.groups import unstarted_members, vanished_members
-from codex.registry.runs import unreadable_runs
+from codex.registry import group_gaps, unreadable_runs
+
+# How often a follower asks whether anything changed. A tick reads forward from a byte offset, so it is cheap.
+FOLLOW_INTERVAL = 1.0
 
 
 def follow(step, *, timeout, heartbeat):
@@ -36,6 +37,6 @@ def follow(step, *, timeout, heartbeat):
 
 def group_tail(runs_dir, name):
     """The counts a group's closing line appends when non-zero."""
-    never = unstarted_members(runs_dir, name) + vanished_members(runs_dir, name)
+    never = group_gaps(runs_dir, name)
     bad = len(unreadable_runs(runs_dir))
     return never, (f" unstarted={len(never)}" if never else "") + (f" unreadable={bad}" if bad else "")

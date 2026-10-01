@@ -11,19 +11,17 @@ import sys
 import time
 from pathlib import Path
 
-from codex.codex_cli.argv import SANDBOX_MODES, WRITING_SANDBOXES, apply_preamble, build_argv
-from codex.codex_cli.catalog import check_model_effort, model_catalog
-from codex.codex_cli.config import user_defaults
-from codex.codex_cli.events import first_thread_id
-from codex.errors import Refusal
-from codex.git.repo import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted
-from codex.git.worktree import add as worktree_add
-from codex.registry.locks import thread_turn_lock
-from codex.registry.runs import (
-    TERMINAL_STATES, claim_run_dir, ensure_runs_dir, is_live, iter_runs, read_meta, reap,
-    resolve_runs_dir, still_writing, unreadable_runs, write_meta,
+from codex.codex_cli import (
+    SANDBOX_MODES, WRITING_SANDBOXES, apply_preamble, build_argv, check_model_effort, first_thread_id, model_catalog,
+    user_defaults,
 )
-from codex.runs import settings
+from codex.errors import Refusal
+from codex.git import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted, worktree_add
+from codex.registry import (
+    TERMINAL_STATES, ensure_runs_dir, iter_runs, live_runs, publish_run, read_meta, resolve_runs_dir, still_writing,
+    unreadable_runs, write_meta,
+)
+from codex.runs.settings import settings_for
 from codex.runs.supervisor import THREAD_ID_WAIT, spawn_supervised
 from codex.util import clip, is_within, now_iso
 
@@ -33,19 +31,13 @@ def concurrent_writers(runs_dir, cwd, exclude_run_id=None):
 
     Compared on each run's recorded cwd in both directions, never on the git top level, which every worktree of a repository shares.
     """
-    out = []
-    for rd, m in iter_runs(runs_dir):
-        if m.get("run_id") == exclude_run_id or m.get("sandbox") not in WRITING_SANDBOXES:
-            continue
-        if not (is_within(m.get("cwd"), cwd) or is_within(cwd, m.get("cwd"))):
-            continue
-        m = reap(rd, m)
-        if not is_live(m):
-            continue
-        out.append({"run_id": m.get("run_id"), "state": m.get("state"),
-                    "sandbox": m.get("sandbox"), "group": m.get("group"),
-                    **({"codex_still_running": True} if still_writing(m) else {})})
-    return out
+    nearby = [(rd, m) for rd, m in iter_runs(runs_dir)
+              if m.get("run_id") != exclude_run_id and m.get("sandbox") in WRITING_SANDBOXES
+              and (is_within(m.get("cwd"), cwd) or is_within(cwd, m.get("cwd")))]
+    return [{"run_id": m.get("run_id"), "state": m.get("state"),
+             "sandbox": m.get("sandbox"), "group": m.get("group"),
+             **({"codex_still_running": True} if still_writing(m) else {})}
+            for _rd, m in live_runs(runs_dir, among=nearby)]
 
 
 def read_prompt(args) -> str:
@@ -78,17 +70,16 @@ def thread_of_unreadable(run_dir):
 
 
 def refuse_concurrent_turn(runs_dir, thread_id, force):
-    """Refuse a second live turn on one thread — two turns would append to one rollout file — unless `--force`. Called only inside `thread_turn_lock`.
+    """Refuse a second live turn on one thread — two turns would append to one rollout file — unless `--force`. Called only as `publish_run`'s check, inside the thread's turn lock.
 
     Matched on `resume_ref` as well as `thread_id`, because a resume of a ref this registry has never seen publishes before the real id is known. A run whose meta.json will not parse blocks only when its thread cannot be shown to be another one: unknown is not free.
     """
     if not thread_id or force:
         return
-    live = [reap(rd, m) for rd, m in iter_runs(runs_dir)
-            if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
+    on_thread = [(rd, m) for rd, m in iter_runs(runs_dir) if thread_id in (m.get("thread_id"), m.get("resume_ref"))]
     live = [{"run_id": m.get("run_id"), "state": m.get("state"),
              **({"codex_still_running": True} if still_writing(m) else {})}
-            for m in live if is_live(m)]
+            for _rd, m in live_runs(runs_dir, among=on_thread)]
     if live:
         raise Refusal("thread already has a live turn; wait for it, or pass --force to run a second turn at once", thread_id=thread_id, live_runs=live)
     blind = [name for name in unreadable_runs(runs_dir)
@@ -125,10 +116,10 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
         raise Refusal("nothing to resume: that run has no thread id; `status --run` shows why",
                       run_id=(base or {}).get("run_id"), state=(base or {}).get("state"))
 
-    r = settings.resolve(sandbox=args.sandbox, model=args.model, effort=args.effort,
-                         priority=getattr(args, "priority", None),
-                         inherit_config=getattr(args, "inherit_config", False),
-                         base=base, user=user_defaults())
+    r = settings_for(sandbox=args.sandbox, model=args.model, effort=args.effort,
+                     priority=getattr(args, "priority", None),
+                     inherit_config=getattr(args, "inherit_config", False),
+                     base=base, user=user_defaults())
     adopted = r["adopted"]
     # Guarded because the catalog lookup is a subprocess on the path of every run.
     if adopted["model"] or adopted["effort"]:
@@ -140,20 +131,17 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
             "service_tier": r["service_tier"], "schema_path": schema_path, "images": images}
 
 
-def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
+def publish(args, s, *, kind, base, project, runs_dir, thread_ref, group):
     """Stage 2 — under the thread's turn lock, check the thread is free, claim a run directory and publish meta.json. Returns `(run_id, run_dir, meta)`."""
-    with thread_turn_lock(runs_dir, thread_ref):
+    def check():
         refuse_concurrent_turn(runs_dir, thread_ref, getattr(args, "force", False))
         # A thread this registry never recorded has no sandbox to re-assert, and inventing a write policy cannot be undone. Skipped when a run is unreadable: "never recorded" is a claim about the whole registry.
         if (kind == "resume" and base is None and not getattr(args, "sandbox", None)
                 and not unreadable_runs(runs_dir)):
             raise Refusal(f"thread {thread_ref} is not in this registry, so its sandbox was never recorded; pass --sandbox, which is recorded from then on",
                           thread=thread_ref, sandbox=sorted(SANDBOX_MODES))
-        try:
-            run_id, run_dir = claim_run_dir(runs_dir, args.label or (base.get("label") if base else None))
-        except FileExistsError as e:
-            raise Refusal(str(e), runs_dir=str(runs_dir))
 
+    def make_meta(run_id, run_dir):
         meta = {
             "run_id": run_id,
             "run_dir": str(run_dir),
@@ -190,8 +178,10 @@ def publish_run(args, s, *, kind, base, project, runs_dir, thread_ref, group):
         }
         if base and args.sandbox and args.sandbox != base["sandbox"]:
             meta["sandbox_changed_from"] = base["sandbox"]
-        write_meta(run_dir, meta)
-    return run_id, run_dir, meta
+        return meta
+
+    return publish_run(runs_dir, thread_ref=thread_ref, label=args.label or (base.get("label") if base else None),
+                       check=check, make_meta=make_meta)
 
 
 def cut_worktree(run_dir: Path, meta: dict, source: Path, worktree_base: str):
@@ -213,8 +203,8 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
 
     s = resolve_settings(args, kind=kind, base=base, project=project, thread_ref=thread_ref)
-    run_id, run_dir, meta = publish_run(args, s, kind=kind, base=base, project=project, runs_dir=runs_dir,
-                                        thread_ref=thread_ref, group=group)
+    run_id, run_dir, meta = publish(args, s, kind=kind, base=base, project=project, runs_dir=runs_dir,
+                                    thread_ref=thread_ref, group=group)
     cwd, wt_info = s["cwd"], None
     if worktree_base:
         cwd, wt_info = cut_worktree(run_dir, meta, s["cwd"], worktree_base)

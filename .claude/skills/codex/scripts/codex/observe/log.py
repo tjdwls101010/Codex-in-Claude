@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codex.codex_cli.events import CursorOutOfRange, format_events, read_events
+from codex.codex_cli import CursorOutOfRange, event_lines
 from codex.errors import Refusal
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.observe.follow import follow, group_tail
 from codex.observe.rows import group_snapshot, run_row
-from codex.registry.groups import read_group, resolve_group
-from codex.registry.runs import (
-    find_run, is_live, iter_runs, read_meta, reap, refuse_unresolved_run, resolve_implicit_run, resolve_runs_dir,
+from codex.registry import (
+    group_manifest, group_runs, implicit_run, is_live, iter_runs, read_meta, reap, resolve_runs_dir, run,
 )
 
 
@@ -22,13 +21,12 @@ def log(args):
         yield from log_group(args, project, runs_dir)
         return
     if args.run:
-        rd, meta = find_run(runs_dir, args.run)
-        refuse_unresolved_run(args.run, rd, meta, runs_dir)
+        rd, meta = run(runs_dir, args.run)
     else:
         candidates = list(iter_runs(runs_dir))
         if not candidates:
             raise Refusal("no runs in this registry", runs_dir=str(runs_dir))
-        rd, meta, _ = resolve_implicit_run(candidates)
+        rd, meta, _ = implicit_run(candidates)
 
     events_path = rd / "events.jsonl"
     rel_to = Path(meta.get("cwd") or project)
@@ -37,10 +35,10 @@ def log(args):
 
     def dump():
         try:
-            events, cursor[0] = read_events(events_path, cursor[0])
+            lines, cursor[0] = event_lines(events_path, cursor[0], args.level, rel_to)
         except CursorOutOfRange as e:
             raise Refusal(str(e), run_id=run_id, since=cursor[0])
-        for line in format_events(events, args.level, rel_to):
+        for line in lines:
             yield line + "\n"
 
     trailer = lambda: f"# cursor={cursor[0]} run={run_id}"  # noqa: E731
@@ -65,12 +63,12 @@ def log(args):
 
 def log_group(args, project, runs_dir):
     """Every member's events interleaved, each physical line prefixed with its member, ending on the group's terminal line."""
-    members = resolve_group(runs_dir, args.group)
+    members = group_runs(runs_dir, args.group)
     never, tail = group_tail(runs_dir, args.group)
     if not members:
         yield f"group.empty group={args.group}" + tail + "\n"
         return
-    labels = {m.get("run_id"): m.get("label") for m in (read_group(runs_dir, args.group) or {}).get("members", [])}
+    labels = {m.get("run_id"): m.get("label") for m in (group_manifest(runs_dir, args.group) or {}).get("members", [])}
     prefixes, header = [], []
     for i, (_rd, m) in enumerate(members):
         rid = m.get("run_id")
@@ -84,8 +82,8 @@ def log_group(args, project, runs_dir):
 
     def drain():
         for i, (rd, m) in enumerate(members):
-            events, cursors[i] = read_events(rd / "events.jsonl", cursors[i])
-            for entry in format_events(events, args.level, Path(m.get("cwd") or project)):
+            entries, cursors[i] = event_lines(rd / "events.jsonl", cursors[i], args.level, Path(m.get("cwd") or project))
+            for entry in entries:
                 for line in entry.split("\n"):
                     yield prefixes[i] + line + "\n"
 

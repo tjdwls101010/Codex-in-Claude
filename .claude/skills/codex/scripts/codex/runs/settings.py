@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def resolve(*, sandbox=None, model=None, effort=None, priority=None, inherit_config=False, cwd=None,
+def settings_for(*, sandbox=None, model=None, effort=None, priority=None, inherit_config=False, cwd=None,
             base=None, user=None):
     """Resolve a run's settings from the caller's flags, the run it continues (`base`, or None) and the user's config.toml defaults (`user`).
 

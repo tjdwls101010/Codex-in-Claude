@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.observe.follow import follow, group_tail
 from codex.observe.rows import group_snapshot, note_unreadable, row_is_live, run_row, summary_row
-from codex.registry.groups import list_groups, resolve_group, unstarted_members, vanished_members
-from codex.registry.runs import find_run, iter_runs, read_meta, refuse_unresolved_run, resolve_runs_dir
+from codex.registry import group_gaps, group_runs, iter_runs, list_groups, read_meta, resolve_runs_dir, run
 
 # The default listing keeps every live run plus this many newest.
 LISTING_ROWS = 20
@@ -19,8 +18,7 @@ def status(args):
         return follow_group(args, project, runs_dir) if args.follow else status_group(args, project, runs_dir)
 
     if args.run:
-        rd, m = find_run(runs_dir, args.run)
-        refuse_unresolved_run(args.run, rd, m, runs_dir)
+        rd, m = run(runs_dir, args.run)
         rows = [run_row(rd, m, project)]
     else:
         rows = [run_row(rd, m, project, excerpt=400 if args.thread else 160)
@@ -48,8 +46,8 @@ def status(args):
 
 
 def status_group(args, project, runs_dir):
-    rows = [run_row(rd, m, project) for rd, m in resolve_group(runs_dir, args.group)]
-    never = unstarted_members(runs_dir, args.group) + vanished_members(runs_dir, args.group)
+    rows = [run_row(rd, m, project) for rd, m in group_runs(runs_dir, args.group)]
+    never = group_gaps(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(rows, len(never))
     out = {"group": args.group, "group_state": gstate, "running": running, "done": done, "failed": failed,
            "total_runs": len(rows), "runs_truncated": 0}
@@ -61,7 +59,7 @@ def status_group(args, project, runs_dir):
 
 def follow_group(args, project, runs_dir):
     """One line per member state change, then one terminal line."""
-    members = resolve_group(runs_dir, args.group)
+    members = group_runs(runs_dir, args.group)
     never, tail = group_tail(runs_dir, args.group)
     if not members:
         yield f"group.empty group={args.group}" + tail + "\n"

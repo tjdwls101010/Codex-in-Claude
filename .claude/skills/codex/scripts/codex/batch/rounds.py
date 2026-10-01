@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from codex.errors import Refusal
-from codex.registry.groups import group_path, group_unreadable, list_groups, owned_run_ids, read_group
-from codex.registry.runs import find_run, is_live, meta_unreadable, reap
+from codex.registry import (
+    find_run, group_manifest, group_path, group_unreadable, list_groups, live_runs, meta_unreadable, owned_run_ids,
+)
 
 
 def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
     """Turn task i into the resume of member i of `previous`, in start order, or refuse the whole batch before anything is claimed. A task naming its own target keeps it. Returns `(tasks, previous member ids)`."""
-    manifest = read_group(runs_dir, previous)
+    manifest = group_manifest(runs_dir, previous)
     if manifest is None:
         if group_unreadable(runs_dir, previous):
             # Only the manifest records slots; inferring an order would land tasks on other tasks' threads.
@@ -28,18 +29,17 @@ def pair_with_previous(tasks, runs_dir, previous: str, *, force=False):
         raise Refusal(f"--resume-from pairs task i with member i, but {previous!r} has {len(prior)} started member(s) and this batch has {len(tasks)} task(s)",
                       previous_members=[m["run_id"] for m in prior])
     # Checked for the whole group up front: per member, the refusal would come after earlier tasks had already resumed.
+    found = [(m["run_id"], *find_run(runs_dir, m["run_id"])) for m in prior]
+    still = dict(live_runs(runs_dir, among=[(rd, meta) for _rid, rd, meta in found if meta is not None]))
     live = []
-    for m in prior:
-        rd, meta = find_run(runs_dir, m["run_id"])
+    for rid, rd, meta in found:
         if meta is None:
             if rd is not None and meta_unreadable(rd):
-                live.append({"run_id": m["run_id"], "state": "unreadable",
+                live.append({"run_id": rid, "state": "unreadable",
                              "reason": "its meta.json will not parse, so whether "
                                        "its turn has finished cannot be determined"})
-            continue
-        reaped = reap(rd, meta)
-        if is_live(reaped):
-            live.append({"run_id": m["run_id"], "state": reaped.get("state")})
+        elif rd in still:
+            live.append({"run_id": rid, "state": still[rd].get("state")})
     if live and not force:
         raise Refusal(f"group {previous!r} still has members running; wait for them, or pass --force to continue them mid-turn", running=live)
 

@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 
 from codex.errors import Refusal
-from codex.git.repo import resolve_project
-from codex.observe.collect import changed_paths, final_message, member_result, overlaps
+from codex.git import resolve_project
+from codex.observe.collect import final_message, member_result, overlaps, written_paths
 from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
-from codex.registry.groups import resolve_group, unstarted_members, vanished_members
-from codex.registry.runs import TERMINAL_STATES, find_run, reap, refuse_unresolved_run, resolve_runs_dir, still_writing
+from codex.registry import TERMINAL_STATES, group_gaps, group_runs, reap, resolve_runs_dir, run, still_writing
 
 
 def result(args):
@@ -17,8 +16,7 @@ def result(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
         return result_group(args, project, runs_dir)
-    rd, meta = find_run(runs_dir, args.run)
-    refuse_unresolved_run(args.run, rd, meta, runs_dir)
+    rd, meta = run(runs_dir, args.run)
     meta = reap(rd, meta)
     info = progress(rd, meta)
     try:
@@ -58,17 +56,17 @@ def result(args):
 
 def result_group(args, project, runs_dir):
     members, shown, per_run_paths, totals = [], [], {}, {"input_tokens": 0, "output_tokens": 0}
-    for index, (rd, meta) in enumerate(resolve_group(runs_dir, args.group)):
+    for index, (rd, meta) in enumerate(group_runs(runs_dir, args.group)):
         meta = reap(rd, meta)
         row, info, text = member_result(rd, meta)
         members.append({"index": index, **row})
         shown.append(text)
-        per_run_paths[meta["run_id"]] = changed_paths(
+        per_run_paths[meta["run_id"]] = written_paths(
             rd / "events.jsonl", (meta.get("worktree") or {}).get("path") or meta.get("cwd"))
         for key in totals:
             totals[key] += int((info["usage"] or {}).get(key) or 0)
     found = overlaps(per_run_paths)
-    never = unstarted_members(runs_dir, args.group) + vanished_members(runs_dir, args.group)
+    never = group_gaps(runs_dir, args.group)
     running, done, failed, gstate = group_snapshot(members, len(never))
     header = {"group": args.group, "group_state": gstate, "done": done, "failed": failed, "running": running,
               "unstarted": never, "overlaps": found,

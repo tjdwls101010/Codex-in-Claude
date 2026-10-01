@@ -9,7 +9,7 @@ from codex.git import (
     git_toplevel, ignored_entries as worktree_ignored_entries, missing_at_base as worktree_missing_at_base,
     resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
 )
-from codex.registry.runs import find_run
+from codex.registry import find_run
 from codex.runs import settings
 
 

@@ -29,7 +29,7 @@ from codex.observe.collect import GROUP_MESSAGE_CAP
 from codex.observe.rows import STALL_SECONDS
 from codex.observe.show import SHOW_MAX_BYTES, show
 from codex.observe.status import LISTING_ROWS
-from codex.registry.groups import valid_name
+from codex.registry import valid_group_name
 from codex.runs import commands as run_commands
 from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
 from codex.util import invocation
@@ -130,7 +130,7 @@ def positive_seconds(text):
 
 def group_name(text):
     """A name a group can be claimed under: it becomes a filename."""
-    if not valid_name(text):
+    if not valid_group_name(text):
         raise argparse.ArgumentTypeError("group name must be 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a letter or digit (no path separators)")
     return text
 

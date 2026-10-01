@@ -6,10 +6,7 @@ import os
 
 from codex.errors import Refusal
 from codex.git import resolve_project
-from codex.registry.groups import resolve_group
-from codex.registry.runs import (
-    find_run, is_live, iter_runs, reap, refuse_unresolved_run, resolve_implicit_run, resolve_runs_dir,
-)
+from codex.registry import find_run, group_runs, implicit_run, iter_runs, live_runs, resolve_runs_dir, run
 from codex.runs.create import create_run
 from codex.runs.supervisor import stop_run
 
@@ -28,7 +25,7 @@ def resume(args):
         if not candidates:
             raise Refusal("--last found no run with a thread in this project's registry; "
                           "name the thread to resume", runs_dir=str(runs_dir))
-        _, base, resolved_from = resolve_implicit_run(candidates)
+        _, base, resolved_from = implicit_run(candidates)
         thread_ref = base["thread_id"]
     else:
         _, base = find_run(runs_dir, args.ref)
@@ -51,14 +48,9 @@ def stop(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.run:
-        targets = []
-        for ref in args.run:
-            rd, m = find_run(runs_dir, ref)
-            refuse_unresolved_run(ref, rd, m, runs_dir)
-            targets.append((rd, m))
+        targets = [run(runs_dir, ref) for ref in args.run]
     else:
         # A group resolves to its recorded members' process groups; nothing is ever matched by name.
-        pool = resolve_group(runs_dir, args.group) if args.group else iter_runs(runs_dir)
-        targets = [(rd, m) for rd, m in ((rd, reap(rd, m)) for rd, m in pool) if is_live(m)]
+        targets = live_runs(runs_dir, among=group_runs(runs_dir, args.group) if args.group else None)
     return {"stopped": [stop_run(rd, m, grace=args.grace) for rd, m in targets],
             "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID")}

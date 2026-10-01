@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from codex.codex_cli import first_thread_id
-from codex.registry.runs import ACTIVE_STATES, read_meta, update_meta, update_meta_if
+from codex.registry import read_meta, record_if_active, update_meta
 from codex.util import ENTRY, now_iso, pid_alive
 
 # How long a new run waits for `thread.started` before handing back `thread_id: null`; `status` backfills it later.
@@ -77,7 +77,7 @@ def stop_run(run_dir: Path, meta: dict, grace: float = DEFAULT_GRACE):
         result["error"] = f"not permitted to signal process group {pgid}"
     result["signals_sent"] = sent
     result["signalled"] = bool(sent)
-    m = update_meta_if(run_dir, ACTIVE_STATES, state="interrupted", ended_at=now_iso())
+    m = record_if_active(run_dir, state="interrupted", ended_at=now_iso())
     result["state"] = m.get("state")
     result["thread_id"] = m.get("thread_id")
     return result

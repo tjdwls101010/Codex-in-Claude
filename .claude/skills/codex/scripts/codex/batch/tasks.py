@@ -8,7 +8,7 @@ from pathlib import Path
 
 from codex.codex_cli import check_model_effort, model_catalog, user_defaults
 from codex.errors import Refusal
-from codex.registry.runs import find_run
+from codex.registry import find_run
 from codex.runs import settings
 from codex.util import clip
 

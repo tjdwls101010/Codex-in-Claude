@@ -11,8 +11,7 @@ from codex.codex_cli import (
 )
 from codex.git import git_toplevel, resolve_project, worktrees_registered
 from codex.errors import Refusal
-from codex.registry.groups import list_groups
-from codex.registry.runs import is_live, iter_runs, reap, resolve_runs_dir, unreadable_runs
+from codex.registry import iter_runs, list_groups, live_runs, resolve_runs_dir, unreadable_runs
 from codex.util import ENTRY, clip, is_within
 
 
@@ -134,7 +133,7 @@ def _check_registry(report, blockers, warnings, project, runs_dir):
 
 def _overlapping_writers(runs_dir):
     """Live runs whose recorded cwds overlap (either inside the other), where at least one can write — the same test `concurrent_writers` makes at creation."""
-    live = [m for m in (reap(rd, m) for rd, m in iter_runs(runs_dir)) if is_live(m)]
+    live = [m for _rd, m in live_runs(runs_dir)]
     seen, out = set(), []
     for i, m in enumerate(live):
         group = [m] + [o for j, o in enumerate(live) if j != i

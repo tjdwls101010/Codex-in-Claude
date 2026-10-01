@@ -7,7 +7,7 @@ from pathlib import Path
 from codex.codex_cli import changed_paths
 from codex.git import repo_identity
 from codex.observe.rows import progress, turn_failed_excerpt
-from codex.registry.runs import still_writing
+from codex.registry import still_writing
 from codex.util import nfc
 
 # Per member, in bytes, in `result --group`; `result --run` returns the whole message.

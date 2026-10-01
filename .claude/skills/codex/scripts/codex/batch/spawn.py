@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from codex.batch.tasks import task_args
 from codex.errors import Refusal
-from codex.registry.groups import write_members
-from codex.registry.runs import find_run
+from codex.registry import find_run, record_members
 from codex.runs.create import create_run
 
 
@@ -27,7 +26,7 @@ def spawn_members(args, tasks, *, runs_dir, epoch, isolated, base):
         entry = {"index": index, "kind": item["kind"], "label": item.get("label") or args.label}
         # The slot is recorded before the spawn, so a checkout cut by a batch killed mid-spawn still belongs to the group.
         members.append(entry)
-        write_members(runs_dir, args.group, members, epoch=epoch)
+        record_members(runs_dir, args.group, members, epoch=epoch)
         try:
             out = spawn_task(task_args(args, item), item, group=args.group, runs_dir=runs_dir, batch=batch_ctx,
                              worktree_base=base if index in isolated else None)
@@ -36,12 +35,12 @@ def spawn_members(args, tasks, *, runs_dir, epoch, isolated, base):
             entry["error"] = e.error if isinstance(e, Refusal) else str(e)
             entry.update(e.fields if isinstance(e, Refusal) else {"error_type": type(e).__name__})
             results.append(entry)
-            write_members(runs_dir, args.group, members, epoch=epoch)
+            record_members(runs_dir, args.group, members, epoch=epoch)
             continue
         entry.update(run_id=out["run_id"], thread_id=out.get("thread_id"), cwd=out.get("cwd"),
                      sandbox=out.get("sandbox"))
         if out.get("worktree"):
             entry["worktree"] = out["worktree"]["path"]
         results.append({**entry, "state": out.get("state")})
-        write_members(runs_dir, args.group, members, epoch=epoch)
+        record_members(runs_dir, args.group, members, epoch=epoch)
     return members, results

@@ -5,7 +5,7 @@ from __future__ import annotations
 from codex.codex_cli import find_item, item_ids
 from codex.errors import Refusal
 from codex.git import resolve_project
-from codex.registry.runs import find_run, refuse_unresolved_run, resolve_runs_dir
+from codex.registry import resolve_runs_dir, run
 
 # `show --item` cap; truncation is always announced with how much was withheld.
 SHOW_MAX_BYTES = 20000
@@ -14,8 +14,7 @@ SHOW_MAX_BYTES = 20000
 def show(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
-    rd, meta = find_run(runs_dir, args.run)
-    refuse_unresolved_run(args.run, rd, meta, runs_dir)
+    rd, meta = run(runs_dir, args.run)
     found = find_item(rd / "events.jsonl", args.item)
     if not found:
         raise Refusal(f"no item {args.item!r} in run {meta['run_id']}", available=item_ids(rd / "events.jsonl")[:60])

@@ -7,10 +7,8 @@ from codex.batch.rounds import pair_with_previous
 from codex.batch.spawn import spawn_members
 from codex.batch.tasks import check_task_settings, load_tasks
 from codex.batch.worktrees import plan_worktrees, worktree_report
-from codex.errors import Refusal
 from codex.git import resolve_project
-from codex.registry.groups import claim_group, group_path, read_group
-from codex.registry.runs import ensure_runs_dir, resolve_runs_dir
+from codex.registry import claim_group, ensure_runs_dir, group_path, resolve_runs_dir
 
 
 def start(args):
@@ -24,12 +22,7 @@ def start(args):
     check_task_settings(tasks, args, runs_dir)
 
     # Claimed before anything spawns, so a duplicate name costs nothing.
-    try:
-        epoch = claim_group(runs_dir, args.group, derived_from=previous, requested=len(tasks))["epoch"]
-    except FileExistsError:
-        existing = read_group(runs_dir, args.group) or {}
-        raise Refusal(f"group {args.group!r} already exists; `batch clean --group {args.group}` releases the name once nothing is left",
-                      created_at=existing.get("created_at"), members=len(existing.get("members") or []))
+    epoch = claim_group(runs_dir, args.group, derived_from=previous, requested=len(tasks))["epoch"]
 
     isolated, base, note = plan_worktrees(tasks, args, project, runs_dir)
     members, results = spawn_members(args, tasks, runs_dir=runs_dir, epoch=epoch, isolated=isolated, base=base)

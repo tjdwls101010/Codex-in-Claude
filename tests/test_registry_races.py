@@ -19,7 +19,7 @@ from support.harness import SCRIPTS, BridgeCase, engine, wait_until
 
 
 def _write_own_key(run_dir, writer, rounds, errors):
-    registry = engine("codex.registry.runs")
+    registry = engine("codex.registry")
     for i in range(rounds):
         try:
             registry.update_meta(Path(run_dir), **{f"w{writer}": i})
@@ -28,7 +28,7 @@ def _write_own_key(run_dir, writer, rounds, errors):
 
 
 def _read(run_dir, rounds, errors):
-    registry = engine("codex.registry.runs")
+    registry = engine("codex.registry")
     for i in range(rounds):
         m = registry.read_meta(Path(run_dir))
         if not m or m.get("run_id") != "fixture":
@@ -38,7 +38,7 @@ def _read(run_dir, rounds, errors):
 class ManyWritersOneMeta(unittest.TestCase):
 
     def setUp(self):
-        self.registry = engine("codex.registry.runs")
+        self.registry = engine("codex.registry")
         self.run_dir = Path(tempfile.mkdtemp(prefix="codex-race-")).resolve()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.run_dir)]))
         self.registry.write_meta(self.run_dir, {"run_id": "fixture", "state": "running"})
@@ -66,7 +66,7 @@ class AStaleReap(unittest.TestCase):
     """`reap` decides from a snapshot and commits only if the state on disk is still active, so an outcome written in between wins."""
 
     def setUp(self):
-        self.registry = engine("codex.registry.runs")
+        self.registry = engine("codex.registry")
         self.run_dir = Path(tempfile.mkdtemp(prefix="codex-reap-")).resolve()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.run_dir)]))
 
@@ -83,7 +83,7 @@ class AStaleReap(unittest.TestCase):
                         "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
                         "import importlib; r = importlib.import_module(sys.argv[2]); "
                         "r.update_meta(Path(sys.argv[3]), state='completed', exit_code=0, ended_at='T')",
-                        str(SCRIPTS), "codex.registry.runs", str(self.run_dir)],
+                        str(SCRIPTS), "codex.registry", str(self.run_dir)],
                        check=True)
         out = self.registry.reap(self.run_dir, stale)
         self.assertEqual((out["state"], out["exit_code"], out["ended_at"]), ("completed", 0, "T"))
@@ -101,6 +101,48 @@ class AStaleReap(unittest.TestCase):
         self.registry.write_meta(self.run_dir, {"run_id": "r", "state": "starting", "creator_pid": self.dead_pid()})
         os.utime(self.run_dir / "meta.json", (old, old))
         self.assertEqual(self.registry.reap(self.run_dir, self.registry.read_meta(self.run_dir))["state"], "orphaned")
+
+
+def _publish_on_one_thread(runs_dir, n, results):
+    """One contender: publish a run on thread `t` unless one is already there — the check `resume` makes under the lock."""
+    registry = engine("codex.registry")
+    errors = engine("codex.errors")
+
+    def check():
+        if any(m.get("thread_id") == "t" for _rd, m in registry.iter_runs(Path(runs_dir))):
+            raise errors.Refusal("thread already has a turn")
+
+    try:
+        run_id, _rd, _m = registry.publish_run(
+            Path(runs_dir), thread_ref="t", label=f"c{n}", check=check,
+            make_meta=lambda run_id, run_dir: {"run_id": run_id, "thread_id": "t", "state": "running",
+                                               "started_at": f"2099-01-01T00:00:00.{n:03d}Z"})
+        results.put(("published", run_id))
+    except errors.Refusal:
+        results.put(("refused", n))
+    except Exception as e:
+        results.put(("error", f"{type(e).__name__}: {e}"))
+
+
+class OnePublishPerThreadCheck(unittest.TestCase):
+    """`publish_run` runs the caller's check and the publish under one lock per thread, so of many processes that each publish only if the thread is free, exactly one does."""
+
+    def test_exactly_one_contender_publishes(self):
+        runs_dir = Path(tempfile.mkdtemp(prefix="codex-publish-")).resolve()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(runs_dir)]))
+        ctx = mp.get_context("spawn")
+        results = ctx.Queue()
+        procs = [ctx.Process(target=_publish_on_one_thread, args=(str(runs_dir), n, results)) for n in range(6)]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=120)
+        outcomes = [results.get(timeout=10) for _ in procs]
+        self.assertEqual([o for o in outcomes if o[0] == "error"], [])
+        published = [o[1] for o in outcomes if o[0] == "published"]
+        self.assertEqual(len(published), 1, outcomes)
+        self.assertEqual([d.name for d in runs_dir.iterdir() if not d.name.startswith(".")], published,
+                         "a refused contender claims no directory")
 
 
 class AFailureInsideALockIsReportedAsItself(BridgeCase):

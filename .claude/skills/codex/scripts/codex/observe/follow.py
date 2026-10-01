@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import time
 
-from codex.codex_cli.events import FOLLOW_INTERVAL
 from codex.registry.groups import unstarted_members, vanished_members
 from codex.registry.runs import unreadable_runs
+
+# How often a follower asks whether anything changed. A tick reads forward from a byte offset, so it is cheap.
+FOLLOW_INTERVAL = 1.0
 
 
 def follow(step, *, timeout, heartbeat):

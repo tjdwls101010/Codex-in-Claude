@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from codex.codex_cli.events import scan_progress
+from codex.codex_cli import scan_progress, stderr_tail as read_stderr_tail
 from codex.registry.runs import TERMINAL_STATES, is_live, reap, still_writing, unreadable_runs
 from codex.util import clip
 
@@ -60,14 +60,7 @@ def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
     if state == "running" and idle is not None and idle >= STALL_SECONDS:
         state = "stalled"
 
-    stderr_tail = None
-    sp = run_dir / "stderr.log"
-    if sp.exists() and sp.stat().st_size:
-        txt = sp.read_text(encoding="utf-8", errors="replace")
-        # Codex always prints this when stdin is not a TTY; it is not a failure.
-        txt = "\n".join(ln for ln in txt.splitlines()
-                        if ln.strip() and "Reading additional input from stdin" not in ln)
-        stderr_tail = txt[-800:] or None
+    stderr_tail = read_stderr_tail(run_dir / "stderr.log")
 
     # Optional fields appear only when they say something, so a present field is worth reading.
     extra = {key: meta[key] for key in ("error", "group", "sandbox_changed_from", "codex_started_at",

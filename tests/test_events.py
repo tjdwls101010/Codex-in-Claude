@@ -6,6 +6,7 @@ Command output is the one field that can put a whole file into the caller's cont
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -193,14 +194,24 @@ class Show(BridgeCase):
         self.assertIn("file add f0.py", body, "paths are shown relative to the run's cwd")
 
 
-class FormatEvents(unittest.TestCase):
-    """`codex.codex_cli.events.format_events` on events built by hand, one kind at a time."""
+def stream(*events):
+    """An event file holding these events built by hand, one JSON line each."""
+    path = Path(tempfile.mkdtemp(prefix="codex-events-")) / "events.jsonl"
+    path.write_text("".join(json.dumps(e) + "\n" for e in events))
+    return path
+
+
+class EventLines(unittest.TestCase):
+    """`codex.codex_cli.event_lines` on events built by hand, one kind at a time."""
 
     def setUp(self):
-        self.events = engine("codex.codex_cli.events")
+        self.codex_cli = engine("codex.codex_cli")
 
     def lines(self, level, *events, project=None):
-        return self.events.format_events(list(events), level, project)
+        path = stream(*events)
+        lines, cursor = self.codex_cli.event_lines(path, 0, level, project)
+        self.assertEqual(cursor, path.stat().st_size)
+        return lines
 
     def test_turn_lines(self):
         usage = {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 2, "reasoning_output_tokens": 1}
@@ -234,6 +245,60 @@ class FormatEvents(unittest.TestCase):
         ev = {"type": "item.completed", "item": {"id": "f", "type": "file_change",
                                                  "changes": [{"path": "/p/src/a.py", "kind": "update"}]}}
         self.assertEqual(self.lines("compact", ev, project=Path("/p")), ["file update src/a.py"])
+
+
+
+class ItemsAndPaths(unittest.TestCase):
+    """`codex.codex_cli`'s readers that hand `show`, `status` and `result` an item, the item ids, the changed paths and stderr in the skill's terms."""
+
+    COMMAND = {"id": "item_1", "type": "command_execution", "command": "/bin/zsh -lc 'make test'",
+               "aggregated_output": "ok\n", "exit_code": 2, "status": "failed"}
+    CHANGE = {"id": "item_2", "type": "file_change",
+              "changes": [{"path": "/p/a.py", "kind": "update"}, {"path": "/p/b.py", "kind": "add"}]}
+    MESSAGE = {"id": "item_3", "type": "agent_message", "text": "done"}
+
+    def setUp(self):
+        self.codex_cli = engine("codex.codex_cli")
+        self.path = stream({"type": "thread.started", "thread_id": "t"},
+                           {"type": "item.started", "item": {**self.COMMAND, "aggregated_output": "", "exit_code": None}},
+                           {"type": "item.completed", "item": self.COMMAND},
+                           {"type": "item.completed", "item": self.CHANGE},
+                           {"type": "item.completed", "item": self.MESSAGE})
+
+    def test_a_command_comes_without_its_shell_wrapper_and_with_its_whole_output(self):
+        self.assertEqual(self.codex_cli.find_item(self.path, "item_1"),
+                         {"kind": "command", "type": "command_execution", "command": "make test",
+                          "exit_code": 2, "output": "ok\n"})
+
+    def test_a_file_change_comes_with_its_changes(self):
+        self.assertEqual(self.codex_cli.find_item(self.path, "item_2"),
+                         {"kind": "file_change", "type": "file_change", "changes": self.CHANGE["changes"]})
+
+    def test_any_other_item_comes_as_recorded(self):
+        self.assertEqual(self.codex_cli.find_item(self.path, "item_3"),
+                         {"kind": "other", "type": "agent_message", "item": self.MESSAGE})
+
+    def test_an_unknown_item_is_none_and_the_ids_say_what_exists(self):
+        self.assertIsNone(self.codex_cli.find_item(self.path, "item_9"))
+        self.assertEqual(self.codex_cli.item_ids(self.path),
+                         ["item_1:command_execution", "item_2:file_change", "item_3:agent_message"])
+
+    def test_changed_paths_are_every_path_a_file_change_names(self):
+        self.assertEqual(self.codex_cli.changed_paths(self.path), {"/p/a.py", "/p/b.py"})
+
+    def test_a_decomposed_path_comes_back_composed(self):
+        path = stream({"type": "item.completed", "item": {"id": "i", "type": "file_change",
+                                                           "changes": [{"path": "/p/cafe\u0301.txt", "kind": "add"}]}})
+        self.assertEqual(self.codex_cli.changed_paths(path), {"/p/caf\u00e9.txt"})
+
+    def test_stderr_drops_blank_lines_and_the_stdin_notice_and_keeps_the_end(self):
+        path = Path(tempfile.mkdtemp(prefix="codex-stderr-")) / "stderr.log"
+        path.write_text("Reading additional input from stdin...\n\nerror: one\nerror: two\n")
+        self.assertEqual(self.codex_cli.stderr_tail(path), "error: one\nerror: two")
+        self.assertEqual(self.codex_cli.stderr_tail(path, limit=3), "two")
+        path.write_text("Reading additional input from stdin...\n")
+        self.assertIsNone(self.codex_cli.stderr_tail(path))
+        self.assertIsNone(self.codex_cli.stderr_tail(path.with_name("absent.log")))
 
 
 if __name__ == "__main__":

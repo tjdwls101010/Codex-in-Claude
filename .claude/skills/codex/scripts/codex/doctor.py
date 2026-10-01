@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
-import subprocess
 import sys
 
-from codex.codex_cli.argv import WRITING_SANDBOXES
-from codex.codex_cli.catalog import codex_version, model_catalog
-from codex.codex_cli.config import codex_home, config_scalars, user_defaults
+from codex.codex_cli import (
+    WRITING_SANDBOXES, codex_home, codex_version, config_summary, login_status, model_catalog, user_defaults,
+)
 from codex.git.repo import git_toplevel, resolve_project
 from codex.errors import Refusal
 from codex.git.worktree import registered as worktrees_registered
@@ -60,8 +58,7 @@ def _check_codex(report, blockers, warnings):
         blockers.append("`codex` is not on PATH")
     else:
         try:
-            r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=20)
-            report["codex_version"] = (r.stdout or r.stderr).strip() or None
+            report["codex_version"] = codex_version(strict=True)
         except Exception as e:
             warnings.append(f"could not read `codex --version`: {e}")
     home = codex_home()
@@ -72,33 +69,26 @@ def _check_codex(report, blockers, warnings):
         blockers.append(f"CODEX_HOME does not exist: {home}")
     if not exe:
         return
-    try:
-        r = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=30,
-                           stdin=subprocess.DEVNULL)
-    except Exception as e:
+    login = login_status()
+    if login["cause"] == "unavailable":
         report["login_ok"] = None
-        warnings.append(f"could not run `codex login status`: {e}")
+        warnings.append(f"could not run `codex login status`: {login['detail']}")
         return
-    report["login_status"] = (r.stdout or r.stderr).strip()[:400]
-    report["login_ok"] = r.returncode == 0
-    if r.returncode == 0:
-        return
-    # `codex login status` also fails when it cannot load config at all; calling that "not authenticated" would send the caller to `codex login`, which fails the same way.
-    text = report["login_status"] or ""
-    if re.search(r"(?i)error loading config|config\.toml|permission denied|invalid|parse", text):
+    report["login_status"] = login["detail"]
+    report["login_ok"] = login["ok"]
+    if login["cause"] == "environment":
         blockers.append(f"`codex login status` could not run at all — an "
                         f"environment or config problem, not an auth one, so "
-                        f"`codex login` will fail the same way: {clip(text, 200)}")
-    else:
+                        f"`codex login` will fail the same way: {clip(login['detail'], 200)}")
+    elif login["cause"] == "unauthenticated":
         blockers.append("`codex login status` exited non-zero — not authenticated")
 
 
 def _check_config(report, warnings):
-    cfg = codex_home() / "config.toml"
-    report["config_toml"] = str(cfg) if cfg.exists() else None
-    scalars = config_scalars(("sandbox_mode", "approval_policy"), cfg)
-    report["config_sandbox_mode"] = scalars.get("sandbox_mode")
-    report["config_approval_policy"] = scalars.get("approval_policy")
+    cfg = config_summary()
+    report["config_toml"] = cfg["path"]
+    report["config_sandbox_mode"] = cfg["sandbox_mode"]
+    report["config_approval_policy"] = cfg["approval_policy"]
     # What a run naming no model, effort or tier would be handed.
     report["effective_defaults"] = user_defaults()
     if report["config_sandbox_mode"] == "danger-full-access":

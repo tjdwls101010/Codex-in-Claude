@@ -6,7 +6,7 @@ import json
 
 from codex.errors import Refusal
 from codex.git.repo import resolve_project
-from codex.observe.collect import changed_paths, final_message, member_result, overlaps
+from codex.observe.collect import final_message, member_result, overlaps, written_paths
 from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
 from codex.registry.groups import resolve_group, unstarted_members, vanished_members
 from codex.registry.runs import TERMINAL_STATES, find_run, reap, refuse_unresolved_run, resolve_runs_dir, still_writing
@@ -63,7 +63,7 @@ def result_group(args, project, runs_dir):
         row, info, text = member_result(rd, meta)
         members.append({"index": index, **row})
         shown.append(text)
-        per_run_paths[meta["run_id"]] = changed_paths(
+        per_run_paths[meta["run_id"]] = written_paths(
             rd / "events.jsonl", (meta.get("worktree") or {}).get("path") or meta.get("cwd"))
         for key in totals:
             totals[key] += int((info["usage"] or {}).get(key) or 0)

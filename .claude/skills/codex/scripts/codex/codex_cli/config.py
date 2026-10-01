@@ -16,6 +16,12 @@ def codex_home() -> Path:
     return Path(v).expanduser().resolve() if v else Path.home() / ".codex"
 
 
+def pin_codex_home():
+    """Pin a relative CODEX_HOME to the directory it named where this command ran: the supervisor and Codex run in other directories."""
+    if os.environ.get("CODEX_HOME"):
+        os.environ["CODEX_HOME"] = str(codex_home())
+
+
 def config_scalars(keys, path=None):
     """Named top-level string values from config.toml; `{}` when the file cannot be read or does not parse.
 
@@ -35,3 +41,11 @@ def user_defaults():
     raw = config_scalars(USER_DEFAULT_KEYS)
     return {"model": raw.get("model"), "effort": raw.get("model_reasoning_effort"),
             "service_tier": raw.get("service_tier")}
+
+
+def config_summary():
+    """What `doctor` reports of config.toml: its path when the file exists, else None, and the top-level `sandbox_mode` and `approval_policy` it sets, each None when unset."""
+    path = codex_home() / "config.toml"
+    raw = config_scalars(("sandbox_mode", "approval_policy"), path)
+    return {"path": str(path) if path.exists() else None,
+            "sandbox_mode": raw.get("sandbox_mode"), "approval_policy": raw.get("approval_policy")}

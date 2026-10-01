@@ -6,8 +6,9 @@ from __future__ import annotations
 import os
 import signal
 import unittest
+from unittest import mock
 
-from support.harness import BridgeCase, FAKE_CODEX_DIR
+from support.harness import BridgeCase, FAKE_CODEX_DIR, engine
 
 
 class Doctor(BridgeCase):
@@ -99,6 +100,33 @@ class Doctor(BridgeCase):
         self.git("worktree", "add", "--detach", mine, "HEAD")
         self.assertEqual(self.bridge("doctor")["worktrees"], 1)
         self.assertEqual(self.bridge("doctor")["groups"], ["g"])
+
+
+
+class LoginStatus(unittest.TestCase):
+    """`codex.codex_cli.login_status`, asked of the fake codex: the cause says which of four answers the caller acts on."""
+
+    def ask(self, **env):
+        path = f"{FAKE_CODEX_DIR}{os.pathsep}{os.environ.get('PATH', '')}"
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("FAKE_CODEX_")}
+        with mock.patch.dict(os.environ, {**clean, "PATH": path, **env}, clear=True):
+            return engine("codex.codex_cli").login_status()
+
+    def test_logged_in(self):
+        self.assertEqual(self.ask(), {"ok": True, "cause": "authenticated", "detail": "Logged in using ChatGPT"})
+
+    def test_not_logged_in(self):
+        self.assertEqual(self.ask(FAKE_CODEX_LOGIN_RC="1"),
+                         {"ok": False, "cause": "unauthenticated", "detail": "Not logged in"})
+
+    def test_a_config_that_will_not_load_is_the_environment(self):
+        out = self.ask(FAKE_CODEX_LOGIN_RC="1", FAKE_CODEX_LOGIN_OUT="Error loading configuration: config.toml:1:26")
+        self.assertEqual((out["ok"], out["cause"]), (False, "environment"))
+
+    def test_no_codex_cannot_be_asked(self):
+        with mock.patch.dict(os.environ, {"PATH": "/nonexistent"}):
+            out = engine("codex.codex_cli").login_status()
+        self.assertEqual((out["ok"], out["cause"]), (None, "unavailable"))
 
 
 if __name__ == "__main__":

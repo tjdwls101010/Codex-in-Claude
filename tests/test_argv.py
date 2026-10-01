@@ -1,4 +1,4 @@
-"""`codex.codex_cli.argv`: the argv a run hands Codex, and the paragraphs in front of its prompt."""
+"""`codex.codex_cli`'s `build_argv` and `apply_preamble`: the argv a run hands Codex, and the paragraphs in front of its prompt."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import unittest
 
 from support.harness import engine
 
-argv_mod = engine("codex.codex_cli.argv")
+codex_cli = engine("codex.codex_cli")
 
 META = {"run_dir": "/r/run-1", "sandbox": "read-only", "isolated": True, "model": None, "effort": None,
         "service_tier": None, "schema_path": None, "images": [], "add_dirs": [], "skip_git_repo_check": False}
 
 
 def build(kind="start", prompt="do it", thread_ref=None, **meta):
-    return argv_mod.build_argv({**META, **meta}, kind=kind, prompt=prompt, thread_ref=thread_ref)
+    return codex_cli.build_argv({**META, **meta}, kind=kind, prompt=prompt, thread_ref=thread_ref)
 
 
 class BuildArgv(unittest.TestCase):
@@ -50,20 +50,24 @@ class BuildArgv(unittest.TestCase):
 class Preamble(unittest.TestCase):
 
     def test_every_prompt_is_told_it_is_non_interactive(self):
-        sent = argv_mod.apply_preamble("the task")
+        sent = codex_cli.apply_preamble("the task")
         self.assertTrue(sent.startswith("[Run context: you are a single non-interactive"))
         self.assertTrue(sent.endswith("\n\nthe task"))
 
     def test_a_batch_member_is_told_its_group_and_checkout(self):
-        sent = argv_mod.apply_preamble("t", batch={"n": 3, "group": "g1", "worktree": "/wt", "base": "a" * 40,
+        sent = codex_cli.apply_preamble("t", batch={"n": 3, "group": "g1", "worktree": "/wt", "base": "a" * 40,
                                                    "uncommitted": 2})
         self.assertIn('batch of 3 tasks launched together as group "g1"', sent)
         self.assertIn("isolated git worktree at /wt, created from commit aaaaaaaaaaaa.", sent)
         self.assertIn("does not contain the 2 uncommitted file(s)", sent)
 
     def test_an_unknown_uncommitted_count_is_never_stated_as_zero(self):
-        self.assertIn("how many is unknown", argv_mod.uncommitted_clause(None))
-        self.assertIn("no uncommitted work", argv_mod.uncommitted_clause(0))
+        def told(n):
+            return codex_cli.apply_preamble("t", batch={"n": 2, "group": "g", "worktree": "/wt", "base": "b" * 40,
+                                                        "uncommitted": n})
+        self.assertIn("how many is unknown", told(None))
+        self.assertNotIn("the 0 uncommitted", told(None))
+        self.assertIn("no uncommitted work", told(0))
 
 
 if __name__ == "__main__":

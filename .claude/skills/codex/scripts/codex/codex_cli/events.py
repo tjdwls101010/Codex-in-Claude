@@ -1,4 +1,4 @@
-"""Reading and filtering the `codex exec --json` event stream.
+"""Reading what a run's Codex wrote: the `codex exec --json` event stream, filtered to a level and summarised, and its stderr. Every reader here hands back the skill's terms, so nothing outside this unit parses an event or a line Codex prints.
 
 `file_change` events carry paths and a kind, never file contents. The context risk is one field, `command_execution.aggregated_output`, which holds a command's whole stdout. That is why the levels split where they do, and why `normal` splits on exit code rather than size: a failed command's output is the case where the output is what the caller needs.
 """
@@ -25,10 +25,6 @@ FULL_ITEM_BYTES = 4000
 
 # Command lines are echoed at every level and a heredoc can be thousands of characters.
 CMD_MAX_CHARS = 300
-
-# How often a follower asks whether anything changed. A tick reads forward from a byte offset, so it is cheap.
-FOLLOW_INTERVAL = 1.0
-
 
 class CursorOutOfRange(ValueError):
     """`--since` is not a cursor this run's file produced: past its end, or not on a line boundary. Almost always one fed back from a different run."""
@@ -125,6 +121,12 @@ def _indent(text: str, prefix: str = "    | ") -> str:
 
 
 # -- filtering --------------------------------------------------------------
+
+def event_lines(path: Path, since: int = 0, level: str = DEFAULT_LEVEL, rel_to: Path = None):
+    """The events after byte offset `since` rendered at `level`, paths shown relative to `rel_to`; returns `(lines, new cursor)`. A line can hold newlines of its own (an output excerpt under it). Raises `CursorOutOfRange` for a `since` this file did not produce."""
+    events, cursor = read_events(path, since)
+    return format_events(events, level, rel_to), cursor
+
 
 def format_events(events, level: str, project: Path = None):
     """Render events as text lines at the given level."""
@@ -265,12 +267,56 @@ def scan_progress(events_path: Path, terminal: bool = False):
 
 
 def find_item(events_path: Path, item_id: str):
-    """Look one item up by id. Item ids restart at `item_0` in every run, so this is only meaningful within one run."""
+    """One item by id, or None. Item ids restart at `item_0` in every run, so this is only meaningful within one run.
+
+    `kind` is how the skill tells items apart and `type` the type as recorded. A `command` carries `command` (without the shell wrapper), `exit_code` and its whole `output`; a `file_change` its `changes`; anything else, kind `other`, carries the `item` as recorded."""
     found = None
-    events, _ = read_events(events_path, 0)
-    for ev in events:
+    for ev in read_events(events_path, 0)[0]:
         if ev.get("type") in ("item.started", "item.completed"):
             it = ev.get("item") or {}
             if it.get("id") == item_id:
                 found = it  # completed supersedes started
-    return found, events
+    if found is None:
+        return None
+    itype = found.get("type")
+    if itype == "command_execution":
+        return {"kind": "command", "type": itype, "command": strip_wrapper(found.get("command") or ""),
+                "exit_code": found.get("exit_code"), "output": found.get("aggregated_output") or ""}
+    if itype == "file_change":
+        return {"kind": "file_change", "type": itype, "changes": found.get("changes") or []}
+    return {"kind": "other", "type": itype, "item": found}
+
+
+def item_ids(events_path: Path):
+    """Every completed item as `<id>:<type>`, in the order the run finished them."""
+    return [f"{(ev.get('item') or {}).get('id')}:{(ev.get('item') or {}).get('type')}"
+            for ev in read_events(events_path, 0)[0] if ev.get("type") == "item.completed"]
+
+
+def changed_paths(events_path: Path):
+    """The paths a run's file changes name, as Codex recorded them — absolute in practice — in NFC."""
+    paths = set()
+    for ev in read_events(events_path, 0)[0]:
+        item = ev.get("item") or {}
+        if item.get("type") != "file_change":
+            continue
+        for ch in item.get("changes") or []:
+            p = ch.get("path") if isinstance(ch, dict) else ch
+            if p:
+                paths.add(str(Path(nfc(str(p)))))
+    return paths
+
+
+# -- stderr -------------------------------------------------------------------
+
+# Codex always prints this when stdin is not a TTY; it is not a failure.
+STDIN_NOTICE = "Reading additional input from stdin"
+
+
+def stderr_tail(path: Path, limit: int = 800):
+    """The last `limit` characters of a run's stderr without blank lines or the notice Codex always prints, or None when nothing is left."""
+    if not path.exists() or not path.stat().st_size:
+        return None
+    txt = path.read_text(encoding="utf-8", errors="replace")
+    txt = "\n".join(ln for ln in txt.splitlines() if ln.strip() and STDIN_NOTICE not in ln)
+    return txt[-limit:] or None

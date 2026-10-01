@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from codex.batch.tasks import task_args
-from codex.codex_cli.argv import WRITING_SANDBOXES
+from codex.codex_cli import WRITING_SANDBOXES
 from codex.errors import Refusal
 from codex.git.repo import (
     git_toplevel, ignored_entries as worktree_ignored_entries, missing_at_base as worktree_missing_at_base,

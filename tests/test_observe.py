@@ -528,7 +528,27 @@ class WaitingForTheResult(BridgeCase):
                 p.communicate(timeout=60)
                 self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=2 failed=0", followed)
                 if command[0] == "log":
-                    self.assertIn("[1] msg OK", followed.splitlines(), "the later member's events are shown too")
+                    second = json.loads(manifest.read_text())["members"][1]["run_id"]
+                    lines = followed.splitlines()
+                    self.assertIn("[1] msg OK", lines, "the later member's events are shown too")
+                    self.assertIn(f"group.members group=g 1={second}", lines, "and which run [1] is")
+                    self.assertLess(lines.index(f"group.members group=g 1={second}"), lines.index("[1] msg OK"))
+
+    def test_a_follower_does_not_move_to_a_new_group_that_takes_the_name(self):
+        # `clean` can release the name and another batch claim it between two looks; what is followed is the group that was asked for.
+        first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})
+        rid = first["runs"][0]["run_id"]
+        follower = self.spawn("status", "--group", "g", "--follow")
+        time.sleep(1.5)
+        # Paused across the end, the release and the new claim, so all three land between two of its looks.
+        os.kill(follower.pid, signal.SIGSTOP)
+        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.05)
+        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
+        second = self.bridge("batch", "--group", "g", "--task", "b", env={"FAKE_CODEX_HANG": 5})
+        os.kill(follower.pid, signal.SIGCONT)
+        followed, _ = follower.communicate(timeout=60)
+        self.assertNotIn(second["runs"][0]["run_id"], followed)
+        self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=1 failed=0")
 
     def test_a_wait_timeout_must_be_a_finite_number(self):
         out = self.bridge("start", "x")

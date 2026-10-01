@@ -34,7 +34,7 @@ def status(args):
 
 
 def status_group(args, project, runs_dir):
-    members, never = group_view(runs_dir, args.group)
+    members, never, _epoch = group_view(runs_dir, args.group)
     rows = [run_row(rd, m, project) for rd, m in members]
     running, done, failed, gstate = group_snapshot(rows, len(never))
     out = {"group": args.group, "group_state": gstate, "running": running, "done": done, "failed": failed,

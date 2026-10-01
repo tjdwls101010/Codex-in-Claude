@@ -119,7 +119,7 @@ def derived_groups(runs_dir: Path, name: str):
 
 
 def group_view(runs_dir: Path, name: str):
-    """`(members, gaps)` from one read of the manifest, so no slot is in both and neither lags the other. `members` are `(run_dir, meta)` in start order; `gaps` are every slot no view can show as a run — slots that never started, tasks a killed `batch` never reached included, then members whose run is gone or will not parse, which still holds its work. Refuses an unknown or unreadable group."""
+    """`(members, gaps, epoch)` from one read of the manifest, so no slot is in both and neither lags the other. `members` are `(run_dir, meta)` in start order; `gaps` are every slot no view can show as a run — slots that never started, tasks a killed `batch` never reached included, then members whose run is gone or will not parse, which still holds its work; `epoch` identifies this claim of the name, so a reader that looks again can tell the same group from a new one that took the name. Refuses an unknown or unreadable group."""
     g = group_manifest(runs_dir, name)
     if g is None:
         if group_unreadable(runs_dir, name):
@@ -145,7 +145,7 @@ def group_view(runs_dir: Path, name: str):
                                if present else "its run directory is no longer in the registry")})
     for i in range(len(slots), g.get("requested") or 0):
         never.append({"index": i, "label": None, "kind": None, "error": "batch recorded no run for this task"})
-    return members, never + gone
+    return members, never + gone, g.get("epoch")
 
 
 def group_runs(runs_dir: Path, name: str):

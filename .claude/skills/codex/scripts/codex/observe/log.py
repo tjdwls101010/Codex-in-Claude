@@ -62,7 +62,7 @@ def log(args):
 
 
 def log_group(args, project, runs_dir):
-    """Every member's events interleaved, each physical line prefixed with its member, ending on the group's terminal line. A member a still-starting batch adds is followed from when it appears."""
+    """Every member's events interleaved, each physical line prefixed with its member, ending on the group's terminal line. A member a still-starting batch adds is followed from when it appears, announced by a `group.members` line of its own."""
     watch = GroupWatch(runs_dir, args.group, project)
     if not watch.members:
         yield f"group.empty group={args.group}" + tail(runs_dir, watch.gaps) + "\n"
@@ -99,7 +99,9 @@ def log_group(args, project, runs_dir):
     def step():
         yield from drain()
         rows, gaps = watch.now()
-        take(watch.members)
+        added = take(watch.members)
+        if added:
+            yield f"group.members group={args.group} " + " ".join(added) + "\n"
         running, done, failed, _ = group_snapshot(rows)
         if not running or not args.follow:
             # Drained again after the state was read, so events written just before the end are not lost.

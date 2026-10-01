@@ -73,7 +73,7 @@ def result(args):
 
 def result_group(args, project, runs_dir):
     members, shown, per_run_paths, totals = [], [], {}, {"input_tokens": 0, "output_tokens": 0}
-    found_members, never = group_view(runs_dir, args.group)
+    found_members, never, _epoch = group_view(runs_dir, args.group)
     for index, (rd, meta) in enumerate(found_members):
         meta = reap(rd, meta)
         row, info, text = member_result(rd, meta)

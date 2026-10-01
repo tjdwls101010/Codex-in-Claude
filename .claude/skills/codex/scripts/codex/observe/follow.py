@@ -42,18 +42,20 @@ def wait_until(ended, timeout):
 
 
 class GroupWatch:
-    """A group as a follower or a wait sees it, tick by tick: its members' rows and the slots no row stands for, both from one read of the manifest, so a member counts once and one a still-starting batch adds is seen. Once `clean` has released the name, or the manifest stops parsing, what was last read stands, its members re-read, so a slot that never started is not forgotten."""
+    """A group as a follower or a wait sees it, tick by tick: its members' rows and the slots no row stands for, both from one read of the manifest, so a member counts once and one a still-starting batch adds is seen. Once `clean` has released the name, another batch has claimed it again, or the manifest stops parsing, what was last read stands, its members re-read: a slot that never started is not forgotten, and nothing of a group that only shares the name is taken in."""
 
     def __init__(self, runs_dir, name, project):
         self.runs_dir, self.name, self.project = runs_dir, name, project
         # Refuses an unknown or unreadable group before anything is followed.
-        self.members, self.gaps = group_view(runs_dir, name)
+        self.members, self.gaps, self.epoch = group_view(runs_dir, name)
 
     def now(self):
         """`(rows, gaps)` as they stand, each row reaped."""
         try:
-            self.members, self.gaps = group_view(self.runs_dir, self.name)
-            members, gaps = self.members, self.gaps
+            members, gaps, epoch = group_view(self.runs_dir, self.name)
+            if epoch != self.epoch:
+                raise Refusal(f"group {self.name!r} was claimed again")
+            self.members, self.gaps = members, gaps
         except Refusal:
             members, gaps = [], list(self.gaps)
             for rd, m in self.members:

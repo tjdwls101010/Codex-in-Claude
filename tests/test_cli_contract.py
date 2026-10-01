@@ -403,6 +403,10 @@ class TheRegistryGoesWhereItIsTold(BridgeCase):
 COMMANDS = [(), ("start",), ("resume",), ("status",), ("log",), ("show",), ("stop",), ("result",), ("batch",),
             ("clean",), ("models",), ("doctor",)]
 
+# The codes each command can end with, from where it can refuse: every command can be refused by the parser (2) or fail internally (1), and only `doctor` reports a blocker (3).
+EXITS = {cmd: {"0", "1", "2"} for cmd in ("start", "resume", "batch", "status", "log", "show", "result", "stop", "clean", "models")}
+EXITS["doctor"] = {"0", "1", "2", "3"}
+
 # Provenance does not belong in help: measurements, document ids, discovery stories. This guards against it coming back; it does not pin any sentence.
 PROVENANCE = re.compile(r"\b[Mm]easured\b|\b[RDBFC][0-9]{1,2}\b|\bV-[0-9]+\b|\baudit\b|\bfield report\b")
 
@@ -444,6 +448,25 @@ class HelpIsTheInterface(BridgeCase):
 
     def test_the_internal_command_is_not_listed(self):
         self.assertNotIn("__supervise", self.bridge_raw("--help").stdout)
+
+    def test_each_command_states_its_contract_before_its_options(self):
+        # `--help` is often read cut short (`| head -25`), so what a command prints and how it can end come first, under a short usage.
+        for (cmd,) in COMMANDS[1:]:
+            with self.subTest(cmd=cmd):
+                lines = self.bridge_raw(cmd, "--help").stdout.splitlines()
+                usage = lines[:next(i for i, ln in enumerate(lines) if not ln.strip())]
+                self.assertLessEqual(len(usage), 2, usage)
+                self.assertTrue(usage[-1].endswith("[options]"), usage)
+                head = lines[:25]
+                self.assertEqual([p for p in ("Prints:", "Exits:") if not any(ln.startswith(p) for ln in head)], [])
+                exits = next(ln for ln in lines if ln.startswith("Exits:"))
+                self.assertEqual(set(re.findall(r"(?:^Exits:|;) ([0-9]) ", exits)), EXITS[cmd], exits)
+
+    def test_the_root_map_fits_a_screen_and_names_every_command(self):
+        lines = self.bridge_raw("--help").stdout.splitlines()
+        self.assertLessEqual(len(lines), 30)
+        listed = [ln.split()[0] for ln in lines if ln.startswith("    ") and ln.strip()]
+        self.assertEqual(sorted(listed), sorted(c for (c,) in COMMANDS[1:]))
 
 
 if __name__ == "__main__":

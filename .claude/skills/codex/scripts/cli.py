@@ -2,11 +2,11 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Drive the OpenAI Codex CLI as a managed subagent. This file is the whole command surface — every flag, help text and epilog, the checks made from the arguments alone, dispatch into the `codex` package, and the output contract — and the entrypoint a detached supervisor re-executes. What a command does lives in `codex/`.
+"""Drive the OpenAI Codex CLI as a managed subagent. This file is the whole command surface — every flag, help text and epilog, each command's `Prints:` and `Exits:`, the checks made from the arguments alone, dispatch into the `codex` package, and rendering — and the entrypoint a detached supervisor re-executes. What a command does lives in `codex/`.
 
 Exit codes:
     0  success
-    1  the registry's state refused the command, or the run failed; the reply carries `error`
+    1  the registry's state refused the command, or what it asked for failed; the reply carries `error`
     2  the command line itself must change; the reply carries `error` and the `help` to read
     3  `doctor` found a blocker
 """
@@ -29,25 +29,45 @@ from codex.util import invocation
 
 EXIT_REFUSED, EXIT_ARGUMENTS, EXIT_BLOCKED = 1, 2, 3
 
-OUTPUT_CONTRACT = """\
-Output: every command prints one line of JSON on stdout, a result or a refusal carrying `error`, except the text views below.
-Exit codes: 0 success; 1 refused by the registry's state — a run or group that is not there, a thread with a live turn, a name already taken — or the run failed; 2 the command line itself must change — it does not parse, combines flags that cannot go together, or names a file, commit or model that does not exist — and the reply's `help` is the `--help` to read; 3 `doctor` found a blocker.
-These views print text instead:
-  result --run              a JSON header line, then the message itself and one newline its `message_bytes` leaves out, neither when the message is empty (a --schema run stays one JSON document)
-  result --group            a JSON header line, then per member a `--- [<index>:<label>] run=<id> state=<state> bytes=<n>` line (`[<index>]` without a label), its message and one newline, neither when the message is empty; the header's `members[].shown_bytes` say where each message ends
-  log --run                 event lines, then `# cursor=<n> run=<id>`
-  log --group               a `group.members` header, member-prefixed event lines, then a closing `group.<state>` line
-  status --group --follow   a line per member state change, then a closing `group.<state>` line"""
+ROOT_EPILOG = """\
+Every command prints one JSON line on stdout — its result, or a refusal carrying `error` — unless its --help says it prints text.
+Exit codes: 0 success; 1 the registry's state refused the command, or what it asked for failed, and `error` says why; 2 the command line must change, and the reply's `help` names the --help to read; 3 `doctor` found a blocker. Each command's --help says what it prints and which of these it ends with when."""
+
+
+START_DESC = """\
+Start a fresh non-interactive Codex thread, detached, and answer as soon as it has a handle.
+Prints: one JSON line — `run_id`, `thread_id` (null until Codex reports one), `state`, `next` (the `result --run <id> --wait` call to run in the background), the `sandbox` and `isolated` it runs under, `concurrent_writers` when other live runs can write in its directory, then its `cwd`, `project` and `events` paths.
+Exits: 0 started; 1 refused — a model or effort taken from your config.toml that this install does not offer, no free run id — or an internal error; 2 the command line must change — an empty or unreadable prompt, a --cwd, --schema or --image that does not exist, a --model or --effort this install does not offer, or anything else the parser refuses."""
+
+
+RESUME_DESC = """\
+Run another turn on an existing thread, detached: a new run with its own event log, under the sandbox, model, effort, service tier and isolation the thread recorded except where a flag changes them.
+Prints: one JSON line as `start` prints, with `sandbox_changed_from` when --sandbox changed the thread's sandbox and, with --last, `resolved_from_run_id` and `resolved_from` naming the run it continued.
+Exits: 0 started; 1 refused — the thread has a live turn, or a run whose meta.json will not parse may be on it (both lifted by --force); --last finds no run with a thread, or two or more live ones; the run named has no thread id yet; a thread this registry never recorded, without --sandbox; a model or effort from your config.toml this install does not offer; no free run id — or an internal error; 2 the command line must change — no REF and no --last, more than REF and PROMPT, an empty or unreadable prompt, a --schema or --image that does not exist, a --model or --effort this install does not offer, a directory the thread recorded that no longer exists, or anything else the parser refuses."""
+
+
+BATCH_DESC = """\
+Start several runs as one group: each --task, then each --tasks-file line, is a member started as `start` (or `resume`) would start it, with the group's options as its defaults. The group is addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `clean`, and by `batch --resume-from`; it outlives the session that started it, and its name stays reserved until `clean` releases it.
+Prints: one JSON line — `group`, `spawned`, `requested`, `next` (the `result --group <name> --wait` call to run in the background, left out when no member started), `resumed_from` with --resume-from, `worktrees` when checkouts were cut or members share a tree, `runs` (per slot its `run_id`, `state`, `cwd`, `sandbox` and `worktree`, or the `error` that kept it from starting) and the `manifest` path.
+Exits: 0 every member's start was tried, even when some failed and carry `error`; 1 refused before anything started — the name is reserved; a model or effort from your config.toml this install does not offer; a --resume-from group that is not there, will not parse, has no started member, has a member without a thread id, has a different number of members than there are tasks, or is still running (lifted by --force) — or the name was released and claimed again while members started, or an internal error; 2 the command line must change — a --group that breaks the naming rule, no task, a tasks file that cannot be read or has a line that is not a valid task, --base without --worktree or naming no commit, a --model or --effort a task names that this install does not offer, under --resume-from a task that names its own `resume` target without kind `resume`, or anything else the parser refuses."""
+
+
+BATCH_EPILOG = f"""\
+Returns once every member's spawn has been tried, each after up to {THREAD_ID_WAIT:.0f} s for its thread id; a member that fails to spawn keeps its slot with an `error` and no `run_id`, and the others start anyway.
+Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt when it is a fresh start (not a resume), its sandbox can write, it has no cwd of its own, and the project is a git repository with a commit to cut from. A checkout holds only what git tracks at --base, none of your uncommitted or ignored files; the reply's `missing_ignored` names ignored entries the checkouts lack. Results stay in the checkouts: `result --group` reports which paths more than one member wrote, moving the changes into your tree is yours to do, and `clean` removes the checkouts.
+Without --worktree, members work in your tree as they go and none can tell another member's edit from its own; the reply says so when two or more writers share a directory.
+Each member is told the group's name and size; a member with a checkout is also told it is not your tree, which commit it came from, and how many uncommitted files yours has."""
 
 
 RUN_EPILOG = f"""\
-Returns as soon as the run has a handle: once its thread id appears, or after {THREAD_ID_WAIT:.0f} s with `thread_id: null`, which `status` fills in later. A run without a thread id cannot be resumed yet. A detached supervisor runs the turn, so the run outlives this command.
-Nothing announces the end: run the reply's `next.command` — `result --run <id> --wait`, written out whole — in the background; it returns when the run does and prints its result, so its output is the answer.
+Returns as soon as the run has a handle: once its thread id appears, or after {THREAD_ID_WAIT:.0f} s with `thread_id: null`, which `status` fills in later; a run without a thread id cannot be resumed yet. A detached supervisor runs the turn, so the run outlives this command, and nothing announces its end: the reply's `next.command`, run in the background, returns when the run does and prints its result.
 Codex receives the prompt behind a paragraph saying the turn is non-interactive — a clarifying question ends it with the work undone — and that its final message is what reaches the caller."""
 
 
-RESUME_EPILOG = RUN_EPILOG + """
-A resume is a new run on the same thread with its own event log. It re-asserts the sandbox, model, effort, service tier and isolation the thread recorded, except where a flag changes them."""
+STATUS_DESC = f"""\
+Run state from the registry: whether runs are live, how far along, and what they last said, with short excerpts of the last message and stderr.
+Prints: one JSON line. With no selector, the listing — `running` (the live run ids), `counts` of live, completed and failed runs, the project's `groups`, and a summary row per run: every live run plus the {LISTING_ROWS} newest, `runs_truncated` counting the rest (--all lifts the cap). --run prints that run's full row itself. --group prints `group_state`, `running`, `done`, `failed`, `unstarted` when a member never became a readable run, and the members' full rows. --group --follow prints text instead: `run <id> <prev> -> <state>` for each member state change (with ` exit=N` when the state is not completed), then one closing line — `group.<state> group=<name> done=N failed=N`, or `group.empty group=<name>` when no member resolves, with ` unstarted=N` and ` unreadable=N` appended when non-zero; when --follow-timeout passes first, `group.still-running group=<name> running=N done=N failed=N`.
+Exits: 0 answered; 1 refused — a --run that is not there or whose meta.json will not parse, a --group that is not there or whose manifest will not parse — or an internal error; 2 the command line must change — --follow without --group, --follow-timeout without --follow, or anything else the parser refuses, --run with --group included."""
 
 
 STATUS_EPILOG = f"""\
@@ -65,12 +85,46 @@ A group's `group_state` is `running` while any member is live, `completed` when 
 `idle_seconds` is the time since the run's last event."""
 
 
-BATCH_EPILOG = f"""\
-Returns once every member's spawn has been tried, each after up to {THREAD_ID_WAIT:.0f} s for its thread id. A member that fails to spawn keeps its slot with an `error` and no `run_id`, and the others start anyway. Group options are defaults each task's own fields override.
-Nothing announces the end: run the reply's `next.command` — `result --group <name> --wait` — in the background; it returns once no member is live and prints the group's result. It is left out when no member started.
-Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt when it is a fresh start (not a resume), its sandbox can write, it has no cwd of its own, and the project is a git repository with a commit to cut from. A checkout holds only what git tracks at --base, none of your uncommitted or ignored files; the reply's `missing_ignored` names ignored entries the checkouts lack. Results stay in the checkouts: `result --group` reports which paths more than one member wrote, moving the changes into your tree is yours to do, and `clean` removes the checkouts.
-Without --worktree, members work in your tree as they go and none can tell another member's edit from its own; the reply says so when two or more writers share a directory.
-Each member is told the group's name and size; a member with a checkout is also told it is not your tree, which commit it came from, and how many uncommitted files yours has."""
+LOG_DESC = """\
+What a run or a group is doing: its events filtered to a level, from a byte cursor, followed to the end on request.
+Prints: text. For a run, its event lines, then `# cursor=<n> run=<id>`; with --follow, a closing `run.<state> run=<id> exit=<n>` comes before the cursor, or `run.still-running run=<id> state=<state>` when --follow-timeout passes first. For a group, a `group.members group=<name> 0=<run_id>[:<label>] …` header, each event line prefixed `[<index>:<label>]` or `[<index>]`, then the closing line `status --group --follow` prints (`group.running` for a live group without --follow), and no cursor.
+Exits: 0 printed; 1 refused — no --run or --group and no runs in the registry, or two or more live runs to choose from; a --run that is not there or whose meta.json will not parse; a --group that is not there or whose manifest will not parse; a --since past the end of this run's events file or not on a line boundary of it — or an internal error; 2 the command line must change — --since with --group, --follow-timeout without --follow, or anything else the parser refuses, an unknown --level or --run with --group included."""
+
+
+SHOW_DESC = """\
+One item of a run in full: a command's output, capped by --max-bytes with the truncation reported, a file change's list of paths, or any other item as recorded.
+Prints: one JSON line — `run_id`, `item_id`, `item_type`, then for a command its `command`, `exit_code`, `total_bytes`, `truncated` and `output` (with `shown_bytes` and `truncation_notice` when capped), for a file change its `changes`, and for anything else the `item`.
+Exits: 0 found; 1 refused — a run that is not there or whose meta.json will not parse, an item the run does not have (`available` lists up to 60 it does) — or an internal error; 2 the command line must change — no --run or --item, a --max-bytes that is not a number, or anything else the parser refuses."""
+
+
+RESULT_DESC = f"""\
+What a run or a group concluded: at once, partial while it is live, or — with --wait — once it has ended.
+Prints: for a run, a JSON header line — `run_id`, `state`, `exit_code`, `thread_id`, `note` when the result is partial, `turn_failed` when the turn failed, `files_changed`, `commands`, `usage`, `message_bytes` — then the final message and one newline `message_bytes` leaves out, neither when the message is empty. A --schema run prints one JSON document instead, indented, carrying `json`: the final message parsed (not re-validated against the schema), or null while the run is live. For a group, a JSON header line — `group_state`, `done`, `failed`, `running`, `unstarted` (members that never became a readable run), `overlaps` (paths more than one member wrote), `totals`, and `members` with each one's state and sizes — then per member a `--- [<index>:<label>] run=<id> state=<state> bytes=<n>` line (`[<index>]` without a label), its message capped at {GROUP_MESSAGE_CAP} B at a character boundary, and one newline; `members[].shown_bytes` says where each message ends.
+Exits: 0 printed, whatever state the run or group is in, also when --wait-timeout passes first; 1 refused — a run that is not there or whose meta.json will not parse, a group that is not there or whose manifest will not parse, a finished --schema run whose final message is missing, not UTF-8 or not JSON (`message` carries it) — or an internal error; 2 the command line must change — neither or both of --run and --group, --wait-timeout without --wait or not a positive number, or anything else the parser refuses."""
+
+
+STOP_DESC = """\
+Interrupt runs through their recorded process groups, never by process name: SIGINT, then SIGTERM after --grace, then SIGKILL. A running turn cannot be redirected; stop it, then `resume` the thread.
+Prints: one JSON line — `stopped`, an entry per run with its `run_id`, `pgid`, `signals_sent`, `signalled`, `state` and `thread_id` (`state` is `interrupted` for a run that was still active; one that had already recorded an outcome, or an orphaned one, keeps its state), with `reason` when it recorded no process group and `error` when the group could not be signalled — then `claude_session_id`.
+Exits: 0 every target was tried; 1 refused — a --run that is not there or whose meta.json will not parse, a --group that is not there or whose manifest will not parse — or an internal error; 2 the command line must change — none, or more than one, of --run, --group and --all, or anything else the parser refuses."""
+
+
+CLEAN_DESC = """\
+Remove a group's worktrees and release its name once nothing is left. Live work is never removed, --force or not.
+Prints: one JSON line — `group`, `name_released`, `forced_past` and `forced_note` when --force overrode something, `note` saying why the name stays reserved, `removed`, and `kept` with each kept worktree's `reason`, and `occupied_by` with the `stop` call that ends it when a live run works there.
+Exits: 0 cleaned as far as it could, `name_released` saying whether all of it; 1 refused — no such group; a live member (`stop` holds the calls that end them); without --force, a manifest or a member's meta.json that will not parse, or another group continued from this one — or an internal error; 2 the command line must change — no --group, or anything else the parser refuses."""
+
+
+MODELS_DESC = """\
+This install's model catalog from `codex debug models`. `start`, `resume` and `batch` check a --model or --effort against it before spawning; when it cannot be read, the check is skipped.
+Prints: one JSON line — `models`, each with its `slug`, `display_name`, `default_effort`, `efforts`, `context_window`, `visibility` and `supported_in_api`, and `codex_version`.
+Exits: 0 read; 1 the catalog cannot be read (`doctor` says why), or an internal error; 2 an argument the parser refuses."""
+
+
+DOCTOR_DESC = """\
+The environment a run would start in. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.
+Prints: one JSON line — `ok`, `blockers`, `warnings`, then what they rest on: Python; codex on PATH and its version; CODEX_HOME, resolved, with `codex_home_from_env` saying whether it was set; login; config.toml's sandbox and the `effective_defaults` a run naming nothing would get; the model catalog; the skill's `entry`; the registry, overlapping live writers and leftover worktrees.
+Exits: 0 no blocker; 3 a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.11; 1 an internal error; 2 an argument the parser refuses."""
 
 
 TIER_DEFAULT = "a resumed thread's recorded tier while its isolation is unchanged, otherwise `service_tier` from your config.toml, as for --model"
@@ -206,7 +260,7 @@ def add_run_options(p, *, kind):
     tier = p.add_mutually_exclusive_group()
     tier.add_argument("--priority", dest="priority", action="store_true", default=None, help=f'request service_tier "priority", Fast mode (default: {TIER_DEFAULT})')
     tier.add_argument("--no-priority", dest="priority", action="store_false", help="send no service_tier and record that choice for later turns; under --inherit-config your config.toml can still set one")
-    p.add_argument("--schema", help="JSON Schema file Codex shapes its final message to. `result --run` then returns the message parsed as `json` — parsed, not re-validated against the schema — and fails when it is not JSON; `result --group` does not parse" + (". A resume keeps the thread's schema unless this replaces it" if kind == "resume" else ""))
+    p.add_argument("--schema", help="JSON Schema file Codex shapes its final message to. `result --run` then returns the message parsed as `json` — parsed, not re-validated against the schema — and fails once the run has ended without a final message that is JSON; `result --group` does not parse" + (". A resume keeps the thread's schema unless this replaces it" if kind == "resume" else ""))
     p.add_argument("--timeout", type=float, metavar="SEC", help="seconds from launch before the run's process group gets SIGINT, then SIGTERM and SIGKILL, and the run is recorded `timed_out` (default: none). The thread stays resumable if it recorded a thread id")
     if kind != "batch":
         p.add_argument("--image", action="append", help="attach an image file to the prompt; repeatable")
@@ -221,22 +275,27 @@ def add_run_options(p, *, kind):
 
 def build_parser():
     ap = JsonArgumentParser(
-        prog="cli.py", formatter_class=OneLinePerParagraph, epilog=OUTPUT_CONTRACT,
-        description="Drive the OpenAI Codex CLI as a managed subagent: detached runs with a handle, resumable threads, filtered event logs, and batches addressed as one group. Each command's --help has its flags, defaults and refusals.")
+        prog="cli.py", usage="%(prog)s <command> [options]", formatter_class=OneLinePerParagraph, epilog=ROOT_EPILOG,
+        description="Drive the OpenAI Codex CLI as a managed subagent: detached runs with a handle, resumable threads, filtered event logs, and batches addressed as one group.")
     ap.subparser_map = {}
     # An explicit metavar: argparse's default one lists the suppressed internal command.
-    sub = ap.add_subparsers(dest="cmd", required=True, metavar="{start,resume,status,log,show,stop,result,batch,clean,models,doctor}")
+    # `prog` given: derived from the root's usage, every command's usage would repeat `<command> [options]`.
+    sub = ap.add_subparsers(dest="cmd", required=True, title="commands", prog="cli.py",
+                            metavar="{start,resume,batch,status,log,show,result,stop,clean,models,doctor}")
 
-    def command(name, help, **kw):
-        return sub.add_parser(name, help=help, formatter_class=OneLinePerParagraph, **kw)
+    def command(name, help, usage, description, **kw):
+        return sub.add_parser(name, help=help, usage=f"%(prog)s {usage}", description=description,
+                              formatter_class=OneLinePerParagraph, **kw)
 
-    p = command("start", "start a fresh non-interactive thread, detached", epilog=RUN_EPILOG)
+    p = command("start", "start a fresh thread, detached; the reply's `next` waits for it and prints its result",
+                "[PROMPT] [options]", START_DESC, epilog=RUN_EPILOG)
     add_common(p)
     add_run_options(p, kind="start")
-    p.add_argument("prompt", nargs="?", help="the prompt; `-` or omitted reads stdin when it is not a terminal")
+    p.add_argument("prompt", nargs="?", metavar="PROMPT", help="the prompt; `-` or omitted reads stdin when it is not a terminal")
     p.set_defaults(func=start)
 
-    p = command("resume", "run another turn on an existing thread", epilog=RESUME_EPILOG)
+    p = command("resume", "run another turn on an existing thread, detached", "(REF | --last) PROMPT [options]",
+                RESUME_DESC, epilog=RUN_EPILOG)
     add_common(p)
     add_run_options(p, kind="resume")
     p.add_argument("--last", action="store_true", help="continue the thread nobody named: the one live run with a thread in this registry, else the newest such run; the reply says which. Refused, listing them, when two or more are live. Never looks outside the registry")
@@ -246,58 +305,8 @@ def build_parser():
     p.set_defaults(func=cmd_resume, cmd="resume", cwd=None, add_dir=None, ref=None, prompt=None)
     ap.subparser_map["resume"] = p
 
-    p = command("status", "run state: whether it is live, how far along, what it last said", epilog=STATUS_EPILOG,
-                description=f"Run state from the registry, with short excerpts of the last message and stderr. The default listing, --all included, names the live runs in `running`, counts live, completed and failed runs in `counts` rather than naming finished ones, lists the project's `groups`, and gives a summary row per run — every live run plus the {LISTING_ROWS} newest, with `runs_truncated` counting the rest. --run prints that run's full row itself; --group gives its members' full rows, with the `done` and `failed` run ids among them.")
-    add_common(p)
-    selector = p.add_mutually_exclusive_group()
-    selector.add_argument("--run", metavar="REF", help="one run's full row, printed as the reply itself: a run id, thread id or run-id prefix (newest match wins)")
-    selector.add_argument("--group", help="full rows of one batch group's members, with `group_state`; never truncated")
-    p.add_argument("--all", action="store_true", help=f"no display cap: every run, not only the live ones and the {LISTING_ROWS} newest")
-    p.add_argument("--follow", action="store_true", help="requires --group. Text instead of JSON: `run <id> <prev> -> <state>` for each member state change (with ` exit=N` when the state is not completed), then one closing line — `group.<state> group=<name> done=N failed=N`, or `group.empty group=<name>` when no member resolves — which appends ` unstarted=N` and ` unreadable=N` when either is non-zero")
-    add_follow_options(p, closing="`group.still-running group=<name> running=N done=N failed=N`")
-    p.set_defaults(func=cmd_status)
-
-    p = command("log", "a run's or a group's events, filtered, from a byte cursor")
-    add_common(p)
-    target = p.add_mutually_exclusive_group()
-    target.add_argument("--run", metavar="REF", help="a run id, thread id or run-id prefix (newest match wins). Omitted: the project's one live run, else its newest run; refused when two or more are live")
-    target.add_argument("--group", metavar="NAME", help="every member of a batch group, interleaved: a `group.members group=<name> 0=<run_id>[:<label>] …` header, each event line prefixed `[<index>:<label>]` or `[<index>]`, then the group's closing line as `status --group --follow` prints it (for a live group without --follow, `group.running`); no cursor trailer")
-    p.add_argument("--since", type=int, default=None, metavar="CURSOR", help="print only events after this byte offset from a previous `# cursor=<n>` trailer (default: the whole log). Refused unless it is a line boundary of this run's file, and with --group")
-    p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL, help=f"how much of each event to print (default: {DEFAULT_LEVEL}). Every level prints the lifecycle, the agent's messages in full, each command line with its exit code and output size, changed paths, errors, searches, MCP calls and usage. compact: nothing more. normal: a {FAIL_HEAD_BYTES} B head and tail of the output of commands that exited non-zero, and todo lists. full: a {FULL_ITEM_BYTES} B excerpt of every command's output, and reasoning. raw: every event parsed and re-serialised, one JSON object per line")
-    p.add_argument("--follow", action="store_true", help="keep printing events as they arrive until the end: for a run, one closing `run.<state> run=<id> exit=<n>` line for every terminal state and the cursor trailer; for a group, its closing line. A run whose Codex is still writing has not ended")
-    add_follow_options(p, closing="`run.still-running run=<id> state=<state>` and the cursor trailer for a run, or `group.still-running group=<name> running=N done=N failed=N` for a group")
-    p.set_defaults(func=cmd_log)
-
-    p = command("show", "one item of a run in full: a command's output or a file change's paths",
-                description="One run-scoped item in full: a command's output, capped by --max-bytes with the truncation reported, a file change's list of paths, or any other item as recorded.")
-    add_common(p)
-    p.add_argument("--run", required=True, metavar="REF", help="the run: item ids restart at item_0 in every run, so an item id means nothing without it")
-    p.add_argument("--item", required=True, metavar="ITEM_ID", help="the item id as `log` prints it (item_0, item_1, …); an unknown id is refused with up to 60 of the run's items listed")
-    p.add_argument("--max-bytes", type=int, default=SHOW_MAX_BYTES, help=f"cap on the command output returned (default: {SHOW_MAX_BYTES}); the reply states the full size")
-    p.set_defaults(func=show)
-
-    p = command("stop", "interrupt a run, a group, or every live run",
-                description="Interrupt runs through their recorded process groups, never by process name. A run still in an active state is recorded `interrupted`; one that already recorded an outcome, or an orphaned one, keeps its state, and `state` in the reply says which. One of --run, --group or --all is required. A running turn cannot be redirected; stop it, then `resume` the thread.")
-    add_common(p)
-    selector = p.add_mutually_exclusive_group(required=True)
-    selector.add_argument("--run", action="append", metavar="REF", help="a run to interrupt; repeatable")
-    selector.add_argument("--group", help="every live member of a batch group")
-    selector.add_argument("--all", action="store_true", help="every live run in this registry, including an orphaned run whose Codex is still writing")
-    p.add_argument("--grace", type=float, default=DEFAULT_GRACE, metavar="SEC", help=f"seconds after SIGINT before SIGTERM (default: {DEFAULT_GRACE}); SIGKILL follows 3 s later, and whatever of the run is left is swept with SIGKILL. SIGINT first lets Codex flush its rollout, so the thread can be resumed")
-    p.set_defaults(func=stop)
-
-    p = command("result", "what a run or a group concluded",
-                description="An answer is read rather than parsed, so it comes as text after a one-line JSON header, and the header's byte counts, not the text, say where each answer ends. A --schema run's answer is parsed, so it stays one JSON document. One of --run or --group is required.")
-    add_common(p)
-    selector = p.add_mutually_exclusive_group(required=True)
-    selector.add_argument("--run", metavar="REF", help="one run: a header with its state, exit code, thread, `message_bytes`, changed files, commands and usage, and `turn_failed` when the turn failed, then its whole final message; while the run is live, what it has said so far, with `note` saying it is partial. A --schema run is one JSON document carrying `json`, the parsed message, and fails while its final message is missing or not JSON")
-    selector.add_argument("--group", help=f"every member: a header with `group_state`, usage totals, `overlaps` (the paths more than one member wrote), `unstarted` (members that never started) and each member's state and sizes, then each member's message after its separator line, capped at {GROUP_MESSAGE_CAP} B and cut at a character boundary, the full size stated")
-    p.add_argument("--wait", action="store_true", help="wait until the run or group has ended, printing nothing meanwhile, then print what `result` without it would. A run has ended once it is terminal and its Codex no longer writes; a group once no readable member is live — a slot that never started and a member whose meta.json will not parse are not waited for")
-    p.add_argument("--wait-timeout", type=positive_seconds, metavar="SEC", help="stop waiting after SEC seconds and print the result as it stands then, partial and saying so (default: wait until the end). Requires --wait; SEC must be positive")
-    p.set_defaults(func=cmd_result)
-
-    b = command("batch", "start N runs as one group", epilog=BATCH_EPILOG,
-                description="A group is the set of runs one `batch` created, addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `clean`, and by `batch --resume-from`. It outlives the session that started it, and its name stays reserved until `clean` releases it.")
+    b = command("batch", "start several runs as one group", "--group NAME (--task PROMPT ... | --tasks-file FILE) [options]",
+                BATCH_DESC, epilog=BATCH_EPILOG)
     add_common(b)
     add_run_options(b, kind="batch")
     b.add_argument("--group", required=True, type=group_name, help="name for the group: 1–64 characters, ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit; refused while the name is reserved")
@@ -309,19 +318,67 @@ def build_parser():
     b.add_argument("--resume-from", metavar="GROUP", help="continue an earlier group: task i resumes member i in start order, in the directory that member's thread already uses, its worktree included, unless --cwd or the task's `cwd` names another. A task naming its own `resume` target keeps it. Refused, before anything is claimed, unless every started member has recorded a thread and finished (see --force) and the task count matches")
     b.set_defaults(func=cmd_batch)
 
-    b = command("clean", "remove a group's worktrees and release its name",
-                description="Remove a group's worktrees and release its name once nothing is left.")
+    p = command("status", "whether runs are live, how far along, and what they last said", "[--run REF | --group NAME] [options]",
+                STATUS_DESC, epilog=STATUS_EPILOG)
+    add_common(p)
+    selector = p.add_mutually_exclusive_group()
+    selector.add_argument("--run", metavar="REF", help="one run's full row: a run id, thread id or run-id prefix (newest match wins)")
+    selector.add_argument("--group", metavar="NAME", help="one batch group: its members' full rows and `group_state`; never truncated")
+    p.add_argument("--all", action="store_true", help=f"no display cap: every run, not only the live ones and the {LISTING_ROWS} newest")
+    p.add_argument("--follow", action="store_true", help="requires --group: print a text line per member state change until no member is live, then the closing line")
+    add_follow_options(p, closing="`group.still-running group=<name> running=N done=N failed=N`")
+    p.set_defaults(func=cmd_status)
+
+    p = command("log", "what a run or a group is doing: its events, filtered, from a byte cursor",
+                "[--run REF | --group NAME] [options]", LOG_DESC)
+    add_common(p)
+    target = p.add_mutually_exclusive_group()
+    target.add_argument("--run", metavar="REF", help="a run id, thread id or run-id prefix (newest match wins). Omitted: the project's one live run, else its newest run; refused when two or more are live")
+    target.add_argument("--group", metavar="NAME", help="every member of a batch group, interleaved")
+    p.add_argument("--since", type=int, default=None, metavar="CURSOR", help="print only events after this byte offset from a previous `# cursor=<n>` trailer (default: the whole log). Refused unless it is a line boundary of this run's file, and with --group")
+    p.add_argument("--level", choices=LEVELS, default=DEFAULT_LEVEL, help=f"how much of each event to print (default: {DEFAULT_LEVEL}). Every level prints the lifecycle, the agent's messages in full, each command line with its exit code and output size, changed paths, errors, searches, MCP calls and usage. compact: nothing more. normal: a {FAIL_HEAD_BYTES} B head and tail of the output of commands that exited non-zero, and todo lists. full: a {FULL_ITEM_BYTES} B excerpt of every command's output, and reasoning. raw: every event parsed and re-serialised, one JSON object per line")
+    p.add_argument("--follow", action="store_true", help="keep printing events as they arrive until the end, then the closing line. A run whose Codex is still writing has not ended")
+    add_follow_options(p, closing="`run.still-running run=<id> state=<state>` and the cursor trailer for a run, or `group.still-running group=<name> running=N done=N failed=N` for a group")
+    p.set_defaults(func=cmd_log)
+
+    p = command("show", "one item of a run in full: a command's output or a file change's paths",
+                "--run REF --item ITEM_ID [options]", SHOW_DESC)
+    add_common(p)
+    p.add_argument("--run", required=True, metavar="REF", help="the run: item ids restart at item_0 in every run, so an item id means nothing without it")
+    p.add_argument("--item", required=True, metavar="ITEM_ID", help="the item id as `log` prints it (item_0, item_1, …)")
+    p.add_argument("--max-bytes", type=int, default=SHOW_MAX_BYTES, help=f"cap on the command output returned (default: {SHOW_MAX_BYTES}); the reply states the full size")
+    p.set_defaults(func=show)
+
+    p = command("result", "what a run or a group concluded — now, or once it has ended with --wait",
+                "(--run REF | --group NAME) [options]", RESULT_DESC)
+    add_common(p)
+    selector = p.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--run", metavar="REF", help="one run: a run id, thread id or run-id prefix (newest match wins)")
+    selector.add_argument("--group", metavar="NAME", help="every member of a batch group, in start order")
+    p.add_argument("--wait", action="store_true", help="wait until the run or group has ended, printing nothing meanwhile, then print what `result` without it would. A run has ended once it is terminal and its Codex no longer writes; a group once no readable member is live — a slot that never started and a member whose meta.json will not parse are not waited for")
+    p.add_argument("--wait-timeout", type=positive_seconds, metavar="SEC", help="stop waiting after SEC seconds and print the result as it stands then, partial and saying so (default: wait until the end). Requires --wait; SEC must be positive")
+    p.set_defaults(func=cmd_result)
+
+    p = command("stop", "interrupt a run, a group, or every live run", "(--run REF ... | --group NAME | --all) [options]",
+                STOP_DESC)
+    add_common(p)
+    selector = p.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--run", action="append", metavar="REF", help="a run to interrupt; repeatable")
+    selector.add_argument("--group", metavar="NAME", help="every live member of a batch group")
+    selector.add_argument("--all", action="store_true", help="every live run in this registry, including an orphaned run whose Codex is still writing")
+    p.add_argument("--grace", type=float, default=DEFAULT_GRACE, metavar="SEC", help=f"seconds after SIGINT before SIGTERM (default: {DEFAULT_GRACE}); SIGKILL follows 3 s later, and whatever of the run is left is swept with SIGKILL. SIGINT first lets Codex flush its rollout, so the thread can be resumed")
+    p.set_defaults(func=stop)
+
+    b = command("clean", "remove a group's worktrees and release its name", "--group NAME [options]", CLEAN_DESC)
     add_common(b)
-    b.add_argument("--group", required=True, help="the group to clean. Refused while a member is live, and a worktree another live run works in is kept; both name the `stop` that ends them. A worktree whose run's meta.json will not parse is kept too. Refused, unless --force, when the manifest or a member's meta.json will not parse or another group was resumed from this one; a worktree with uncommitted changes is kept unless --force")
+    b.add_argument("--group", required=True, metavar="NAME", help="the group to clean. Refused while a member is live, and a worktree another live run works in is kept; both name the `stop` that ends them. A worktree whose run's meta.json will not parse is kept too. Refused, unless --force, when the manifest or a member's meta.json will not parse or another group was resumed from this one; a worktree with uncommitted changes is kept unless --force")
     b.add_argument("--force", action="store_true", help="lift the refusals --group says --force lifts, all at once, and discard uncommitted changes in the worktrees — that work has no other copy. `forced_past` in the reply says what was overridden")
     b.set_defaults(func=clean)
 
-    p = command("models", "the models and efforts this Codex install offers",
-                description="This install's model catalog from `codex debug models`: each model's slug, efforts and default effort. `start`, `resume` and `batch` check a --model or --effort against it before spawning. When it cannot be read the check is skipped and this command exits 1.")
+    p = command("models", "the models and efforts this Codex install offers", "[options]", MODELS_DESC)
     p.set_defaults(func=models)
 
-    p = command("doctor", "check the environment a run would start in",
-                description="The environment a run would start in, as one JSON line: Python, codex on PATH and its version, CODEX_HOME (resolved; `codex_home_from_env` says whether it was set), login, config.toml's sandbox and the defaults a run naming nothing would get, the model catalog, the registry, overlapping live writers and leftover worktrees. Exits 3 when a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.11 — else 0. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.")
+    p = command("doctor", "check the environment a run would start in", "[options]", DOCTOR_DESC)
     add_common(p)
     p.set_defaults(func=doctor_reply)
 

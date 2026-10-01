@@ -488,6 +488,29 @@ class WaitingForTheResult(BridgeCase):
         header = json.loads(res.stdout.splitlines()[0])
         self.assertEqual((header["group_state"], len(header["done"]), header["running"]), ("completed", 2, []), header)
 
+    def test_a_follower_counts_the_slots_it_saw_never_start_even_once_the_name_is_released(self):
+        # `clean` may release the manifest between the last member's end and the follower's next look; what the follower saw at the start still stands.
+        tf = self.tasks_file("runs", {"prompt": "never starts", "schema": str(self.tmp / "nope.json")})
+        out = self.bridge("batch", "--group", "g", "--tasks-file", tf, env={"FAKE_CODEX_HANG": 3})
+        rid = out["runs"][0]["run_id"]
+        self.wait_state(rid, ("running",))
+        follower = self.spawn("status", "--group", "g", "--follow")
+        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.01)
+        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
+        followed, _ = follower.communicate(timeout=30)
+        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1")
+
+    def test_a_member_that_stops_parsing_while_followed_is_counted_once(self):
+        out = self.bridge("batch", "--group", "g", "--task", "quick", "--task", "slow",
+                          env={"FAKE_CODEX_WHEN": json.dumps({"slow": {"FAKE_CODEX_HANG": 4}})})
+        quick, slow = (r["run_id"] for r in out["runs"])
+        follower = self.spawn("status", "--group", "g", "--follow")
+        self.wait_state(quick)
+        time.sleep(1.2)
+        (self.runs_dir / quick / "meta.json").write_text("{ truncated")
+        followed, _ = follower.communicate(timeout=30)
+        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1 unreadable=1")
+
     def test_a_wait_timeout_must_be_a_finite_number(self):
         out = self.bridge("start", "x")
         for value in ("nan", "inf"):

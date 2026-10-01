@@ -64,8 +64,9 @@ def log(args):
 def log_group(args, project, runs_dir):
     """Every member's events interleaved, each physical line prefixed with its member, ending on the group's terminal line."""
     members = group_runs(runs_dir, args.group)
+    never, tail = group_tail(runs_dir, args.group)
     if not members:
-        yield f"group.empty group={args.group}" + group_tail(runs_dir, args.group)[1] + "\n"
+        yield f"group.empty group={args.group}" + tail + "\n"
         return
     labels = {m.get("run_id"): m.get("label") for m in (group_manifest(runs_dir, args.group) or {}).get("members", [])}
     prefixes, header = [], []
@@ -93,7 +94,7 @@ def log_group(args, project, runs_dir):
         if not running or not args.follow:
             # Drained again after the state was read, so events written just before the end are not lost.
             yield from drain()
-            yield closing_line(runs_dir, args.group, rows)
+            yield closing_line(runs_dir, args.group, rows, len(never) + len(members) - len(rows))
             return None
         return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
 

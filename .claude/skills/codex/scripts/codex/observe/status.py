@@ -48,8 +48,9 @@ def status_group(args, project, runs_dir):
 def follow_group(args, project, runs_dir):
     """One line per member state change, then one terminal line."""
     members = group_runs(runs_dir, args.group)
+    never, tail = group_tail(runs_dir, args.group)
     if not members:
-        yield f"group.empty group={args.group}" + group_tail(runs_dir, args.group)[1] + "\n"
+        yield f"group.empty group={args.group}" + tail + "\n"
         return
     seen = {}
 
@@ -65,7 +66,7 @@ def follow_group(args, project, runs_dir):
                 seen[row["run_id"]] = row["state"]
         running, done, failed, _ = group_snapshot(rows)
         if not running:
-            yield closing_line(runs_dir, args.group, rows)
+            yield closing_line(runs_dir, args.group, rows, len(never) + len(members) - len(rows))
             return None
         return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
 

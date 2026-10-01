@@ -40,11 +40,12 @@ def wait_until(ended, timeout):
         time.sleep(FOLLOW_INTERVAL)
 
 
-def closing_line(runs_dir, name, rows):
-    """The line a group's follow ends on, from its rows and its gaps as they stand now: a member that stopped parsing while it was followed counts against `completed` as one that never parsed does."""
-    never, tail = group_tail(runs_dir, name)
-    _running, done, failed, gstate = group_snapshot(rows, len(never))
-    return f"group.{gstate} group={name} done={len(done)} failed={len(failed)}" + tail + "\n"
+def closing_line(runs_dir, name, rows, gone):
+    """The line a group's follow ends on. `gone` counts the members the follow can no longer show — the gaps it found when it began, and its members whose meta.json has stopped parsing since, which `rows` therefore lacks — so each member counts once, from what the follow itself saw, even after `clean` has released the manifest."""
+    _running, done, failed, gstate = group_snapshot(rows, gone)
+    bad = len(unreadable_runs(runs_dir))
+    return (f"group.{gstate} group={name} done={len(done)} failed={len(failed)}"
+            + (f" unstarted={gone}" if gone else "") + (f" unreadable={bad}" if bad else "") + "\n")
 
 
 def group_tail(runs_dir, name):

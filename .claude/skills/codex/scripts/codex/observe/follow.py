@@ -49,8 +49,8 @@ class GroupWatch:
         # Refuses an unknown or unreadable group before anything is followed.
         self.members, self.gaps, self.epoch = group_view(runs_dir, name)
 
-    def now(self):
-        """`(rows, gaps)` as they stand, each row reaped."""
+    def view(self):
+        """`(members, gaps)` as they stand: members as `(run_dir, meta)`, in start order."""
         try:
             members, gaps, epoch = group_view(self.runs_dir, self.name)
             if epoch != self.epoch:
@@ -64,6 +64,11 @@ class GroupWatch:
                     members.append((rd, fresh))
                 else:
                     gaps.append({"run_id": m.get("run_id"), "label": m.get("label"), "error": "its meta.json will not parse"})
+        return members, gaps
+
+    def now(self):
+        """`(rows, gaps)` as they stand, each row reaped."""
+        members, gaps = self.view()
         return [run_row(rd, m, self.project) for rd, m in members], gaps
 
 

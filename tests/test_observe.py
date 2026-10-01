@@ -550,6 +550,21 @@ class WaitingForTheResult(BridgeCase):
         self.assertNotIn(second["runs"][0]["run_id"], followed)
         self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=1 failed=0")
 
+    def test_a_wait_collects_the_group_it_waited_for_not_a_new_one_with_its_name(self):
+        first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})
+        rid = first["runs"][0]["run_id"]
+        waiter = self.spawn("result", "--group", "g", "--wait")
+        time.sleep(1.5)
+        os.kill(waiter.pid, signal.SIGSTOP)
+        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.05)
+        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
+        self.bridge("batch", "--group", "g", "--task", "b", env={"FAKE_CODEX_HANG": 5})
+        os.kill(waiter.pid, signal.SIGCONT)
+        stdout, _ = waiter.communicate(timeout=60)
+        self.assertEqual(waiter.returncode, 0, stdout)
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual(([m["run_id"] for m in header["members"]], header["group_state"]), ([rid], "completed"))
+
     def test_a_wait_timeout_must_be_a_finite_number(self):
         out = self.bridge("start", "x")
         for value in ("nan", "inf"):

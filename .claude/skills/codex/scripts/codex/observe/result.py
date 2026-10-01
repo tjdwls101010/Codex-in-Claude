@@ -20,7 +20,10 @@ def result(args):
             # Ended as `status --group --follow` closes, through the same watch: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
             watch = GroupWatch(runs_dir, args.group, project)
             wait_until(lambda: not group_snapshot(watch.now()[0])[0], args.wait_timeout)
-        return result_group(args, project, runs_dir)
+            # Collected from the watch too: the name may have been released, or taken by another batch, while it waited.
+            return result_group(args, project, *watch.view())
+        members, gaps, _epoch = group_view(runs_dir, args.group)
+        return result_group(args, project, members, gaps)
     rd, meta = run(runs_dir, args.run)
     if args.wait:
         # The run found now is the one waited for, even if a later turn on its thread starts meanwhile. One whose meta.json stops parsing ends the wait, since its state can no longer be read, and is refused below as it would have been at the start.
@@ -71,9 +74,9 @@ def result(args):
     return [json.dumps(out, ensure_ascii=False) + "\n"] + ([message + "\n"] if message else [])
 
 
-def result_group(args, project, runs_dir):
+def result_group(args, project, found_members, never):
+    """A group's result from its members, `(run_dir, meta)` in start order, and its gaps."""
     members, shown, per_run_paths, totals = [], [], {}, {"input_tokens": 0, "output_tokens": 0}
-    found_members, never, _epoch = group_view(runs_dir, args.group)
     for index, (rd, meta) in enumerate(found_members):
         meta = reap(rd, meta)
         row, info, text = member_result(rd, meta)

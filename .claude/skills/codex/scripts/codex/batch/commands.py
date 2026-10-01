@@ -1,4 +1,4 @@
-"""`batch start` and `batch clean`."""
+"""`batch start` and `batch clean`, and the `next` a batch's reply names."""
 
 from __future__ import annotations
 
@@ -9,9 +9,10 @@ from codex.batch.tasks import check_task_settings, load_tasks
 from codex.batch.worktrees import plan_worktrees, worktree_report
 from codex.git import resolve_project
 from codex.registry import claim_group, ensure_runs_dir, group_path, resolve_runs_dir
+from codex.util import with_next
 
 
-def start(args):
+def batch(args):
     """The group name's rule and `--base` without `--worktree` are the command surface's to refuse, before this is called."""
     project = resolve_project(args.project)
     runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
@@ -35,7 +36,11 @@ def start(args):
     elif note:
         out["worktrees"] = {"count": 0, "note": note}
     out.update(runs=results, manifest=str(group_path(runs_dir, args.group)))
-    return out
+    # The follower of the group, left out when there is nothing to follow.
+    if not out["spawned"]:
+        return out
+    return with_next(out, "requested", "status", "--group", args.group, "--follow", project=args.project,
+                     runs_dir=args.runs_dir)
 
 
 def clean(args):

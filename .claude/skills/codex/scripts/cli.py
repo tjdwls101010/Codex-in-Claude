@@ -18,19 +18,14 @@ import json
 import sys
 from pathlib import Path
 
-from codex.batch import commands as batch_commands
-from codex.batch.tasks import TASK_FIELDS
+from codex.batch import TASK_FIELDS, batch, clean
 from codex.codex_cli import DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS, SANDBOX_MODES, pin_codex_home
 from codex.doctor import doctor, models
 from codex.errors import Refusal
-from codex.observe import log, result, status
-from codex.observe.collect import GROUP_MESSAGE_CAP
-from codex.observe.rows import STALL_SECONDS
-from codex.observe.show import SHOW_MAX_BYTES, show
-from codex.observe.status import LISTING_ROWS
+from codex.observe import GROUP_MESSAGE_CAP, LISTING_ROWS, SHOW_MAX_BYTES, STALL_SECONDS, log, result, show, status
 from codex.registry import valid_group_name
 from codex.runs import DEFAULT_GRACE, THREAD_ID_WAIT, resume, start, stop, supervise
-from codex.util import invocation, with_next
+from codex.util import invocation
 
 EXIT_REFUSED, EXIT_ARGUMENTS, EXIT_BLOCKED = 1, 2, 3
 
@@ -157,7 +152,7 @@ def cmd_status(args):
     if args.follow and not args.group:
         raise Refusal("--follow requires --group; to follow one run use `log --run <id> --follow`", arguments=True, run=args.run)
     refuse_unusable_follow_options(args)
-    return status.status(args)
+    return status(args)
 
 
 def cmd_log(args):
@@ -165,16 +160,14 @@ def cmd_log(args):
     if args.group and args.since is not None:
         raise Refusal("--since takes one run's cursor and a group has one per member; use `log --run <id> --since <n>`",
                       arguments=True, group=args.group)
-    return log.log(args)
+    return log(args)
 
 
 def cmd_batch_start(args):
     if args.base and not args.worktree:
         # Refused before the claim, so a typo does not burn the name.
         raise Refusal("--base requires --worktree", arguments=True, base=args.base)
-    out = batch_commands.start(args)
-    return (with_next(out, "requested", "status", "--group", out["group"], "--follow", project=args.project,
-                      runs_dir=args.runs_dir) if out["spawned"] else out)
+    return batch(args)
 
 
 def doctor_reply(args):
@@ -297,7 +290,7 @@ def build_parser():
     selector = p.add_mutually_exclusive_group(required=True)
     selector.add_argument("--run", metavar="REF", help="one run: a header with its state, exit code, thread, `message_bytes`, changed files, commands and usage, and `turn_failed` when the turn failed, then its whole final message; while the run is live, what it has said so far, with `note` saying it is partial. A --schema run is one JSON document carrying `json`, the parsed message, and fails while its final message is missing or not JSON")
     selector.add_argument("--group", help=f"every member: a header with `group_state`, usage totals, `overlaps` (the paths more than one member wrote), `unstarted` (members that never started) and each member's state and sizes, then each member's message after its separator line, capped at {GROUP_MESSAGE_CAP} B and cut at a character boundary, the full size stated")
-    p.set_defaults(func=result.result)
+    p.set_defaults(func=result)
 
     p = command("batch", "several runs under one group name",
                 description="A group is the set of runs one `batch start` created, addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `batch clean`, and by `batch start --resume-from`. It outlives the session that started it, and its name stays reserved until `batch clean` releases it.")
@@ -319,7 +312,7 @@ def build_parser():
     add_common(b)
     b.add_argument("--group", required=True, help="the group to clean. Refused while a member is live, and a worktree another live run works in is kept; both name the `stop` that ends them. A worktree whose run's meta.json will not parse is kept too. Refused, unless --force, when the manifest or a member's meta.json will not parse or another group was resumed from this one; a worktree with uncommitted changes is kept unless --force")
     b.add_argument("--force", action="store_true", help="lift the refusals --group says --force lifts, all at once, and discard uncommitted changes in the worktrees — that work has no other copy. `forced_past` in the reply says what was overridden")
-    b.set_defaults(func=batch_commands.clean)
+    b.set_defaults(func=clean)
 
     p = command("models", "the models and efforts this Codex install offers",
                 description="This install's model catalog from `codex debug models`: each model's slug, efforts and default effort. `start`, `resume` and `batch start` check a --model or --effort against it before spawning. When it cannot be read the check is skipped and this command exits 1.")

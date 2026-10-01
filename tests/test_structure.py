@@ -346,7 +346,6 @@ class Structure(unittest.TestCase):
         self.assertEqual(wrong, [])
         self.assertGreater(seen, 0, "the walk found no package imports to check")
 
-    @unittest.expectedFailure
     def test_nothing_reaches_past_a_units_interface(self):
         wrong, _ = interface_violations(skill_files(), here_of=skill_here)
         self.assertEqual(wrong, [])
@@ -356,7 +355,6 @@ class Structure(unittest.TestCase):
         self.assertEqual(wrong, [])
         self.assertGreater(seen, 0, "no test binds a unit, so the attribute check had nothing to check")
 
-    @unittest.expectedFailure
     def test_every_subpackage_declares_its_interface(self):
         self.assertEqual(all_violations(), [])
 

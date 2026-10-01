@@ -1,17 +1,24 @@
-"""The skill's tree is an interface read before any file, so its shape is checked here rather than described: `scripts/` holds `cli.py` and one package, `codex/`, every module in the package has a place in `KINDS`, and imports point only the way those places allow."""
+"""The skill's tree is an interface read before any file, so its shape is checked here rather than described: `scripts/` holds `cli.py` and one package, `codex/`, every module in the package has a place in `KINDS`, imports point only the way those places allow, and nothing outside a unit — `cli.py`, another unit, a test — reaches past the unit's interface.
+
+A unit's interface is its `__init__.py`'s `__all__` for a subpackage and its names without a leading underscore for a module. Every check is a function of a tree, so each new one is also run against a small tree built to break it."""
 
 from __future__ import annotations
 
 import ast
+import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 import unittest
+from pathlib import Path
 
 from support.harness import REPO, SCRIPTS, SKILL_DIR
 
 PACKAGE = SCRIPTS / "codex"
+TESTS = Path(__file__).resolve().parent
 
 # The place of every top-level name under codex/. A module or subpackage missing here fails, so a new one is placed on purpose.
 KINDS = {"runs": "feature", "batch": "feature", "observe": "feature", "doctor": "feature",
@@ -24,20 +31,30 @@ MAY_IMPORT = {"feature": {"system", "store", "shared"}, "system": {"shared"}, "s
 # The one import between features: a batch is N runs, so it builds each member with the run engine. Nothing imports batch.
 FEATURE_EDGES = {("batch", "runs")}
 
+# What tests may take from `cli.py`: the parser is the command surface the model sees, so it is the seam for "every argument explains itself". Nothing in the package imports `cli` at all.
+CLI_SEAM = {"build_parser"}
 
-def unit_of(path):
+# Calls whose string argument names a module to import or patch.
+IMPORTERS = {"engine", "import_module", "patch", "__import__"}
+
+
+def unit_of(path, package=PACKAGE):
     """The top-level name under codex/ a file belongs to."""
-    rel = path.relative_to(PACKAGE)
+    rel = path.relative_to(package)
     return rel.parts[0] if len(rel.parts) > 1 else rel.stem
 
 
-def package_files():
-    return sorted(p for p in PACKAGE.rglob("*.py") if "__pycache__" not in p.parts)
+def package_files(package=PACKAGE):
+    return sorted(p for p in package.rglob("*.py") if "__pycache__" not in p.parts)
 
 
-def skill_files():
-    entry = SCRIPTS / "cli.py"
-    return package_files() + ([entry] if entry.exists() else [])
+def skill_files(scripts=SCRIPTS):
+    entry = scripts / "cli.py"
+    return package_files(scripts / "codex") + ([entry] if entry.exists() else [])
+
+
+def test_files(tests=TESTS):
+    return sorted(p for p in tests.rglob("*.py") if "__pycache__" not in p.parts)
 
 
 def imports(path):
@@ -54,6 +71,179 @@ def imports(path):
                     yield node.lineno, 0, f"codex.{alias.name}"
             else:
                 yield node.lineno, 0, node.module
+
+
+# -- unit interfaces ---------------------------------------------------------------
+
+def subpackages(package=PACKAGE):
+    return sorted(p.parent.name for p in package.glob("*/__init__.py"))
+
+
+def declared_all(init: Path):
+    """The literal `__all__` of an `__init__.py`, or None when it has none a reader can see without running it."""
+    for node in ast.parse(init.read_text()).body:
+        if (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
+                and isinstance(node.value, (ast.List, ast.Tuple))
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.value.elts)):
+            return [e.value for e in node.value.elts]
+    return None
+
+
+def interfaces(package=PACKAGE):
+    """`{unit: predicate on a name}` — `__all__` for a subpackage, a name without a leading underscore for a module."""
+    out = {}
+    for p in package_files(package):
+        u = unit_of(p, package)
+        if u == "__init__" or u in out:
+            continue
+        if (package / u / "__init__.py").exists():
+            names = set(declared_all(package / u / "__init__.py") or ())
+            out[u] = names.__contains__
+        else:
+            out[u] = lambda n: not n.startswith("_")
+    return out
+
+
+def inner_modules(package=PACKAGE):
+    """Dotted paths of every module file inside a subpackage, other than its `__init__`: `codex.registry.runs` for `registry/runs.py`."""
+    out = set()
+    for p in package_files(package):
+        rel = p.relative_to(package)
+        if len(rel.parts) > 1 and p.name != "__init__.py":
+            out.add(".".join(("codex",) + rel.with_suffix("").parts))
+    return out
+
+
+def dotted(node):
+    """`a.b.c` for a chain of names and attributes, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        return ".".join([node.id] + parts[::-1])
+    return None
+
+
+def call_name(call):
+    f = call.func
+    return f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+
+
+def imported_unit(call):
+    """The unit an `engine("codex.U")`-like call returns, `cli` for `engine("cli")`, else None."""
+    if not (isinstance(call, ast.Call) and call_name(call) in IMPORTERS and call.args
+            and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)):
+        return None
+    name = call.args[0].value
+    if name == "cli":
+        return "cli"
+    parts = name.split(".")
+    return parts[1] if len(parts) == 2 and parts[0] == "codex" else None
+
+
+def interface_violations(files, package=PACKAGE, here_of=None):
+    """Every place a file reaches past another unit's interface.
+
+    An import of `codex.U.<deeper>`; a `from codex.U import n` with `n` outside U's interface; an attribute of a name bound to U (`x = engine("codex.U")`, `import codex.U as x`, `from codex import U`) outside it; and, for module names a test hands to an importer or a subprocess, the dotted path of a module file inside a unit. `cli` counts as a unit whose interface, for tests, is `CLI_SEAM`. Returns `(violations, bindings seen)`."""
+    allowed = interfaces(package)
+    allowed["cli"] = CLI_SEAM.__contains__
+    inner = inner_modules(package)
+    here_of = here_of or (lambda p: None)
+    wrong, seen = [], 0
+    for path in files:
+        here = here_of(path)
+        tree = ast.parse(path.read_text())
+        bound = {}
+
+        def check(unit, name, line):
+            if unit != here and unit in allowed and not allowed[unit](name):
+                wrong.append(f"{path.name}:{line} uses {unit}.{name}, which is not in its interface")
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    parts = a.name.split(".")
+                    if parts[0] == "codex" and len(parts) > 2 and parts[1] != here:
+                        wrong.append(f"{path.name}:{node.lineno} imports {a.name}, past the interface of codex.{parts[1]}")
+                    elif parts[0] == "codex" and len(parts) == 2 and a.asname:
+                        bound[a.asname] = parts[1]
+                    elif a.name == "cli":
+                        bound[a.asname or "cli"] = "cli"
+            elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                parts = node.module.split(".")
+                if node.module == "codex":
+                    for a in node.names:
+                        bound[a.asname or a.name] = a.name
+                elif parts[0] == "codex" and len(parts) > 2 and parts[1] != here:
+                    wrong.append(f"{path.name}:{node.lineno} imports from {node.module}, past the interface of codex.{parts[1]}")
+                elif parts[0] == "codex" and len(parts) == 2:
+                    for a in node.names:
+                        check(parts[1], a.name, node.lineno)
+                elif node.module == "cli":
+                    for a in node.names:
+                        check("cli", a.name, node.lineno)
+            elif isinstance(node, ast.Assign) and imported_unit(node.value):
+                for t in node.targets:
+                    if dotted(t):
+                        bound[dotted(t)] = imported_unit(node.value)
+            elif isinstance(node, ast.Call):
+                values = [a for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+                for a in values:
+                    if any(a.value == m or a.value.startswith(m + ".") for m in inner):
+                        wrong.append(f"{path.name}:{node.lineno} names module {a.value}, inside a unit")
+            if isinstance(node, (ast.List, ast.Tuple)):
+                for e in node.elts:
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str) and any(e.value == m or e.value.startswith(m + ".") for m in inner):
+                        wrong.append(f"{path.name}:{node.lineno} names module {e.value}, inside a unit")
+        seen += len(bound)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            unit = imported_unit(node.value)
+            if unit is None:
+                name = dotted(node.value)
+                unit = bound.get(name)
+                if unit is None and name and name.startswith("codex.") and name.count(".") == 1:
+                    unit = name.split(".")[1]
+            if unit:
+                check(unit, node.attr, node.lineno)
+    return wrong, seen
+
+
+def all_violations(package=PACKAGE):
+    """Every subpackage's `__init__.py` declares a literal `__all__`, every name in it is defined or imported there, and none of them is a module once the package is imported — re-exporting a submodule whole would hand out everything behind the interface."""
+    wrong, declared = [], {}
+    for unit in subpackages(package):
+        init = package / unit / "__init__.py"
+        names = declared_all(init)
+        if names is None:
+            wrong.append(f"{unit}/__init__.py has no literal __all__")
+            continue
+        defined = set()
+        for node in ast.parse(init.read_text()).body:
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                defined.add(node.name)
+            elif isinstance(node, ast.Assign):
+                defined |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                defined |= {(a.asname or a.name).split(".")[0] for a in node.names}
+        wrong += [f"{unit}/__init__.py lists {n} in __all__ without defining or importing it" for n in names if n not in defined]
+        declared[unit] = names
+    # In a child interpreter, so the package under test is imported fresh and this process's modules stay as they are.
+    probe = ("import importlib, json, sys, types\n"
+             "out = {}\n"
+             "for unit, names in json.loads(sys.argv[1]).items():\n"
+             "    m = importlib.import_module('codex.' + unit)\n"
+             "    out[unit] = [n for n in names if isinstance(getattr(m, n, None), types.ModuleType)]\n"
+             "print(json.dumps(out))")
+    p = subprocess.run([sys.executable, "-c", probe, json.dumps(declared)], capture_output=True, text=True,
+                       env={**os.environ, "PYTHONPATH": str(package.parent)}, cwd=str(package.parent), timeout=60)
+    if p.returncode != 0:
+        return wrong + [f"importing the package failed: {p.stderr.strip()[-400:]}"]
+    for unit, modules in json.loads(p.stdout).items():
+        wrong += [f"{unit}.__all__ hands out {n}, a module" for n in modules]
+    return wrong
 
 
 # Calls on `sys.path` that only read it; any other method call counts as a change, so a mutator nobody listed (reverse, sort, …) cannot slip through.
@@ -105,6 +295,11 @@ def sys_path_changes(tree):
             yield node.lineno
 
 
+def skill_here(path, scripts=SCRIPTS):
+    """Which unit a skill file belongs to; `cli` for the entry point."""
+    return "cli" if path.name == "cli.py" and path.parent == scripts else unit_of(path, scripts / "codex")
+
+
 class Structure(unittest.TestCase):
 
     def test_scripts_holds_the_entry_point_and_one_package(self):
@@ -127,7 +322,7 @@ class Structure(unittest.TestCase):
         roots = {p.stem for p in SCRIPTS.iterdir() if p.suffix == ".py" or (p.is_dir() and p.name != "__pycache__")} - {"codex"}
         wrong, seen = [], 0
         for path in skill_files():
-            here = "cli" if path.name == "cli.py" and path.parent == SCRIPTS else unit_of(path)
+            here = skill_here(path)
             for line, level, name in imports(path):
                 where = f"{path.relative_to(SCRIPTS)}:{line}"
                 top = name.split(".")[0]
@@ -151,6 +346,21 @@ class Structure(unittest.TestCase):
         self.assertEqual(wrong, [])
         self.assertGreater(seen, 0, "the walk found no package imports to check")
 
+    @unittest.expectedFailure
+    def test_nothing_reaches_past_a_units_interface(self):
+        wrong, _ = interface_violations(skill_files(), here_of=skill_here)
+        self.assertEqual(wrong, [])
+
+    @unittest.expectedFailure
+    def test_no_test_reaches_past_a_units_interface(self):
+        wrong, seen = interface_violations(test_files())
+        self.assertEqual(wrong, [])
+        self.assertGreater(seen, 0, "no test binds a unit, so the attribute check had nothing to check")
+
+    @unittest.expectedFailure
+    def test_every_subpackage_declares_its_interface(self):
+        self.assertEqual(all_violations(), [])
+
     def test_nothing_changes_sys_path(self):
         wrong = []
         for path in skill_files() + [p for p in SCRIPTS.glob("*.py") if p.name != "cli.py"]:
@@ -173,6 +383,71 @@ class Structure(unittest.TestCase):
         rel = [t[len(str(SKILL_DIR.relative_to(REPO))) + 1:] for t in tracked]
         self.assertIn("SKILL.md", rel)
         self.assertEqual([r for r in rel if r != "SKILL.md" and not re.fullmatch(r"scripts/.+\.py", r)], [])
+
+
+class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
+    """Each interface check run against a small tree that keeps the rules, then against the same tree with one rule broken: a check that stays quiet on the broken one would pass the real tree for nothing."""
+
+    STORE_INIT = '__all__ = ["put"]\nfrom codex.store.inner import put\n'
+
+    def tree(self, *, store_init=STORE_INIT, feature="from codex.store import put\n", test="x = 1\n"):
+        root = Path(tempfile.mkdtemp(prefix="codex-structure-"))
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(root)])
+        package = root / "scripts" / "codex"
+        (package / "store").mkdir(parents=True)
+        (package / "__init__.py").write_text("")
+        (package / "store" / "__init__.py").write_text(store_init)
+        (package / "store" / "inner.py").write_text("def put():\n    pass\n\n\ndef hidden():\n    pass\n")
+        (package / "feature.py").write_text(feature)
+        (root / "scripts" / "cli.py").write_text("from codex.feature import go\n")
+        (root / "tests").mkdir()
+        (root / "tests" / "test_x.py").write_text(test)
+        return root, package
+
+    def in_skill(self, package):
+        scripts = package.parent
+        return interface_violations(skill_files(scripts), package, lambda p: skill_here(p, scripts))[0]
+
+    def in_tests(self, root, package):
+        return interface_violations(test_files(root / "tests"), package)
+
+    def test_a_tree_that_keeps_the_rules_passes(self):
+        root, package = self.tree(test='from support.harness import engine\nstore = engine("codex.store")\nstore.put()\n')
+        self.assertEqual(self.in_skill(package), [])
+        self.assertEqual(self.in_tests(root, package), ([], 1))
+        self.assertEqual(all_violations(package), [])
+
+    def test_an_import_past_the_interface_is_caught(self):
+        for feature in ("from codex.store.inner import put\n", "import codex.store.inner\n", "from codex.store import hidden\n"):
+            with self.subTest(feature=feature):
+                _root, package = self.tree(feature=feature)
+                self.assertTrue(self.in_skill(package))
+
+    def test_a_test_naming_a_module_inside_a_unit_is_caught(self):
+        for test in ('from support.harness import engine\nengine("codex.store.inner")\n',
+                     'from unittest import mock\nmock.patch("codex.store.inner.put")\n',
+                     'import subprocess, sys\nsubprocess.run([sys.executable, "-c", "x", "codex.store.inner"])\n'):
+            with self.subTest(test=test):
+                root, package = self.tree(test=test)
+                self.assertTrue(self.in_tests(root, package)[0])
+
+    def test_an_attribute_past_the_interface_is_caught(self):
+        for test in ('from support.harness import engine\nstore = engine("codex.store")\nstore.hidden()\n',
+                     'from support.harness import engine\nengine("codex.store").inner\n',
+                     'from codex import store\nstore.inner.hidden()\n',
+                     'import codex.store as s\ns.hidden()\n',
+                     'from support.harness import engine\nengine("cli").main()\n'):
+            with self.subTest(test=test):
+                root, package = self.tree(test=test)
+                self.assertTrue(self.in_tests(root, package)[0])
+
+    def test_an_interface_that_is_missing_undefined_or_a_module_is_caught(self):
+        for init in ('from codex.store.inner import put\n',
+                     '__all__ = ["put", "gone"]\nfrom codex.store.inner import put\n',
+                     '__all__ = ["inner"]\nfrom codex.store import inner\n'):
+            with self.subTest(init=init):
+                _root, package = self.tree(store_init=init)
+                self.assertTrue(all_violations(package))
 
 
 if __name__ == "__main__":

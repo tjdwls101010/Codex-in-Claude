@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -49,7 +50,7 @@ Exits: 0 started; 1 refused — the thread has a live turn, or a run whose meta.
 BATCH_DESC = """\
 Start several runs as one group: each --task, then each --tasks-file line, is a member started as `start` (or `resume`) would start it, with the group's options as its defaults. The group is addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `clean`, and by `batch --resume-from`; it outlives the session that started it, and its name stays reserved until `clean` releases it.
 Prints: one JSON line — `group`, `spawned`, `requested`, `next` (the `result --group <name> --wait` call to run in the background, left out when no member started), `resumed_from` with --resume-from, `worktrees` when checkouts were cut or members share a tree, `runs` (per slot its `run_id`, `state`, `cwd`, `sandbox` and `worktree`, or the `error` that kept it from starting) and the `manifest` path.
-Exits: 0 every member's start was tried, even when some failed and carry `error`; 1 refused before anything started — the name is reserved; a model or effort from your config.toml this install does not offer; a --resume-from group that is not there, will not parse, has no started member, has a member without a thread id, has a different number of members than there are tasks, or is still running (lifted by --force) — or the name was released and claimed again while members started, or an internal error; 2 the command line must change — a --group that breaks the naming rule, no task, a tasks file that cannot be read or has a line that is not a valid task, --base without --worktree or naming no commit, a --model or --effort a task names that this install does not offer, under --resume-from a task that names its own `resume` target without kind `resume`, or anything else the parser refuses."""
+Exits: 0 every member's start was tried, even when some failed and carry `error`; 1 refused before anything started — the name is reserved; a model or effort from your config.toml this install does not offer; a --resume-from group that is not there, will not parse, has no started member, has a member without a thread id, has a different number of members than there are tasks, or is still running (lifted by --force) — or the name was released and claimed again while members started, or an internal error; 2 the command line must change — a --group that breaks the naming rule, no task, a tasks file that cannot be read or has a line that is not a valid task, --base without --worktree, or naming no commit when a member is to get a checkout, a --model or --effort a task names that this install does not offer, under --resume-from a task that names its own `resume` target without kind `resume`, or anything else the parser refuses."""
 
 
 BATCH_EPILOG = f"""\
@@ -165,13 +166,13 @@ class JsonArgumentParser(argparse.ArgumentParser):
 # -- checks made from the arguments alone --------------------------------------
 
 def positive_seconds(text):
-    """A number of seconds above zero; zero or less would read as obeyed while meaning something else."""
+    """A finite number of seconds above zero; zero or less, NaN or infinity would read as obeyed while meaning something else."""
     try:
         value = float(text)
     except ValueError:
         raise argparse.ArgumentTypeError(f"{text!r} is not a number of seconds") from None
-    if value <= 0:
-        raise argparse.ArgumentTypeError("must be a positive number of seconds")
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive, finite number of seconds")
     return value
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from codex.codex_cli import CursorOutOfRange, event_lines
 from codex.errors import Refusal
 from codex.git import resolve_project
-from codex.observe.follow import follow, group_tail
+from codex.observe.follow import closing_line, follow, group_tail
 from codex.observe.rows import group_snapshot, member_rows
 from codex.registry import (
     group_manifest, group_runs, implicit_run, is_live, iter_runs, read_meta, reap, resolve_runs_dir, run,
@@ -64,9 +64,8 @@ def log(args):
 def log_group(args, project, runs_dir):
     """Every member's events interleaved, each physical line prefixed with its member, ending on the group's terminal line."""
     members = group_runs(runs_dir, args.group)
-    never, tail = group_tail(runs_dir, args.group)
     if not members:
-        yield f"group.empty group={args.group}" + tail + "\n"
+        yield f"group.empty group={args.group}" + group_tail(runs_dir, args.group)[1] + "\n"
         return
     labels = {m.get("run_id"): m.get("label") for m in (group_manifest(runs_dir, args.group) or {}).get("members", [])}
     prefixes, header = [], []
@@ -90,11 +89,11 @@ def log_group(args, project, runs_dir):
     def step():
         yield from drain()
         rows = member_rows(members, project)
-        running, done, failed, gstate = group_snapshot(rows, len(never))
+        running, done, failed, _ = group_snapshot(rows)
         if not running or not args.follow:
             # Drained again after the state was read, so events written just before the end are not lost.
             yield from drain()
-            yield f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail + "\n"
+            yield closing_line(runs_dir, args.group, rows)
             return None
         return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
 

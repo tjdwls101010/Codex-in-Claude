@@ -388,6 +388,7 @@ class WaitingForTheResult(BridgeCase):
         header = json.loads(p.stdout.splitlines()[0])
         self.assertEqual(header["state"], "running")
         self.assertIn("partial", header["note"])
+        self.assertGreaterEqual(took, 2, "it waited out the timeout")
         self.assertLess(took, 20)
 
     def test_an_orphan_whose_codex_still_writes_has_not_ended(self):
@@ -414,7 +415,9 @@ class WaitingForTheResult(BridgeCase):
         schema.write_text("{}")
         fixture = answer_fixture(self.tmp / "a.jsonl", '{"verdict": "ok"}')
         out, _m = self.running("--schema", schema, "x", hang=3, FAKE_CODEX_FIXTURE=fixture)
+        started = time.time()
         early = self.bridge_raw("result", "--run", out["run_id"], "--wait", "--wait-timeout", 0.5)
+        self.assertGreaterEqual(time.time() - started, 0.5)
         self.assertEqual(early.returncode, 0, early.stdout)
         self.assertIsNone(json.loads(early.stdout)["json"])
         done = self.bridge_raw("result", "--run", out["run_id"], "--wait")
@@ -470,7 +473,26 @@ class WaitingForTheResult(BridgeCase):
         self.assertEqual([u["run_id"] for u in json.loads(stdout.splitlines()[0])["unstarted"]], [rid])
         followed, _ = follower.communicate(timeout=30)
         self.assertEqual(follower.returncode, 0)
-        self.assertRegex(followed.splitlines()[-1], r"^group\.\w+ group=g ", "the follower closes under the same condition")
+        self.assertRegex(followed.splitlines()[-1], r"^group\.partial group=g .* unstarted=1",
+                         "the follower closes under the same condition, counting the member it can no longer read")
+
+    def test_a_member_added_while_waiting_is_waited_for_too(self):
+        # A wait started while `batch` is still starting members waits for the ones that start after it.
+        p = self.spawn("batch", "--group", "g", "--task", "first", "--task", "second",
+                       env={"FAKE_CODEX_HANG": 4, "FAKE_CODEX_WHEN": json.dumps({"second": {"FAKE_CODEX_PRE_DELAY": 3}})})
+        manifest = self.runs_dir / ".groups" / "g.json"
+        wait_until(lambda: manifest.exists() and any(m.get("run_id") for m in json.loads(manifest.read_text())["members"]),
+                   timeout=30)
+        res = self.bridge_raw("result", "--group", "g", "--wait", timeout=120)
+        p.communicate(timeout=60)
+        header = json.loads(res.stdout.splitlines()[0])
+        self.assertEqual((header["group_state"], len(header["done"]), header["running"]), ("completed", 2, []), header)
+
+    def test_a_wait_timeout_must_be_a_finite_number(self):
+        out = self.bridge("start", "x")
+        for value in ("nan", "inf"):
+            with self.subTest(value=value):
+                self.bridge("result", "--run", out["run_id"], "--wait", "--wait-timeout", value, rc=2)
 
     def test_a_wait_timeout_without_wait_is_refused(self):
         out = self.bridge("start", "x")

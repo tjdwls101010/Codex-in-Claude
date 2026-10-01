@@ -19,9 +19,9 @@ def result(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
         if args.wait:
-            # Ended as `status --group --follow` closes: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
-            members = group_runs(runs_dir, args.group)
-            wait_until(lambda: not group_snapshot(member_rows(members, project))[0], args.wait_timeout)
+            # Ended as `status --group --follow` closes: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them. The members are read again every time, so one a still-starting batch adds is waited for too.
+            wait_until(lambda: not group_snapshot(member_rows(group_runs(runs_dir, args.group), project))[0],
+                       args.wait_timeout)
         return result_group(args, project, runs_dir)
     rd, meta = run(runs_dir, args.run)
     if args.wait:

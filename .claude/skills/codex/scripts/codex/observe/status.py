@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from codex.git import resolve_project
-from codex.observe.follow import follow, group_tail
+from codex.observe.follow import closing_line, follow, group_tail
 from codex.observe.rows import group_snapshot, member_rows, note_unreadable, row_is_live, run_row, summary_row
 from codex.registry import group_gaps, group_runs, iter_runs, list_groups, resolve_runs_dir, run
 
@@ -48,9 +48,8 @@ def status_group(args, project, runs_dir):
 def follow_group(args, project, runs_dir):
     """One line per member state change, then one terminal line."""
     members = group_runs(runs_dir, args.group)
-    never, tail = group_tail(runs_dir, args.group)
     if not members:
-        yield f"group.empty group={args.group}" + tail + "\n"
+        yield f"group.empty group={args.group}" + group_tail(runs_dir, args.group)[1] + "\n"
         return
     seen = {}
 
@@ -64,9 +63,9 @@ def follow_group(args, project, runs_dir):
                     line += f" exit={row['exit_code']}"
                 yield line + "\n"
                 seen[row["run_id"]] = row["state"]
-        running, done, failed, gstate = group_snapshot(rows, len(never))
+        running, done, failed, _ = group_snapshot(rows)
         if not running:
-            yield f"group.{gstate} group={args.group} done={len(done)} failed={len(failed)}" + tail + "\n"
+            yield closing_line(runs_dir, args.group, rows)
             return None
         return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
 

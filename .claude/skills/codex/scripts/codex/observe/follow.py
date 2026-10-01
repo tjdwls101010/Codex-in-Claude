@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 
+from codex.observe.rows import group_snapshot
 from codex.registry import group_gaps, unreadable_runs
 
 # How often a follower asks whether anything changed. A tick reads forward from a byte offset, so it is cheap.
@@ -37,6 +38,13 @@ def wait_until(ended, timeout):
         if timeout and time.time() - started >= timeout:
             return
         time.sleep(FOLLOW_INTERVAL)
+
+
+def closing_line(runs_dir, name, rows):
+    """The line a group's follow ends on, from its rows and its gaps as they stand now: a member that stopped parsing while it was followed counts against `completed` as one that never parsed does."""
+    never, tail = group_tail(runs_dir, name)
+    _running, done, failed, gstate = group_snapshot(rows, len(never))
+    return f"group.{gstate} group={name} done={len(done)} failed={len(failed)}" + tail + "\n"
 
 
 def group_tail(runs_dir, name):

@@ -6,8 +6,7 @@ import shlex
 from pathlib import Path
 
 from codex.errors import Refusal
-from codex.git.repo import is_dirty as worktree_dirty
-from codex.git.worktree import prune as worktree_prune, remove as worktree_remove
+from codex.git import is_dirty as worktree_dirty, worktree_prune, worktree_remove
 from codex.registry.groups import (
     derived_groups, group_path, group_unreadable, list_groups, member_run_ids, owned_run_ids, read_group,
 )

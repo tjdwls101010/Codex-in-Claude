@@ -6,7 +6,7 @@ from pathlib import Path
 
 from codex.codex_cli import CursorOutOfRange, event_lines
 from codex.errors import Refusal
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.observe.follow import follow, group_tail
 from codex.observe.rows import group_snapshot, run_row
 from codex.registry.groups import read_group, resolve_group

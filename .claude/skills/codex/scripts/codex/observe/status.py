@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.observe.follow import follow, group_tail
 from codex.observe.rows import group_snapshot, note_unreadable, row_is_live, run_row, summary_row
 from codex.registry.groups import list_groups, resolve_group, unstarted_members, vanished_members

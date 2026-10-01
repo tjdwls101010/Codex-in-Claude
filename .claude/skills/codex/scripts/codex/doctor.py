@@ -9,9 +9,8 @@ import sys
 from codex.codex_cli import (
     WRITING_SANDBOXES, codex_home, codex_version, config_summary, login_status, model_catalog, user_defaults,
 )
-from codex.git.repo import git_toplevel, resolve_project
+from codex.git import git_toplevel, resolve_project, worktrees_registered
 from codex.errors import Refusal
-from codex.git.worktree import registered as worktrees_registered
 from codex.registry.groups import list_groups
 from codex.registry.runs import is_live, iter_runs, reap, resolve_runs_dir, unreadable_runs
 from codex.util import ENTRY, clip, is_within

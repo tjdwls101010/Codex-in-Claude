@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from codex.errors import Refusal
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.observe.collect import final_message, member_result, overlaps, written_paths
 from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
 from codex.registry.groups import resolve_group, unstarted_members, vanished_members

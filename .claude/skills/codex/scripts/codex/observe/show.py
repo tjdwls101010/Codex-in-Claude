@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from codex.codex_cli import find_item, item_ids
 from codex.errors import Refusal
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.registry.runs import find_run, refuse_unresolved_run, resolve_runs_dir
 
 # `show --item` cap; truncation is always announced with how much was withheld.

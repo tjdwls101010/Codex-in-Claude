@@ -16,8 +16,7 @@ from codex.codex_cli import (
     user_defaults,
 )
 from codex.errors import Refusal
-from codex.git.repo import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted
-from codex.git.worktree import add as worktree_add
+from codex.git import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted, worktree_add
 from codex.registry.locks import thread_turn_lock
 from codex.registry.runs import (
     TERMINAL_STATES, claim_run_dir, ensure_runs_dir, is_live, iter_runs, read_meta, reap,

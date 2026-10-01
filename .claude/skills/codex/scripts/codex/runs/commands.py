@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 from codex.errors import Refusal
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.registry.groups import resolve_group
 from codex.registry.runs import (
     find_run, is_live, iter_runs, reap, refuse_unresolved_run, resolve_implicit_run, resolve_runs_dir,

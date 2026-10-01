@@ -8,7 +8,7 @@ from codex.batch.spawn import spawn_members
 from codex.batch.tasks import check_task_settings, load_tasks
 from codex.batch.worktrees import plan_worktrees, worktree_report
 from codex.errors import Refusal
-from codex.git.repo import resolve_project
+from codex.git import resolve_project
 from codex.registry.groups import claim_group, group_path, read_group
 from codex.registry.runs import ensure_runs_dir, resolve_runs_dir
 

@@ -56,6 +56,15 @@ def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> di
 
     `os.link` publishes a manifest that is already complete, so no reader sees the name without its content. `requested` is written now because a batch killed partway would otherwise be indistinguishable from one that asked for fewer tasks. `epoch` identifies this claim, so a writer notices if the name was released and claimed again underneath it.
     """
+    try:
+        return _claim(runs_dir, name, derived_from, requested)
+    except FileExistsError:
+        existing = group_manifest(runs_dir, name) or {}
+        raise Refusal(f"group {name!r} already exists; `batch clean --group {name}` releases the name once nothing is left",
+                      created_at=existing.get("created_at"), members=len(existing.get("members") or [])) from None
+
+
+def _claim(runs_dir: Path, name: str, derived_from, requested) -> dict:
     d = groups_dir(runs_dir)
     d.mkdir(parents=True, exist_ok=True)
     manifest = {"group": name, "created_at": now_iso(), "epoch": uuid.uuid4().hex,
@@ -65,10 +74,6 @@ def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> di
     tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     try:
         os.link(tmp, path)
-    except FileExistsError:
-        existing = group_manifest(runs_dir, name) or {}
-        raise Refusal(f"group {name!r} already exists; `batch clean --group {name}` releases the name once nothing is left",
-                      created_at=existing.get("created_at"), members=len(existing.get("members") or [])) from None
     finally:
         tmp.unlink(missing_ok=True)
     return manifest

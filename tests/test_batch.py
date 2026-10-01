@@ -12,6 +12,18 @@ import unittest
 from support.harness import BridgeCase, alive, wait_until
 
 
+class AMalformedRegistry(BridgeCase):
+
+    def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
+        self.runs_dir.mkdir()
+        (self.runs_dir / ".groups").write_text("not a directory")
+        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        self.assertIn("'g'", out["error"])
+        self.assertNotIn("internal error", out["error"])
+        self.assertEqual((out["created_at"], out["members"]), (None, 0))
+        self.assertEqual(self.run_dirs(), [], "nothing spawns behind a refused claim")
+
+
 class BatchCase(BridgeCase):
 
     def manifest(self, name):
@@ -24,6 +36,18 @@ class BatchCase(BridgeCase):
     def assert_cost_nothing(self, before_dirs, before_groups):
         self.assertEqual(self.run_dirs(), before_dirs)
         self.assertEqual(self.bridge("status")["groups"], before_groups)
+
+
+class AMalformedRegistry(BridgeCase):
+
+    def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
+        self.runs_dir.mkdir()
+        (self.runs_dir / ".groups").write_text("not a directory")
+        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        self.assertIn("'g'", out["error"])
+        self.assertNotIn("internal error", out["error"])
+        self.assertEqual((out["created_at"], out["members"]), (None, 0))
+        self.assertEqual(self.run_dirs(), [], "nothing spawns behind a refused claim")
 
 
 class Starting(BatchCase):
@@ -89,6 +113,18 @@ class Starting(BatchCase):
         self.assertIn("at least one", self.bridge("batch", "start", "--group", "p1", rc=2)["error"])
 
 
+class AMalformedRegistry(BridgeCase):
+
+    def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
+        self.runs_dir.mkdir()
+        (self.runs_dir / ".groups").write_text("not a directory")
+        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        self.assertIn("'g'", out["error"])
+        self.assertNotIn("internal error", out["error"])
+        self.assertEqual((out["created_at"], out["members"]), (None, 0))
+        self.assertEqual(self.run_dirs(), [], "nothing spawns behind a refused claim")
+
+
 class TasksAreValidatedBeforeAnythingStarts(BatchCase):
 
     CASES = [
@@ -124,6 +160,18 @@ class TasksAreValidatedBeforeAnythingStarts(BatchCase):
         self.wait_all(out)
 
 
+class AMalformedRegistry(BridgeCase):
+
+    def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
+        self.runs_dir.mkdir()
+        (self.runs_dir / ".groups").write_text("not a directory")
+        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        self.assertIn("'g'", out["error"])
+        self.assertNotIn("internal error", out["error"])
+        self.assertEqual((out["created_at"], out["members"]), (None, 0))
+        self.assertEqual(self.run_dirs(), [], "nothing spawns behind a refused claim")
+
+
 class OneMemberFailingDoesNotTakeTheOthers(BatchCase):
 
     def test_a_member_that_cannot_spawn_keeps_its_slot(self):
@@ -157,6 +205,18 @@ class OneMemberFailingDoesNotTakeTheOthers(BatchCase):
         for rid in spawned:
             self.wait_state(rid)
         self.assertEqual(self.bridge("status", "--group", "p1")["group_state"], "partial")
+
+
+class AMalformedRegistry(BridgeCase):
+
+    def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
+        self.runs_dir.mkdir()
+        (self.runs_dir / ".groups").write_text("not a directory")
+        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        self.assertIn("'g'", out["error"])
+        self.assertNotIn("internal error", out["error"])
+        self.assertEqual((out["created_at"], out["members"]), (None, 0))
+        self.assertEqual(self.run_dirs(), [], "nothing spawns behind a refused claim")
 
 
 class ResumeFrom(BatchCase):
@@ -261,6 +321,18 @@ class ResumeFrom(BatchCase):
         self.assertEqual(two["spawned"], 2)
         self.assertEqual([r["kind"] for r in two["runs"]], ["resume", "resume"])
         del one
+
+
+class AMalformedRegistry(BridgeCase):
+
+    def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
+        self.runs_dir.mkdir()
+        (self.runs_dir / ".groups").write_text("not a directory")
+        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        self.assertIn("'g'", out["error"])
+        self.assertNotIn("internal error", out["error"])
+        self.assertEqual((out["created_at"], out["members"]), (None, 0))
+        self.assertEqual(self.run_dirs(), [], "nothing spawns behind a refused claim")
 
 
 class FollowingAGroup(BatchCase):

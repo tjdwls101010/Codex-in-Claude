@@ -446,6 +446,32 @@ class WaitingForTheResult(BridgeCase):
         self.assertEqual((header["group_state"], sorted(header["done"])), ("completed", sorted(r["run_id"] for r in out["runs"])))
         self.assertGreater(took, 1.5)
 
+    def test_a_run_whose_meta_stops_parsing_mid_wait_is_refused_rather_than_waited_for(self):
+        out, m = self.running("x", hang=60)
+        self.addCleanup(lambda: alive(m["pgid"]) and os.killpg(int(m["pgid"]), signal.SIGKILL))
+        waiter = self.spawn("result", "--run", out["run_id"], "--wait")
+        time.sleep(1.5)
+        (self.runs_dir / out["run_id"] / "meta.json").write_text("{ truncated")
+        stdout, _ = waiter.communicate(timeout=30)
+        self.assertEqual(waiter.returncode, 1, stdout)
+        self.assertIn("will not parse", json.loads(stdout)["error"])
+
+    def test_a_member_whose_meta_stops_parsing_mid_wait_is_no_longer_waited_for(self):
+        out = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
+        rid = out["runs"][0]["run_id"]
+        pgid = self.wait_state(rid, ("running",))["pgid"]
+        self.addCleanup(lambda: alive(pgid) and os.killpg(int(pgid), signal.SIGKILL))
+        waiter = self.spawn("result", "--group", "g", "--wait")
+        follower = self.spawn("status", "--group", "g", "--follow")
+        time.sleep(1.5)
+        (self.runs_dir / rid / "meta.json").write_text("{ truncated")
+        stdout, _ = waiter.communicate(timeout=30)
+        self.assertEqual(waiter.returncode, 0, stdout)
+        self.assertEqual([u["run_id"] for u in json.loads(stdout.splitlines()[0])["unstarted"]], [rid])
+        followed, _ = follower.communicate(timeout=30)
+        self.assertEqual(follower.returncode, 0)
+        self.assertRegex(followed.splitlines()[-1], r"^group\.\w+ group=g ", "the follower closes under the same condition")
+
     def test_a_wait_timeout_without_wait_is_refused(self):
         out = self.bridge("start", "x")
         self.assertIn("requires --wait", self.bridge("result", "--run", out["run_id"], "--wait-timeout", 5, rc=2)["error"])

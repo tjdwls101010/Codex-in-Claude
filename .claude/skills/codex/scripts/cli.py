@@ -355,7 +355,7 @@ def build_parser():
     selector = p.add_mutually_exclusive_group(required=True)
     selector.add_argument("--run", metavar="REF", help="one run: a run id, thread id or run-id prefix (newest match wins)")
     selector.add_argument("--group", metavar="NAME", help="every member of a batch group, in start order")
-    p.add_argument("--wait", action="store_true", help="wait until the run or group has ended, printing nothing meanwhile, then print what `result` without it would. A run has ended once it is terminal and its Codex no longer writes; a group once no readable member is live — a slot that never started and a member whose meta.json will not parse are not waited for")
+    p.add_argument("--wait", action="store_true", help="wait until the run or group has ended, printing nothing meanwhile, then print what `result` without it would. A run has ended once it is terminal and its Codex no longer writes; a group once no readable member is live — a slot that never started and a member whose meta.json will not parse, or stops parsing, are not waited for")
     p.add_argument("--wait-timeout", type=positive_seconds, metavar="SEC", help="stop waiting after SEC seconds and print the result as it stands then, partial and saying so (default: wait until the end). Requires --wait; SEC must be positive")
     p.set_defaults(func=cmd_result)
 

@@ -99,8 +99,13 @@ def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
 
 
 def member_rows(members, project: Path):
-    """The rows of a group's members as they stand now, each re-read from disk — falling back to the meta it was resolved with if that will not parse — and reaped."""
-    return [run_row(rd, read_meta(rd) or m, project) for rd, m in members]
+    """The rows of a group's members as they stand now, each re-read from disk and reaped. A member whose meta.json has stopped parsing has no row, as it would have none had it not parsed when the group was resolved: an old snapshot of it would read as live for ever once its supervisor is gone."""
+    rows = []
+    for rd, _m in members:
+        meta = read_meta(rd)
+        if meta:
+            rows.append(run_row(rd, meta, project))
+    return rows
 
 
 def group_snapshot(rows, unstarted=0):

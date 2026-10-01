@@ -25,9 +25,12 @@ def result(args):
         return result_group(args, project, runs_dir)
     rd, meta = run(runs_dir, args.run)
     if args.wait:
-        # The run found now is the one waited for, even if a later turn on its thread starts meanwhile.
-        wait_until(lambda: not is_live(reap(rd, read_meta(rd) or meta)), args.wait_timeout)
-        meta = read_meta(rd) or meta
+        # The run found now is the one waited for, even if a later turn on its thread starts meanwhile. One whose meta.json stops parsing ends the wait, since its state can no longer be read, and is refused below as it would have been at the start.
+        def ended():
+            now = read_meta(rd)
+            return not now or not is_live(reap(rd, now))
+        wait_until(ended, args.wait_timeout)
+        rd, meta = run(runs_dir, rd.name)
     meta = reap(rd, meta)
     info = progress(rd, meta)
     # A live run has no final answer yet: what it has said so far is not the object its schema shapes.

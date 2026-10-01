@@ -38,7 +38,7 @@ CLI_SEAM = {"build_parser"}
 IMPORTERS = {"engine", "import_module", "__import__"}
 MODULE_KEYWORDS = {"name", "module"}
 
-# `mock.patch` resolves its target by attribute from the package down, so `codex.observe.show` there is the interface function that shadows the module file of the same name.
+# `mock.patch` splits its target at the last dot: what comes before is imported as a module path, the last name is an attribute of it. So `codex.observe.show` patches the interface function on the package, while `codex.observe.show.find_item` patches a global inside the module file of that name.
 PATCHERS = {"patch"}
 
 
@@ -151,11 +151,12 @@ def imported_unit(call):
 def named_past(value, here, allowed, inner, *, how=None):
     """Why a string a file hands to a call or lists names something past a unit's interface, or None.
 
-    `how` is how the string will be resolved. `"attribute"` (a patch target): name by name from the package, so `codex.U.<name>` needs the name in U's interface, whatever module file shares it. Otherwise as a module path (an importer, a subprocess argv, any other call): the dotted path of a module file inside a unit is past the interface, and so is `codex.U.<name>` outside it. `cli.<name>` must be in `CLI_SEAM` only where the string is resolved — elsewhere a string such as `cli.py` is a file name."""
+    `how` is how the string will be resolved. `"attribute"` (a patch target): everything before the last name as a module path, the last name as its attribute, so `codex.U.<name>` needs the name in U's interface whatever module file shares it, and `codex.U.<module>.<name>` reaches inside. Otherwise the whole string as a module path (an importer, a subprocess argv, any other call): the dotted path of a module file inside a unit is past the interface, and so is `codex.U.<name>` outside it. `cli.<name>` must be in `CLI_SEAM` only where the string is resolved — elsewhere a string such as `cli.py` is a file name."""
     parts = value.split(".")
     if len(parts) >= 3 and parts[0] == "codex" and parts[1] in allowed and parts[1] != here:
-        if how != "attribute" and any(value == m or value.startswith(m + ".") for m in inner):
-            return f"names module {value}, inside a unit"
+        module_path = ".".join(parts[:-1]) if how == "attribute" else value
+        if any(module_path == m or module_path.startswith(m + ".") for m in inner):
+            return f"names module {module_path}, inside a unit"
         if not allowed[parts[1]](parts[2]):
             return f"names {value}, past the interface of codex.{parts[1]}"
     if how and len(parts) >= 2 and parts[0] == "cli" and here != "cli" and not allowed["cli"](parts[1]):
@@ -457,6 +458,8 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
                      'from unittest import mock\nmock.patch(target="codex.store.inner.put")\n',
                      'import importlib\nimportlib.import_module(name="codex.store.inner")\n',
                      'from support.harness import engine\nengine("codex.store.put")\n',
+                     'from unittest import mock\nmock.patch("codex.store.put.put")\n',
+                     'from unittest import mock\nmock.patch(target="codex.store.put.put")\n',
                      'from unittest import mock\nmock.patch("codex.feature._private")\n',
                      'from unittest import mock\nmock.patch("codex.store.hidden")\n',
                      'from unittest import mock\nmock.patch("cli.main")\n',

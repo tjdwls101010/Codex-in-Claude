@@ -116,6 +116,14 @@ class Result(BridgeCase):
 
 class StatusOfOneRun(BridgeCase):
 
+    def test_one_run_is_its_row_itself(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        row = self.bridge("status", "--run", out["run_id"])
+        self.assertEqual((row.get("run_id"), row.get("state"), row.get("thread_id")),
+                         (out["run_id"], "completed", out["thread_id"]))
+        self.assertEqual([k for k in ("runs", "running", "done", "failed", "threads", "groups") if k in row], [])
+
     def test_a_run_inside_a_long_command_names_that_command(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": FIXTURES / "mid-command.jsonl",
                                              "FAKE_CODEX_HANG": 60})
@@ -164,9 +172,7 @@ class Listing(BridgeCase):
         self.assertEqual(set(row), {"run_id", "label", "state", "group", "idle_seconds", "last_agent_message"})
         self.assertEqual((row["run_id"], row["label"], row["state"], row["group"]), (out["run_id"], "lbl", "completed", None))
         self.assertTrue(row["last_agent_message"].endswith("…(+840 chars)"), row["last_agent_message"][-30:])
-        full = self.bridge("status", "--run", out["run_id"])["runs"][0]
-        self.assertIn("usage", full)
-        self.assertEqual(self.bridge("status", "--thread", out["thread_id"])["runs"][0].keys(), full.keys())
+        self.assertIn("usage", self.bridge("status", "--run", out["run_id"]))
 
     def finished(self, n, start=0, state="completed"):
         """`n` finished runs written straight into the registry, all the same shape so only their number differs."""
@@ -217,16 +223,6 @@ class Listing(BridgeCase):
         self.assertGreater(listing["runs_truncated"], 0)
         self.assertEqual(listing["running"], [live["run_id"]])
         self.assertEqual(len(self.bridge("status", "--all")["runs"]), 22)
-
-    def test_thread_lists_every_turn_on_one_thread_only(self):
-        first = self.bridge("start", "a")
-        self.wait_state(first["run_id"])
-        second = self.bridge("resume", first["run_id"], "b")
-        other = self.bridge("start", "c")
-        for r in (second, other):
-            self.wait_state(r["run_id"])
-        rows = self.bridge("status", "--thread", first["thread_id"])["runs"]
-        self.assertEqual({r["run_id"] for r in rows}, {first["run_id"], second["run_id"]})
 
     def test_groups_are_listed_so_a_later_session_can_find_them(self):
         out = self.bridge("batch", "start", "--group", "found-later", "--task", "a")

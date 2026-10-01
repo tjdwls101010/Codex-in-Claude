@@ -182,8 +182,6 @@ class SelectorsAreExclusive(BridgeCase):
 
     def test_each_competing_pair_is_refused(self):
         cases = [("status", "--run", self.run_id, "--group", "g"),
-                 ("status", "--run", self.run_id, "--thread", "t"),
-                 ("status", "--thread", "t", "--group", "g"),
                  ("result", "--run", self.run_id, "--group", "g"),
                  ("stop", "--run", self.run_id, "--group", "g"),
                  ("stop", "--run", self.run_id, "--all"),
@@ -202,7 +200,7 @@ class SelectorsAreExclusive(BridgeCase):
                 self.assertIn("--run", self.bridge(cmd, rc=2)["error"])
 
     def test_status_all_is_a_cap_not_a_selector(self):
-        self.assertEqual(self.bridge("status", "--run", self.run_id, "--all")["runs"][0]["run_id"], self.run_id)
+        self.assertEqual(self.bridge("status", "--run", self.run_id, "--all")["run_id"], self.run_id)
 
 
 class FlagsThatWouldDecideNothing(BridgeCase):
@@ -339,7 +337,7 @@ class RemovedSurface(BridgeCase):
 
     def test_each_is_refused_by_the_parser_before_anything_is_claimed(self):
         for args in (("start", "--foreground", "x"), ("resume", "--foreground", "r", "x"),
-                     ("status", "--include-external"),
+                     ("status", "--include-external"), ("status", "--thread", "t"),
                      ("batch", "start", "--group", "g", "--resume-from", "p", "--as-ready", "--task", "x")):
             with self.subTest(args=args):
                 self.assertIn("unrecognized arguments", self.bridge(*args, rc=2)["error"])

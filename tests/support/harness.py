@@ -258,7 +258,7 @@ class BridgeCase(unittest.TestCase):
     # -- waiting ----------------------------------------------------------------
 
     def row(self, run_id, *extra):
-        return self.bridge("status", "--run", run_id, *extra)["runs"][0]
+        return self.bridge("status", "--run", run_id, *extra)
 
     def wait_state(self, run_id, states=TERMINAL, timeout=60, extra=()):
         """Poll `status --run` (which reaps) until the run is in one of `states`."""

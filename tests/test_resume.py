@@ -216,8 +216,7 @@ class OneTurnPerThread(ResumeCase):
         first = self.bridge("start", "seed")
         self.wait_state(first["run_id"])
         results = self.race(first["run_id"], "next", n=3)
-        runs = self.bridge("status", "--thread", first["thread_id"])["runs"]
-        self.assertEqual(len(runs), 2, "the seed and exactly one winner")
+        self.assertEqual(len(self.run_dirs()), 2, "the seed and exactly one winner; a refused resume claims nothing")
         winner = next(json.loads(out)["run_id"] for rc, out in results if rc == 0)
         # A resume's handle comes back before its supervisor has launched codex.
         self.wait_state(winner, ("running",))

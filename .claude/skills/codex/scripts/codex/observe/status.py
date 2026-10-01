@@ -1,4 +1,4 @@
-"""`status`: whether runs are live, how far along, and what they last said — the default listing, one run or thread, a group, and a group followed to its end."""
+"""`status`: whether runs are live, how far along, and what they last said — the default listing, one run, a group, and a group followed to its end."""
 
 from __future__ import annotations
 
@@ -18,30 +18,18 @@ def status(args):
         return follow_group(args, project, runs_dir) if args.follow else status_group(args, project, runs_dir)
 
     if args.run:
-        rd, m = run(runs_dir, args.run)
-        rows = [run_row(rd, m, project)]
-    else:
-        rows = [run_row(rd, m, project, excerpt=400 if args.thread else 160)
-                for rd, m in iter_runs(runs_dir) if not args.thread or m.get("thread_id") == args.thread]
+        # One run is answered by its row itself, so its state is the first thing read.
+        return run_row(*run(runs_dir, args.run), project)
+    rows = [run_row(rd, m, project, excerpt=160) for rd, m in iter_runs(runs_dir)]
     # Summaries come from every row before the display cap, so no live run falls off `running`.
     running, done, failed, _ = group_snapshot(rows)
     shown = rows
-    if not args.run and not args.all and len(rows) > LISTING_ROWS:
+    if not args.all and len(rows) > LISTING_ROWS:
         shown = [r for r in rows[:-LISTING_ROWS] if row_is_live(r)] + rows[-LISTING_ROWS:]
-    # Listed even when none of their members is shown: this is how a later session finds a batch.
-    groups = list_groups(runs_dir)
-    if not (args.run or args.thread):
-        # The listing counts finished runs rather than naming them: their ids grow with the registry and say nothing the caller acts on.
-        out = {"running": running, "counts": {"live": len(running), "completed": len(done), "failed": len(failed)},
-               "total_runs": len(rows), "runs_truncated": len(rows) - len(shown), "groups": groups,
-               "runs": [summary_row(r) for r in shown], "project": str(project), "runs_dir": str(runs_dir)}
-        return note_unreadable(out, runs_dir)
-    by_thread = {}
-    for r in rows:
-        by_thread.setdefault(r["thread_id"] or "(unknown)", []).append(r["run_id"])
-    out = {"running": running, "done": done, "failed": failed,
-           "total_runs": len(rows), "runs_truncated": len(rows) - len(shown), "runs": shown,
-           "threads": by_thread, "groups": groups, "project": str(project), "runs_dir": str(runs_dir)}
+    # The listing counts finished runs rather than naming them: their ids grow with the registry and say nothing the caller acts on. Groups are listed even when none of their members is shown: this is how a later session finds a batch.
+    out = {"running": running, "counts": {"live": len(running), "completed": len(done), "failed": len(failed)},
+           "total_runs": len(rows), "runs_truncated": len(rows) - len(shown), "groups": list_groups(runs_dir),
+           "runs": [summary_row(r) for r in shown], "project": str(project), "runs_dir": str(runs_dir)}
     return note_unreadable(out, runs_dir)
 
 

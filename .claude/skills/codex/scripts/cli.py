@@ -244,11 +244,10 @@ def build_parser():
     ap.subparser_map["resume"] = p
 
     p = command("status", "run state: whether it is live, how far along, what it last said", epilog=STATUS_EPILOG,
-                description=f"Run state from the registry, with short excerpts of the last message and stderr. The default listing, --all included, names the live runs in `running`, counts live, completed and failed runs in `counts` rather than naming finished ones, lists the project's `groups`, and gives a summary row per run — every live run plus the {LISTING_ROWS} newest, with `runs_truncated` counting the rest. --run, --thread and --group give full rows, with the `done` and `failed` run ids among them.")
+                description=f"Run state from the registry, with short excerpts of the last message and stderr. The default listing, --all included, names the live runs in `running`, counts live, completed and failed runs in `counts` rather than naming finished ones, lists the project's `groups`, and gives a summary row per run — every live run plus the {LISTING_ROWS} newest, with `runs_truncated` counting the rest. --run prints that run's full row itself; --group gives its members' full rows, with the `done` and `failed` run ids among them.")
     add_common(p)
     selector = p.add_mutually_exclusive_group()
-    selector.add_argument("--run", metavar="REF", help="one run's full row: a run id, thread id or run-id prefix (newest match wins)")
-    selector.add_argument("--thread", metavar="THREAD_ID", help="full rows of the runs on one thread, capped like the default listing unless --all")
+    selector.add_argument("--run", metavar="REF", help="one run's full row, printed as the reply itself: a run id, thread id or run-id prefix (newest match wins)")
     selector.add_argument("--group", help="full rows of one batch group's members, with `group_state`; never truncated")
     p.add_argument("--all", action="store_true", help=f"no display cap: every run, not only the live ones and the {LISTING_ROWS} newest")
     p.add_argument("--follow", action="store_true", help="requires --group. Text instead of JSON: `run <id> <prev> -> <state>` for each member state change (with ` exit=N` when the state is not completed), then one closing line — `group.<state> group=<name> done=N failed=N`, or `group.empty group=<name>` when no member resolves — which appends ` unstarted=N` and ` unreadable=N` when either is non-zero")

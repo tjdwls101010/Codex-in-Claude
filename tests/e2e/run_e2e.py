@@ -154,7 +154,8 @@ SHELL_VALUE = re.compile(r"\$[A-Za-z_{(]|`")
 
 def calls_to_result(commands):
     """Bridge calls between the first one that starts work and the first that collects it, neither counted: the follower, status checks or polls a session needed before it had the answer. None when either never happened."""
-    starts = [n for n, c in enumerate(commands) if re.search(r"cli\.py\S*\s+(start|resume|batch)\b", c)]
+    starts = [n for n, c in enumerate(commands)
+              if re.search(r"cli\.py\S*\s+(start|resume|batch)\b", c) and "--help" not in c]
     if not starts:
         return None
     ends = [n for n, c in enumerate(commands) if n > starts[0] and re.search(r"cli\.py\S*\s+result\b", c)]

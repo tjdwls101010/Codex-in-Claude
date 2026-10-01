@@ -17,8 +17,8 @@ def start(args):
 
 
 def follow_up(out, args):
-    """The reply with its `next`: the follower of the run it made."""
-    return with_next(out, "state", "log", "--run", out["run_id"], "--follow", project=args.project, runs_dir=args.runs_dir)
+    """The reply with its `next`: the call that waits for the run it made and prints its result."""
+    return with_next(out, "state", "result", "--run", out["run_id"], "--wait", project=args.project, runs_dir=args.runs_dir)
 
 
 def resume(args):

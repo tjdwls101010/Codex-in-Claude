@@ -1,4 +1,4 @@
-"""Groups: `<runs_dir>/.groups/<name>.json`, the set of runs one `batch start` created, addressed afterwards as one thing.
+"""Groups: `<runs_dir>/.groups/<name>.json`, the set of runs one `batch` created, addressed afterwards as one thing.
 
 The manifest is a file rather than a query over the registry: claiming it is the atomic claim on the name, it records start order (which `--resume-from` pairs against and which run ids cannot recover — same-second, same-label starts are the normal case), and reading a group does not walk the whole registry on every follower tick.
 """
@@ -60,7 +60,7 @@ def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> di
         return _claim(runs_dir, name, derived_from, requested)
     except FileExistsError:
         existing = group_manifest(runs_dir, name) or {}
-        raise Refusal(f"group {name!r} already exists; `batch clean --group {name}` releases the name once nothing is left",
+        raise Refusal(f"group {name!r} already exists; `clean --group {name}` releases the name once nothing is left",
                       created_at=existing.get("created_at"), members=len(existing.get("members") or [])) from None
 
 
@@ -118,53 +118,44 @@ def derived_groups(runs_dir: Path, name: str):
     return [g for g in list_groups(runs_dir) if (group_manifest(runs_dir, g) or {}).get("derived_from") == name]
 
 
-def group_runs(runs_dir: Path, name: str):
-    """Members as (run_dir, meta) in start order; refuses an unknown or unreadable group. Members that never became a readable run are `group_gaps`."""
-    if group_unreadable(runs_dir, name):
-        raise Refusal(f"group {name!r} has a manifest that will not parse; `members_recorded_by_runs` lists its runs, which `status --run` reads one by one",
-                      manifest=str(group_path(runs_dir, name)),
-                      members_recorded_by_runs=owned_run_ids(runs_dir, name))
-    ids = member_run_ids(runs_dir, name)
-    if ids is None:
+def group_view(runs_dir: Path, name: str):
+    """`(members, gaps, epoch)` from one read of the manifest, so no slot is in both and neither lags the other. `members` are `(run_dir, meta)` in start order; `gaps` are every slot no view can show as a run — slots that never started, tasks a killed `batch` never reached included, then members whose run is gone or will not parse, which still holds its work; `epoch` identifies this claim of the name, so a reader that looks again can tell the same group from a new one that took the name. Refuses an unknown or unreadable group."""
+    g = group_manifest(runs_dir, name)
+    if g is None:
+        if group_unreadable(runs_dir, name):
+            raise Refusal(f"group {name!r} has a manifest that will not parse; `members_recorded_by_runs` lists its runs, which `status --run` reads one by one",
+                          manifest=str(group_path(runs_dir, name)),
+                          members_recorded_by_runs=owned_run_ids(runs_dir, name))
         raise Refusal(f"no such group: {name}", runs_dir=str(runs_dir), known_groups=list_groups(runs_dir))
-    out = []
-    for rid in ids:
-        rd, m = find_run(runs_dir, rid)
-        if m:
-            out.append((rd, m))
-    return out
-
-
-def group_gaps(runs_dir: Path, name: str):
-    """Every member no group view can show as a run, so none answers as if fewer were asked for: slots that never started, then members whose run is gone or will not parse."""
-    return _unstarted_members(runs_dir, name) + _vanished_members(runs_dir, name)
-
-
-def _unstarted_members(runs_dir: Path, name: str):
-    """Slots that never became runs, including tasks a killed `batch start` never reached, so no group view answers as if fewer were asked for."""
-    g = group_manifest(runs_dir, name) or {}
-    members = g.get("members", [])
-    never = [{"index": m.get("index"), "label": m.get("label"), "kind": m.get("kind"), "error": m.get("error")}
-             for m in members if not m.get("run_id")]
-    for i in range(len(members), g.get("requested") or 0):
-        never.append({"index": i, "label": None, "kind": None,
-                      "error": "batch start recorded no run for this task"})
-    return never
-
-
-def _vanished_members(runs_dir: Path, name: str):
-    """Members the manifest names that no longer resolve — a directory removed by hand, or one whose meta.json will not parse, which still holds its work."""
-    gone = []
-    for m in (group_manifest(runs_dir, name) or {}).get("members", []):
+    slots = g.get("members", [])
+    members, never, gone = [], [], []
+    for m in slots:
         rid = m.get("run_id")
         if not rid:
+            never.append({"index": m.get("index"), "label": m.get("label"), "kind": m.get("kind"), "error": m.get("error")})
             continue
         rd, meta = find_run(runs_dir, rid)
         if meta:
+            members.append((rd, meta))
             continue
         present = rd is not None and meta_unreadable(rd)
         gone.append({"index": m.get("index"), "label": m.get("label"), "run_id": rid,
                      "error": ("its meta.json will not parse; the run directory "
                                "is still there and may still hold results"
                                if present else "its run directory is no longer in the registry")})
-    return gone
+    for i in range(len(slots), g.get("requested") or 0):
+        never.append({"index": i, "label": None, "kind": None, "error": "batch recorded no run for this task"})
+    return members, never + gone, g.get("epoch")
+
+
+def group_runs(runs_dir: Path, name: str):
+    """The members of `group_view`: `(run_dir, meta)` in start order; refuses an unknown or unreadable group."""
+    return group_view(runs_dir, name)[0]
+
+
+def group_gaps(runs_dir: Path, name: str):
+    """The gaps of `group_view`, so no group view answers as if fewer were asked for; `[]` for a group that is not there or will not parse."""
+    try:
+        return group_view(runs_dir, name)[1]
+    except Refusal:
+        return []

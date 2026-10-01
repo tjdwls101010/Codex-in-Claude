@@ -11,7 +11,7 @@ from codex.errors import Refusal
 # A `codex` slower than this to answer a local cache read is not answering; the check is skipped rather than holding up every run start.
 CATALOG_TIMEOUT = 5.0
 
-# One lookup per process: a `batch start` of N members would otherwise pay N+1 identical subprocess calls.
+# One lookup per process: a `batch` of N members would otherwise pay N+1 identical subprocess calls.
 _CATALOG_CACHE = []
 
 

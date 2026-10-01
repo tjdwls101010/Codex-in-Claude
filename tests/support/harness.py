@@ -102,11 +102,14 @@ class BridgeCase(unittest.TestCase):
                     m = json.loads((d / "meta.json").read_text())
                 except Exception:
                     continue
+                pgid = m.get("pgid")
                 for key in ("supervisor_pid", "codex_pid"):
                     pid = m.get(key)
-                    if pid and int(pid) != os.getpid():
+                    # Only a process still in the run's own group: once the run has ended, its pid can be any later process's — another suite's, or the developer's.
+                    if pid and pgid and int(pid) != os.getpid():
                         try:
-                            os.kill(int(pid), signal.SIGKILL)
+                            if os.getpgid(int(pid)) == int(pgid):
+                                os.kill(int(pid), signal.SIGKILL)
                         except OSError:
                             pass
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -258,7 +261,7 @@ class BridgeCase(unittest.TestCase):
     # -- waiting ----------------------------------------------------------------
 
     def row(self, run_id, *extra):
-        return self.bridge("status", "--run", run_id, *extra)["runs"][0]
+        return self.bridge("status", "--run", run_id, *extra)
 
     def wait_state(self, run_id, states=TERMINAL, timeout=60, extra=()):
         """Poll `status --run` (which reaps) until the run is in one of `states`."""
@@ -269,7 +272,7 @@ class BridgeCase(unittest.TestCase):
         return found
 
     def wait_all(self, out):
-        """Wait for every spawned member of a `batch start` reply."""
+        """Wait for every spawned member of a `batch` reply."""
         for r in out["runs"]:
             if r.get("run_id"):
                 self.wait_state(r["run_id"])

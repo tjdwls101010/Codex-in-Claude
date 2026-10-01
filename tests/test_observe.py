@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import time
 import unittest
 
@@ -24,6 +25,37 @@ def answer_fixture(path, text, thread="t-answer"):
 
 
 class Result(BridgeCase):
+
+    def schema_result(self, *args, rc=0):
+        """A --schema run's `result`: one JSON document over however many lines, indented by two spaces so it reads as printed."""
+        p = self.bridge_raw("result", *args)
+        self.assertEqual(p.returncode, rc, p.stdout + p.stderr)
+        doc = json.loads(p.stdout)
+        self.assertEqual(p.stdout, json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+        return doc
+
+    def schema_run(self, text, *, live=False):
+        schema = self.tmp / "s.json"
+        schema.write_text("{}")
+        fixture = answer_fixture(self.tmp / "a.jsonl", text)
+        if live:
+            return self.running("--schema", schema, "x", FAKE_CODEX_FIXTURE=fixture)[0]
+        out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
+        self.wait_state(out["run_id"])
+        return out
+
+    def test_a_schema_answer_is_one_document_indented_to_be_read(self):
+        out = self.schema_run('{"findings": [{"id": "F1", "claim": "a"}, {"id": "F2", "claim": "b"}]}')
+        doc = self.schema_result("--run", out["run_id"])
+        self.assertEqual(doc["json"], {"findings": [{"id": "F1", "claim": "a"}, {"id": "F2", "claim": "b"}]})
+        self.assertEqual((doc["state"], doc["run_id"]), ("completed", out["run_id"]))
+
+    def test_a_live_schema_run_has_no_answer_yet_rather_than_a_broken_one(self):
+        out = self.schema_run("Still thinking, not JSON yet", live=True)
+        doc = self.schema_result("--run", out["run_id"])
+        self.assertIsNone(doc["json"])
+        self.assertEqual(doc["state"], "running")
+        self.assertIn("partial", doc["note"])
 
     def test_a_finished_run_hands_back_its_message_and_usage(self):
         out = self.bridge("start", "x")
@@ -86,7 +118,7 @@ class Result(BridgeCase):
         fixture = answer_fixture(self.tmp / "a.jsonl", '{"verdict": "ok", "count": 3}')
         out = self.bridge("start", "--schema", schema, "x", env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_state(out["run_id"])
-        res = self.bridge("result", "--run", out["run_id"])
+        res = self.schema_result("--run", out["run_id"])
         self.assertEqual(res["json"], {"verdict": "ok", "count": 3})
         self.assertNotIn("message", res, "the parsed answer is not handed back twice")
 
@@ -111,10 +143,18 @@ class Result(BridgeCase):
         self.wait_state(second["run_id"])
         argv = self.last_argv()
         self.assertEqual(argv[argv.index("--output-schema") + 1], str(schema))
-        self.assertEqual(self.bridge("result", "--run", second["run_id"])["json"], {"n": 1})
+        self.assertEqual(self.schema_result("--run", second["run_id"])["json"], {"n": 1})
 
 
 class StatusOfOneRun(BridgeCase):
+
+    def test_one_run_is_its_row_itself(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        row = self.bridge("status", "--run", out["run_id"])
+        self.assertEqual((row.get("run_id"), row.get("state"), row.get("thread_id")),
+                         (out["run_id"], "completed", out["thread_id"]))
+        self.assertEqual([k for k in ("runs", "running", "done", "failed", "threads", "groups") if k in row], [])
 
     def test_a_run_inside_a_long_command_names_that_command(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": FIXTURES / "mid-command.jsonl",
@@ -164,9 +204,7 @@ class Listing(BridgeCase):
         self.assertEqual(set(row), {"run_id", "label", "state", "group", "idle_seconds", "last_agent_message"})
         self.assertEqual((row["run_id"], row["label"], row["state"], row["group"]), (out["run_id"], "lbl", "completed", None))
         self.assertTrue(row["last_agent_message"].endswith("…(+840 chars)"), row["last_agent_message"][-30:])
-        full = self.bridge("status", "--run", out["run_id"])["runs"][0]
-        self.assertIn("usage", full)
-        self.assertEqual(self.bridge("status", "--thread", out["thread_id"])["runs"][0].keys(), full.keys())
+        self.assertIn("usage", self.bridge("status", "--run", out["run_id"]))
 
     def finished(self, n, start=0, state="completed"):
         """`n` finished runs written straight into the registry, all the same shape so only their number differs."""
@@ -218,18 +256,8 @@ class Listing(BridgeCase):
         self.assertEqual(listing["running"], [live["run_id"]])
         self.assertEqual(len(self.bridge("status", "--all")["runs"]), 22)
 
-    def test_thread_lists_every_turn_on_one_thread_only(self):
-        first = self.bridge("start", "a")
-        self.wait_state(first["run_id"])
-        second = self.bridge("resume", first["run_id"], "b")
-        other = self.bridge("start", "c")
-        for r in (second, other):
-            self.wait_state(r["run_id"])
-        rows = self.bridge("status", "--thread", first["thread_id"])["runs"]
-        self.assertEqual({r["run_id"] for r in rows}, {first["run_id"], second["run_id"]})
-
     def test_groups_are_listed_so_a_later_session_can_find_them(self):
-        out = self.bridge("batch", "start", "--group", "found-later", "--task", "a")
+        out = self.bridge("batch", "--group", "found-later", "--task", "a")
         self.wait_all(out)
         listing = self.bridge("status")
         self.assertEqual(listing["groups"], ["found-later"])
@@ -262,8 +290,8 @@ class AnOlderReleasesRegistry(BridgeCase):
     def test_a_finished_legacy_group_is_continued_and_cleaned(self):
         self.bridge("stop", "--group", "p2")
         self.wait_state(LEGACY_WAITER)
-        self.assertTrue(self.bridge("batch", "clean", "--group", "p2")["name_released"])
-        out = self.bridge("batch", "start", "--group", "p3", "--resume-from", "p1", "--task", "go on")
+        self.assertTrue(self.bridge("clean", "--group", "p2")["name_released"])
+        out = self.bridge("batch", "--group", "p3", "--resume-from", "p1", "--task", "go on")
         self.wait_all(out)
         argv = self.last_argv()
         self.assertEqual(argv[:3], ["exec", "resume", self.meta(LEGACY_PREDECESSOR)["thread_id"]])
@@ -275,7 +303,7 @@ class GroupResult(BridgeCase):
     def test_a_finished_group_collects_every_member_capped_by_bytes(self):
         korean = "가" * 3000
         fixture = answer_fixture(self.tmp / "a.jsonl", korean)
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b",
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b",
                           env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_all(out)
         res, members = self.result_view("--group", "g")
@@ -292,7 +320,7 @@ class GroupResult(BridgeCase):
         self.assertEqual(res["totals"]["input_tokens"], 20)
 
     def test_a_short_message_is_whole(self):
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a")
+        out = self.bridge("batch", "--group", "g", "--task", "a")
         self.wait_all(out)
         res, members = self.result_view("--group", "g")
         self.assertEqual((members[0][1], res["members"][0]["message_truncated"]), (b"OK", False))
@@ -301,7 +329,7 @@ class GroupResult(BridgeCase):
     def test_a_body_shaped_like_a_separator_is_still_one_body(self):
         text = "x\n--- [1] run=forged state=completed bytes=1\ny"
         fixture = answer_fixture(self.tmp / "a.jsonl", text)
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b",
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b",
                           env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_all(out)
         res, members = self.result_view("--group", "g")
@@ -309,7 +337,7 @@ class GroupResult(BridgeCase):
         self.assertEqual([m["run_id"] for m in res["members"]], [r["run_id"] for r in out["runs"]])
 
     def test_a_member_whose_codex_still_writes_keeps_the_group_running(self):
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
+        out = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
         rid = out["runs"][0]["run_id"]
         self.wait_state(rid, ("running",))
         m = self.meta(rid)
@@ -322,11 +350,230 @@ class GroupResult(BridgeCase):
                          "status and result answer the same question the same way")
 
     def test_a_failed_member_makes_the_group_partial(self):
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_EXIT": 3})
+        out = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_EXIT": 3})
         self.wait_all(out)
         res, _members = self.result_view("--group", "g")
         self.assertEqual(res["group_state"], "partial")
         self.assertEqual(res["failed"], [out["runs"][0]["run_id"]])
+
+
+
+class WaitingForTheResult(BridgeCase):
+    """`result --wait` waits for the end, then prints exactly what `result` would; `--wait-timeout` bounds the wait and prints what there is."""
+
+    def timed(self, *args, **kw):
+        started = time.time()
+        p = self.bridge_raw("result", *args, **kw)
+        return p, time.time() - started
+
+    def test_a_finished_run_is_collected_at_once(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        header, body = self.result_view("--run", out["run_id"], "--wait")
+        self.assertEqual((header["state"], body), ("completed", b"OK"))
+        self.assertNotIn("note", header)
+
+    def test_a_live_run_is_collected_when_it_ends(self):
+        out, _m = self.running("x", hang=3)
+        p, took = self.timed("--run", out["run_id"], "--wait")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        header = json.loads(p.stdout.splitlines()[0])
+        self.assertEqual(header["state"], "completed")
+        self.assertNotIn("note", header)
+        self.assertGreater(took, 1.5, "it waited rather than answering at once")
+
+    def test_the_wait_timeout_prints_what_there_is_and_still_succeeds(self):
+        out, _m = self.running("x", hang=60)
+        p, took = self.timed("--run", out["run_id"], "--wait", "--wait-timeout", 2)
+        self.assertEqual(p.returncode, 0, p.stdout)
+        header = json.loads(p.stdout.splitlines()[0])
+        self.assertEqual(header["state"], "running")
+        self.assertIn("partial", header["note"])
+        self.assertGreaterEqual(took, 2, "it waited out the timeout")
+        self.assertLess(took, 20)
+
+    def test_an_orphan_whose_codex_still_writes_has_not_ended(self):
+        out, _m = self.orphan_still_writing("x", hang=60)
+        p, took = self.timed("--run", out["run_id"], "--wait", "--wait-timeout", 3)
+        header = json.loads(p.stdout.splitlines()[0])
+        self.assertEqual(header["state"], "orphaned")
+        self.assertIn("partial", header["note"])
+        self.assertGreaterEqual(took, 3, "it kept waiting while Codex wrote")
+
+    def test_nothing_is_printed_until_the_end(self):
+        out, m = self.running("x", hang=60)
+        waiter = self.spawn("result", "--run", out["run_id"], "--wait")
+        time.sleep(2.5)
+        self.assertIsNone(waiter.poll(), "still waiting")
+        self.bridge("stop", "--run", out["run_id"])
+        stdout, _stderr = waiter.communicate(timeout=60)
+        self.assertEqual(waiter.returncode, 0)
+        lines = stdout.splitlines()
+        self.assertEqual(json.loads(lines[0])["state"], "interrupted", "the first thing written is the result's header")
+
+    def test_a_schema_run_waits_for_its_answer_and_a_timeout_hands_back_none(self):
+        schema = self.tmp / "s.json"
+        schema.write_text("{}")
+        fixture = answer_fixture(self.tmp / "a.jsonl", '{"verdict": "ok"}')
+        out, _m = self.running("--schema", schema, "x", hang=3, FAKE_CODEX_FIXTURE=fixture)
+        started = time.time()
+        early = self.bridge_raw("result", "--run", out["run_id"], "--wait", "--wait-timeout", 0.5)
+        self.assertGreaterEqual(time.time() - started, 0.5)
+        self.assertEqual(early.returncode, 0, early.stdout)
+        self.assertIsNone(json.loads(early.stdout)["json"])
+        done = self.bridge_raw("result", "--run", out["run_id"], "--wait")
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertEqual(json.loads(done.stdout)["json"], {"verdict": "ok"})
+
+    def test_a_group_ends_when_no_readable_member_is_live(self):
+        when = json.dumps({"fail-me": {"FAKE_CODEX_EXIT": 3}, "hang-me": {"FAKE_CODEX_HANG": 60}})
+        tf = self.tasks_file("fine", "fail-me", "hang-me", {"prompt": "no schema", "schema": str(self.tmp / "nope.json")})
+        out = self.bridge("batch", "--group", "g", "--tasks-file", tf, env={"FAKE_CODEX_WHEN": when})
+        fine, failing, hanging = (r["run_id"] for r in out["runs"][:3])
+        self.wait_state(fine)
+        self.wait_state(failing)
+        self.wait_state(hanging, ("running",))
+        (self.runs_dir / hanging / "meta.json").write_text("{ truncated")
+        p, took = self.timed("--group", "g", "--wait", "--wait-timeout", 30)
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertLess(took, 20, "neither the slot that never started nor the unreadable member is waited for")
+        header = json.loads(p.stdout.splitlines()[0])
+        self.assertEqual(header["group_state"], "partial")
+        self.assertEqual([m["run_id"] for m in header["members"]], [fine, failing])
+        self.assertEqual(header["failed"], [failing])
+        self.assertEqual(sorted(u["index"] for u in header["unstarted"]), [2, 3])
+
+    def test_a_live_group_is_waited_for(self):
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b", env={"FAKE_CODEX_HANG": 3})
+        p, took = self.timed("--group", "g", "--wait")
+        header = json.loads(p.stdout.splitlines()[0])
+        self.assertEqual((header["group_state"], sorted(header["done"])), ("completed", sorted(r["run_id"] for r in out["runs"])))
+        self.assertGreater(took, 1.5)
+
+    def test_a_run_whose_meta_stops_parsing_mid_wait_is_refused_rather_than_waited_for(self):
+        out, m = self.running("x", hang=60)
+        self.addCleanup(lambda: alive(m["pgid"]) and os.killpg(int(m["pgid"]), signal.SIGKILL))
+        waiter = self.spawn("result", "--run", out["run_id"], "--wait")
+        time.sleep(1.5)
+        (self.runs_dir / out["run_id"] / "meta.json").write_text("{ truncated")
+        stdout, _ = waiter.communicate(timeout=30)
+        self.assertEqual(waiter.returncode, 1, stdout)
+        self.assertIn("will not parse", json.loads(stdout)["error"])
+
+    def test_a_member_whose_meta_stops_parsing_mid_wait_is_no_longer_waited_for(self):
+        out = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
+        rid = out["runs"][0]["run_id"]
+        pgid = self.wait_state(rid, ("running",))["pgid"]
+        self.addCleanup(lambda: alive(pgid) and os.killpg(int(pgid), signal.SIGKILL))
+        waiter = self.spawn("result", "--group", "g", "--wait")
+        follower = self.spawn("status", "--group", "g", "--follow")
+        time.sleep(1.5)
+        (self.runs_dir / rid / "meta.json").write_text("{ truncated")
+        stdout, _ = waiter.communicate(timeout=30)
+        self.assertEqual(waiter.returncode, 0, stdout)
+        self.assertEqual([u["run_id"] for u in json.loads(stdout.splitlines()[0])["unstarted"]], [rid])
+        followed, _ = follower.communicate(timeout=30)
+        self.assertEqual(follower.returncode, 0)
+        self.assertRegex(followed.splitlines()[-1], r"^group\.partial group=g .* unstarted=1",
+                         "the follower closes under the same condition, counting the member it can no longer read")
+
+    def test_a_member_added_while_waiting_is_waited_for_too(self):
+        # A wait started while `batch` is still starting members waits for the ones that start after it.
+        p = self.spawn("batch", "--group", "g", "--task", "first", "--task", "second",
+                       env={"FAKE_CODEX_HANG": 4, "FAKE_CODEX_WHEN": json.dumps({"second": {"FAKE_CODEX_PRE_DELAY": 3}})})
+        manifest = self.runs_dir / ".groups" / "g.json"
+        wait_until(lambda: manifest.exists() and any(m.get("run_id") for m in json.loads(manifest.read_text())["members"]),
+                   timeout=30)
+        res = self.bridge_raw("result", "--group", "g", "--wait", timeout=120)
+        p.communicate(timeout=60)
+        header = json.loads(res.stdout.splitlines()[0])
+        self.assertEqual((header["group_state"], len(header["done"]), header["running"]), ("completed", 2, []), header)
+
+    def test_a_follower_counts_the_slots_it_saw_never_start_even_once_the_name_is_released(self):
+        # `clean` may release the manifest between the last member's end and the follower's next look; what the follower saw at the start still stands.
+        tf = self.tasks_file("runs", {"prompt": "never starts", "schema": str(self.tmp / "nope.json")})
+        out = self.bridge("batch", "--group", "g", "--tasks-file", tf, env={"FAKE_CODEX_HANG": 3})
+        rid = out["runs"][0]["run_id"]
+        self.wait_state(rid, ("running",))
+        follower = self.spawn("status", "--group", "g", "--follow")
+        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.01)
+        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
+        followed, _ = follower.communicate(timeout=30)
+        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1")
+
+    def test_a_member_that_stops_parsing_while_followed_is_counted_once(self):
+        out = self.bridge("batch", "--group", "g", "--task", "quick", "--task", "slow",
+                          env={"FAKE_CODEX_WHEN": json.dumps({"slow": {"FAKE_CODEX_HANG": 4}})})
+        quick, slow = (r["run_id"] for r in out["runs"])
+        follower = self.spawn("status", "--group", "g", "--follow")
+        self.wait_state(quick)
+        time.sleep(1.2)
+        (self.runs_dir / quick / "meta.json").write_text("{ truncated")
+        followed, _ = follower.communicate(timeout=30)
+        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1 unreadable=1")
+
+    def test_a_follower_started_while_a_batch_spawns_follows_the_members_it_adds(self):
+        # The second member gets its run while the first is still live, so the follow sees it start. A slot still unspawned when every run it knows has ended counts as unstarted, as the contract says: it looks the same as a slot a killed batch left.
+        for command in (("status", "--group", "g", "--follow"), ("log", "--group", "g", "--follow")):
+            with self.subTest(command=command[0]):
+                for d in self.runs_dir.glob("*"):
+                    subprocess.run(["rm", "-rf", str(d)])
+                p = self.spawn("batch", "--group", "g", "--task", "first", "--task", "second",
+                               env={"FAKE_CODEX_WHEN": json.dumps({"first": {"FAKE_CODEX_HANG": 6},
+                                                                   "second": {"FAKE_CODEX_PRE_DELAY": 2}})})
+                manifest = self.runs_dir / ".groups" / "g.json"
+                wait_until(lambda: manifest.exists() and any(m.get("run_id") for m in json.loads(manifest.read_text())["members"]),
+                           timeout=30)
+                followed = self.bridge_raw(*command, timeout=120).stdout
+                p.communicate(timeout=60)
+                self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=2 failed=0", followed)
+                if command[0] == "log":
+                    second = json.loads(manifest.read_text())["members"][1]["run_id"]
+                    lines = followed.splitlines()
+                    self.assertIn("[1] msg OK", lines, "the later member's events are shown too")
+                    self.assertIn(f"group.members group=g 1={second}", lines, "and which run [1] is")
+                    self.assertLess(lines.index(f"group.members group=g 1={second}"), lines.index("[1] msg OK"))
+
+    def test_a_follower_does_not_move_to_a_new_group_that_takes_the_name(self):
+        # `clean` can release the name and another batch claim it between two looks; what is followed is the group that was asked for.
+        first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})
+        rid = first["runs"][0]["run_id"]
+        follower = self.spawn("status", "--group", "g", "--follow")
+        time.sleep(1.5)
+        # Paused across the end, the release and the new claim, so all three land between two of its looks.
+        os.kill(follower.pid, signal.SIGSTOP)
+        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.05)
+        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
+        second = self.bridge("batch", "--group", "g", "--task", "b", env={"FAKE_CODEX_HANG": 5})
+        os.kill(follower.pid, signal.SIGCONT)
+        followed, _ = follower.communicate(timeout=60)
+        self.assertNotIn(second["runs"][0]["run_id"], followed)
+        self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=1 failed=0")
+
+    def test_a_wait_collects_the_group_it_waited_for_not_a_new_one_with_its_name(self):
+        first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})
+        rid = first["runs"][0]["run_id"]
+        waiter = self.spawn("result", "--group", "g", "--wait")
+        time.sleep(1.5)
+        os.kill(waiter.pid, signal.SIGSTOP)
+        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.05)
+        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
+        self.bridge("batch", "--group", "g", "--task", "b", env={"FAKE_CODEX_HANG": 5})
+        os.kill(waiter.pid, signal.SIGCONT)
+        stdout, _ = waiter.communicate(timeout=60)
+        self.assertEqual(waiter.returncode, 0, stdout)
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual(([m["run_id"] for m in header["members"]], header["group_state"]), ([rid], "completed"))
+
+    def test_a_wait_timeout_must_be_a_finite_number(self):
+        out = self.bridge("start", "x")
+        for value in ("nan", "inf"):
+            with self.subTest(value=value):
+                self.bridge("result", "--run", out["run_id"], "--wait", "--wait-timeout", value, rc=2)
+
+    def test_a_wait_timeout_without_wait_is_refused(self):
+        out = self.bridge("start", "x")
+        self.assertIn("requires --wait", self.bridge("result", "--run", out["run_id"], "--wait-timeout", 5, rc=2)["error"])
 
 
 if __name__ == "__main__":

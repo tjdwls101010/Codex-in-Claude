@@ -116,7 +116,7 @@ def group_snapshot(rows, unstarted=0):
 
 
 def summary_row(row):
-    """What the default listing shows of a run, from a row built with a 160-character excerpt. `--run`, `--thread` and `--group` return the whole row."""
+    """What the default listing shows of a run, from a row built with a 160-character excerpt. `--run` and `--group` return the whole row."""
     out = {k: row.get(k) for k in ("run_id", "label", "state", "group", "idle_seconds")}
     out["last_agent_message"] = row.get("last_agent_message")
     if row.get("codex_still_running"):

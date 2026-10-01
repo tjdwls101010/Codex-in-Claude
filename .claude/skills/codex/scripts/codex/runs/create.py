@@ -185,7 +185,7 @@ def publish(args, s, *, kind, base, project, runs_dir, thread_ref, group):
 
 
 def cut_worktree(run_dir: Path, meta: dict, source: Path, worktree_base: str):
-    """Stage 3 — the run's own checkout at `<run_dir>/wt`, recorded in meta.json at once so `batch clean` can find it. Returns `(cwd, wt_info)`."""
+    """Stage 3 — the run's own checkout at `<run_dir>/wt`, recorded in meta.json at once so `clean` can find it. Returns `(cwd, wt_info)`."""
     wt = run_dir / "wt"
     ok, err = worktree_add(source, wt, worktree_base)
     if not ok:
@@ -238,7 +238,7 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
             out["concurrent_writers"] = others
             out["concurrent_writers_note"] = (
                 f"{len(others)} other live run(s) can write in {cwd}, and none of you can tell another's change from your own. "
-                "Only a fresh `batch start --worktree` member gets a checkout of its own; a resumed thread keeps its directory.")
+                "Only a fresh `batch --worktree` member gets a checkout of its own; a resumed thread keeps its directory.")
     if group:
         out["group"] = group
     if wt_info:

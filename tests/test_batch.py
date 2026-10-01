@@ -19,7 +19,7 @@ class BatchCase(BridgeCase):
 
     def batch(self, name, *tasks, extra=(), **kw):
         args = [a for t in tasks for a in ("--task", t)]
-        return self.bridge("batch", "start", "--group", name, *extra, *args, **kw)
+        return self.bridge("batch", "--group", name, *extra, *args, **kw)
 
     def assert_cost_nothing(self, before_dirs, before_groups):
         self.assertEqual(self.run_dirs(), before_dirs)
@@ -46,7 +46,7 @@ class Starting(BatchCase):
 
     def test_group_options_are_defaults_a_task_overrides(self):
         tf = self.tasks_file({"prompt": "a", "label": "A"}, {"prompt": "b", "label": "B", "sandbox": "read-only"})
-        out = self.bridge("batch", "start", "--group", "p1", "--sandbox", "danger-full-access",
+        out = self.bridge("batch", "--group", "p1", "--sandbox", "danger-full-access",
                           "--task", "first", "--label", "flag", "--tasks-file", tf)
         self.assertEqual([r["label"] for r in out["runs"]], ["flag", "A", "B"])
         self.assertEqual([r["sandbox"] for r in out["runs"]], ["danger-full-access"] * 2 + ["read-only"])
@@ -72,9 +72,9 @@ class Starting(BatchCase):
         for flag, value in (("--prompt-file", prompt), ("--image", img)):
             with self.subTest(flag=flag):
                 self.assertIn("unrecognized arguments",
-                              self.bridge("batch", "start", "--group", "p1", flag, value, "--task", "x", rc=2)["error"])
+                              self.bridge("batch", "--group", "p1", flag, value, "--task", "x", rc=2)["error"])
         self.assertEqual(self.run_dirs(), [])
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file",
+        out = self.bridge("batch", "--group", "p1", "--tasks-file",
                           self.tasks_file({"prompt": "look", "image": [str(img)]}))
         self.wait_all(out)
         argv = self.last_argv()
@@ -86,7 +86,7 @@ class Starting(BatchCase):
         self.wait_all(out)
 
     def test_a_batch_needs_a_task(self):
-        self.assertIn("at least one", self.bridge("batch", "start", "--group", "p1", rc=2)["error"])
+        self.assertIn("at least one", self.bridge("batch", "--group", "p1", rc=2)["error"])
 
 
 class TasksAreValidatedBeforeAnythingStarts(BatchCase):
@@ -106,7 +106,7 @@ class TasksAreValidatedBeforeAnythingStarts(BatchCase):
         for bad, message in self.CASES:
             with self.subTest(bad=bad):
                 tf = self.tasks_file("fine", bad)
-                refused = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf, rc=2)
+                refused = self.bridge("batch", "--group", "p1", "--tasks-file", tf, rc=2)
                 self.assertIn(message, refused["error"])
                 self.assertRegex(refused["error"], r"(line|task) 2")
         self.assert_cost_nothing([], [])
@@ -114,12 +114,12 @@ class TasksAreValidatedBeforeAnythingStarts(BatchCase):
     def test_a_line_that_is_not_json_is_named(self):
         tf = self.tmp / "bad.jsonl"
         tf.write_text('{"prompt": "ok"}\nnot json\n')
-        self.assertIn("line 2", self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf, rc=2)["error"])
+        self.assertIn("line 2", self.bridge("batch", "--group", "p1", "--tasks-file", tf, rc=2)["error"])
 
     def test_blank_lines_and_comments_are_skipped(self):
         tf = self.tmp / "t.jsonl"
         tf.write_text('# a comment\n\n{"prompt": "only"}\n')
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        out = self.bridge("batch", "--group", "p1", "--tasks-file", tf)
         self.assertEqual(out["spawned"], 1)
         self.wait_all(out)
 
@@ -128,7 +128,7 @@ class OneMemberFailingDoesNotTakeTheOthers(BatchCase):
 
     def test_a_member_that_cannot_spawn_keeps_its_slot(self):
         tf = self.tasks_file("good one", {"prompt": "bad", "schema": "/nonexistent/schema.json"}, "good two")
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        out = self.bridge("batch", "--group", "p1", "--tasks-file", tf)
         self.assertEqual((out["requested"], out["spawned"]), (3, 2))
         self.assertEqual([r["index"] for r in out["runs"]], [0, 1, 2])
         self.assertIn("schema", out["runs"][1]["error"])
@@ -140,7 +140,7 @@ class OneMemberFailingDoesNotTakeTheOthers(BatchCase):
         self.assertEqual([u["index"] for u in status["unstarted"]], [1])
 
     def test_members_that_spawned_before_the_batch_was_killed_stay_reachable(self):
-        p = self.spawn("batch", "start", "--group", "p1", "--task", "one", "--task", "two", "--task", "three",
+        p = self.spawn("batch", "--group", "p1", "--task", "one", "--task", "two", "--task", "three",
                        env={"FAKE_CODEX_PRE_DELAY": 6, "FAKE_CODEX_HANG": 30})
         path = self.runs_dir / ".groups" / "p1.json"
         spawned = wait_until(lambda: path.exists() and [m["run_id"] for m in self.manifest("p1")["members"]
@@ -183,7 +183,7 @@ class ResumeFrom(BatchCase):
         self.wait_all(one)
         self.wait_state(target["run_id"])
         tf = self.tasks_file({"prompt": "x", "kind": "resume", "resume": target["run_id"]}, "y")
-        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--tasks-file", tf)
+        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--tasks-file", tf)
         self.wait_all(two)
         resumed = [r["argv"][2] for r in self.runs_invoked() if r["argv"][1] == "resume"]
         self.assertEqual(resumed, [target["thread_id"], one["runs"][1]["thread_id"]])
@@ -192,7 +192,7 @@ class ResumeFrom(BatchCase):
         one = self.phase_one()
         self.wait_all(one)
         tf = self.tasks_file({"prompt": "x", "resume": one["runs"][0]["run_id"]}, "y")
-        refused = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--tasks-file", tf, rc=2)
+        refused = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--tasks-file", tf, rc=2)
         self.assertIn("kind", refused["error"])
 
     def refused(self, *tasks, extra=()):
@@ -211,7 +211,7 @@ class ResumeFrom(BatchCase):
 
     def test_a_group_where_nothing_started(self):
         tf = self.tasks_file({"prompt": "bad", "schema": "/nonexistent.json"})
-        self.bridge("batch", "start", "--group", "p1", "--tasks-file", tf)
+        self.bridge("batch", "--group", "p1", "--tasks-file", tf)
         self.assertIn("no members that started", self.refused("x")["error"])
 
     def test_a_member_with_no_thread(self):
@@ -272,7 +272,7 @@ class FollowingAGroup(BatchCase):
             {"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "line one\nline two"}}]))
         tf = self.tasks_file({"prompt": "a", "label": "alpha"}, {"prompt": "b"},
                              {"prompt": "c", "label": "x\ngroup.completed group=g done=9 failed=0"})
-        out = self.bridge("batch", "start", "--group", "g", "--tasks-file", tf, env={"FAKE_CODEX_FIXTURE": fixture})
+        out = self.bridge("batch", "--group", "g", "--tasks-file", tf, env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_all(out)
         lines = self.bridge_raw("log", "--group", "g", "--follow").stdout.splitlines()
         ids = [r["run_id"] for r in out["runs"]]
@@ -307,7 +307,7 @@ class AMalformedRegistry(BridgeCase):
     def test_a_groups_entry_that_is_not_a_directory_refuses_the_claim(self):
         self.runs_dir.mkdir()
         (self.runs_dir / ".groups").write_text("not a directory")
-        out = self.bridge("batch", "start", "--group", "g", "--task", "x", rc=1)
+        out = self.bridge("batch", "--group", "g", "--task", "x", rc=1)
         self.assertIn("'g'", out["error"])
         self.assertNotIn("internal error", out["error"])
         self.assertEqual((out["created_at"], out["members"]), (None, 0))

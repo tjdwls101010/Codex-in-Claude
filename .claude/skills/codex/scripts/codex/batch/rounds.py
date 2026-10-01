@@ -1,4 +1,4 @@
-"""A next round: `batch start --resume-from` pairs task i with member i of an earlier group, or refuses the whole batch before anything is claimed."""
+"""A next round: `batch --resume-from` pairs task i with member i of an earlier group, or refuses the whole batch before anything is claimed."""
 
 from __future__ import annotations
 

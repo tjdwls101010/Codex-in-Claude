@@ -65,7 +65,7 @@ class ABrokenLookupNeverBlocksARun(BridgeCase):
 
     def test_a_batch_is_not_blocked_either(self):
         tf = self.tasks_file({"prompt": "a", "model": "fake-big"})
-        out = self.bridge("batch", "start", "--group", "g", "--tasks-file", tf,
+        out = self.bridge("batch", "--group", "g", "--tasks-file", tf,
                           env={"FAKE_CODEX_MODELS": "!garbage"})
         self.assertEqual(out["spawned"], 1)
         self.wait_all(out)

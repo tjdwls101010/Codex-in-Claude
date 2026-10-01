@@ -1,7 +1,7 @@
 """The codex skill's one package. `cli.py` beside it is the command surface; everything a command does lives here.
 
     runs/        feature: start, resume, stop, and the run engine every one of them and every batch member goes through
-    batch/       feature: batch start and batch clean — a batch is N runs, so it builds members with runs/, the one import between features
+    batch/       feature: batch and clean — a batch is N runs, so it builds members with runs/, the one import between features
     observe/     feature: status, log, show, result, for a run and for a group
     doctor.py    feature: doctor and models
     codex_cli/   system: the formats the Codex CLI owns — argv, CODEX_HOME and config.toml, the model catalog, login, the event stream and stderr

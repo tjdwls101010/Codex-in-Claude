@@ -56,7 +56,7 @@ class OutputFrame(BridgeCase):
         self.assertEqual([ln for ln in lines if ln.startswith("# cursor=")], [lines[-1]])
 
     def test_group_follow_prints_state_lines_then_one_terminal_line(self):
-        out = self.bridge("batch", "start", "--group", "g", "--sandbox", "read-only", "--task", "a", "--task", "b")
+        out = self.bridge("batch", "--group", "g", "--sandbox", "read-only", "--task", "a", "--task", "b")
         self.wait_all(out)
         p = self.bridge_raw("status", "--group", "g", "--follow")
         lines = p.stdout.splitlines()
@@ -84,7 +84,7 @@ class ExitCodes(BridgeCase):
 
     def test_a_command_line_that_does_not_parse_is_json_naming_the_help_to_read(self):
         for args, words in ((("start", "--no-such-flag", "x"), ("start",)),
-                            (("batch", "start", "--no-such-flag"), ("batch", "start")),
+                            (("batch", "--no-such-flag"), ("batch",)),
                             (("resume", "--no-such-flag", "r", "x"), ("resume",)),
                             (("no-such-command",), ())):
             with self.subTest(args=args):
@@ -101,8 +101,8 @@ class ExitCodes(BridgeCase):
                  (("start", "   "), ("start",)),
                  (("start", "--schema", self.tmp / "nope.json", "x"), ("start",)),
                  (("resume", "--sandbox", "read-only"), ("resume",)),
-                 (("batch", "start", "--group", "a/b", "--task", "x"), ("batch", "start")),
-                 (("batch", "start", "--group", "g", "--base", "HEAD", "--task", "x"), ("batch", "start"))]
+                 (("batch", "--group", "a/b", "--task", "x"), ("batch",)),
+                 (("batch", "--group", "g", "--base", "HEAD", "--task", "x"), ("batch",))]
         for args, words in cases:
             with self.subTest(args=args):
                 self.assertEqual(self.refused(*args, rc=2)["help"], self.help_for(*words))
@@ -112,8 +112,8 @@ class ExitCodes(BridgeCase):
         bad = self.tmp / "bad.txt"
         bad.write_bytes(b"\xff\xfe not utf-8")
         self.assertEqual(self.refused("start", "--prompt-file", bad, rc=2)["help"], self.help_for("start"))
-        self.assertEqual(self.refused("batch", "start", "--group", "g", "--tasks-file", bad, rc=2)["help"],
-                         self.help_for("batch", "start"))
+        self.assertEqual(self.refused("batch", "--group", "g", "--tasks-file", bad, rc=2)["help"],
+                         self.help_for("batch"))
         # Python decodes stdin by a policy the environment picks (a C locale escapes bad bytes instead of failing), so both are driven.
         for policy in ("utf-8:strict", "utf-8:surrogateescape"):
             p = subprocess.run([sys.executable, str(ENTRY), "start", "-"], cwd=str(self.project),
@@ -130,28 +130,28 @@ class ExitCodes(BridgeCase):
 
 
 class TheNextStep(BridgeCase):
-    """A detached run announces nothing, so every reply that starts work names the follower to run in the background, written out whole the way the pre-approval matches it."""
+    """A detached run announces nothing, so every reply that starts work names the call that waits for it and prints its result, to run in the background, written out whole the way the pre-approval matches it."""
 
     def follow(self, *words):
         return {"command": " ".join(["uv run", f'"{ENTRY}"', *words]), "run_in_background": True}
 
-    def test_start_and_resume_name_the_follower_of_the_run_they_made(self):
+    def test_start_and_resume_name_the_wait_for_the_run_they_made(self):
         out = self.bridge("start", "x")
-        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow"))
+        self.assertEqual(out["next"], self.follow("result", "--run", out["run_id"], "--wait"))
         self.wait_state(out["run_id"])
         again = self.bridge("resume", out["run_id"], "y")
-        self.assertEqual(again["next"], self.follow("log", "--run", again["run_id"], "--follow"))
+        self.assertEqual(again["next"], self.follow("result", "--run", again["run_id"], "--wait"))
         self.wait_state(again["run_id"])
         last = self.bridge("resume", "--last", "z")
-        self.assertEqual(last["next"], self.follow("log", "--run", last["run_id"], "--follow"))
+        self.assertEqual(last["next"], self.follow("result", "--run", last["run_id"], "--wait"))
 
-    def test_a_batch_names_the_follower_of_its_group(self):
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b")
-        self.assertEqual(out["next"], self.follow("status", "--group", "g", "--follow"))
+    def test_a_batch_names_the_wait_for_its_group(self):
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b")
+        self.assertEqual(out["next"], self.follow("result", "--group", "g", "--wait"))
 
     def test_a_batch_that_started_nothing_has_nothing_to_follow(self):
         tf = self.tasks_file({"prompt": "a", "schema": str(self.tmp / "nope.json")})
-        out = self.bridge("batch", "start", "--group", "g", "--tasks-file", tf)
+        out = self.bridge("batch", "--group", "g", "--tasks-file", tf)
         self.assertEqual(out["spawned"], 0)
         self.assertNotIn("next", out)
 
@@ -159,16 +159,48 @@ class TheNextStep(BridgeCase):
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()
         out = self.bridge("start", "--project", self.project, "x", cwd=elsewhere)
-        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow", "--project", str(self.project)))
+        self.assertEqual(out["next"], self.follow("result", "--run", out["run_id"], "--wait", "--project", str(self.project)))
 
-    def test_the_command_it_names_runs_to_the_end(self):
+    def test_the_command_it_names_waits_and_prints_the_result(self):
         if not shutil.which("uv"):
             self.skipTest("uv is not on PATH, and the command it names is a `uv run`")
-        out = self.bridge("start", "x")
+        out = self.bridge("start", "x", env={"FAKE_CODEX_HANG": 2})
         p = subprocess.run(out["next"]["command"], shell=True, cwd=str(self.project), env=self.env,
                            capture_output=True, text=True, timeout=120)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertRegex(p.stdout.splitlines()[-2], rf"^run\.completed run={re.escape(out['run_id'])} exit=0$")
+        header, _, body = p.stdout.partition("\n")
+        self.assertEqual((json.loads(header)["run_id"], json.loads(header)["state"], body), (out["run_id"], "completed", "OK\n"))
+
+    def test_the_command_a_batch_names_waits_for_every_member(self):
+        if not shutil.which("uv"):
+            self.skipTest("uv is not on PATH, and the command it names is a `uv run`")
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b", env={"FAKE_CODEX_HANG": 2})
+        p = subprocess.run(out["next"]["command"], shell=True, cwd=str(self.project), env=self.env,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        header = json.loads(p.stdout.partition("\n")[0])
+        self.assertEqual((header["group_state"], len(header["done"])), ("completed", 2))
+
+
+class BatchAndCleanAreCommandsOfTheirOwn(BridgeCase):
+
+    def help_for(self, *words):
+        return " ".join(["uv run", f'"{ENTRY}"', *words, "--help"])
+
+    def test_a_batch_starts_and_cleans_at_the_top_level(self):
+        out = self.bridge("batch", "--group", "g", "--sandbox", "read-only", "--task", "a")
+        self.assertEqual(out["spawned"], 1)
+        self.wait_all(out)
+        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
+
+    def test_the_old_two_word_forms_name_the_new_command(self):
+        for args, new in ((("batch", "start", "--group", "g", "--task", "x"), "batch"),
+                          (("batch", "clean", "--group", "g"), "clean")):
+            with self.subTest(args=args):
+                out = self.bridge(*args, rc=2)
+                self.assertIn(f"`{new}`", out["error"])
+                self.assertEqual(out["help"], self.help_for(new))
+        self.assertFalse(self.runs_dir.exists(), "an old form claims nothing")
 
 
 class SelectorsAreExclusive(BridgeCase):
@@ -178,12 +210,10 @@ class SelectorsAreExclusive(BridgeCase):
         super().setUp()
         self.run_id = self.bridge("start", "one")["run_id"]
         self.wait_state(self.run_id)
-        self.wait_all(self.bridge("batch", "start", "--group", "g", "--task", "a"))
+        self.wait_all(self.bridge("batch", "--group", "g", "--task", "a"))
 
     def test_each_competing_pair_is_refused(self):
         cases = [("status", "--run", self.run_id, "--group", "g"),
-                 ("status", "--run", self.run_id, "--thread", "t"),
-                 ("status", "--thread", "t", "--group", "g"),
                  ("result", "--run", self.run_id, "--group", "g"),
                  ("stop", "--run", self.run_id, "--group", "g"),
                  ("stop", "--run", self.run_id, "--all"),
@@ -202,7 +232,7 @@ class SelectorsAreExclusive(BridgeCase):
                 self.assertIn("--run", self.bridge(cmd, rc=2)["error"])
 
     def test_status_all_is_a_cap_not_a_selector(self):
-        self.assertEqual(self.bridge("status", "--run", self.run_id, "--all")["runs"][0]["run_id"], self.run_id)
+        self.assertEqual(self.bridge("status", "--run", self.run_id, "--all")["run_id"], self.run_id)
 
 
 class FlagsThatWouldDecideNothing(BridgeCase):
@@ -211,16 +241,14 @@ class FlagsThatWouldDecideNothing(BridgeCase):
     def test_each_is_refused(self):
         out = self.bridge("start", "x")
         self.wait_state(out["run_id"])
-        self.wait_all(self.bridge("batch", "start", "--group", "g", "--task", "x"))
+        self.wait_all(self.bridge("batch", "--group", "g", "--task", "x"))
         cases = [("status", "--follow"),
                  ("status", "--group", "g", "--follow-timeout", "5"),
-                 ("log", "--run", out["run_id"], "--heartbeat", "5"),
                  ("log", "--run", out["run_id"], "--follow-timeout", "5"),
                  ("log", "--run", out["run_id"], "--follow", "--follow-timeout", "0"),
                  ("status", "--group", "g", "--follow", "--follow-timeout", "-1"),
-                 ("log", "--run", out["run_id"], "--follow", "--heartbeat", "0"),
                  ("log", "--group", "g", "--since", "0"),
-                 ("batch", "start", "--group", "h", "--base", "HEAD", "--task", "x")]
+                 ("batch", "--group", "h", "--base", "HEAD", "--task", "x")]
         for args in cases:
             with self.subTest(args=args):
                 self.assertIn("error", self.bridge(*args, rc=2))
@@ -339,8 +367,10 @@ class RemovedSurface(BridgeCase):
 
     def test_each_is_refused_by_the_parser_before_anything_is_claimed(self):
         for args in (("start", "--foreground", "x"), ("resume", "--foreground", "r", "x"),
-                     ("status", "--include-external"),
-                     ("batch", "start", "--group", "g", "--resume-from", "p", "--as-ready", "--task", "x")):
+                     ("status", "--include-external"), ("status", "--thread", "t"),
+                     ("log", "--run", "r", "--follow", "--heartbeat", "5"),
+                     ("status", "--group", "g", "--follow", "--heartbeat", "5"),
+                     ("batch", "--group", "g", "--resume-from", "p", "--as-ready", "--task", "x")):
             with self.subTest(args=args):
                 self.assertIn("unrecognized arguments", self.bridge(*args, rc=2)["error"])
         self.assertFalse(self.runs_dir.exists())
@@ -371,7 +401,11 @@ class TheRegistryGoesWhereItIsTold(BridgeCase):
 
 
 COMMANDS = [(), ("start",), ("resume",), ("status",), ("log",), ("show",), ("stop",), ("result",), ("batch",),
-            ("batch", "start"), ("batch", "clean"), ("models",), ("doctor",)]
+            ("clean",), ("models",), ("doctor",)]
+
+# The codes each command can end with, from where it can refuse: every command can be refused by the parser (2) or fail internally (1), and only `doctor` reports a blocker (3).
+EXITS = {cmd: {"0", "1", "2"} for cmd in ("start", "resume", "batch", "status", "log", "show", "result", "stop", "clean", "models")}
+EXITS["doctor"] = {"0", "1", "2", "3"}
 
 # Provenance does not belong in help: measurements, document ids, discovery stories. This guards against it coming back; it does not pin any sentence.
 PROVENANCE = re.compile(r"\b[Mm]easured\b|\b[RDBFC][0-9]{1,2}\b|\bV-[0-9]+\b|\baudit\b|\bfield report\b")
@@ -414,6 +448,25 @@ class HelpIsTheInterface(BridgeCase):
 
     def test_the_internal_command_is_not_listed(self):
         self.assertNotIn("__supervise", self.bridge_raw("--help").stdout)
+
+    def test_each_command_states_its_contract_before_its_options(self):
+        # `--help` is often read cut short (`| head -25`), so what a command prints and how it can end come first, under a short usage.
+        for (cmd,) in COMMANDS[1:]:
+            with self.subTest(cmd=cmd):
+                lines = self.bridge_raw(cmd, "--help").stdout.splitlines()
+                usage = lines[:next(i for i, ln in enumerate(lines) if not ln.strip())]
+                self.assertLessEqual(len(usage), 2, usage)
+                self.assertTrue(usage[-1].endswith("[options]"), usage)
+                head = lines[:25]
+                self.assertEqual([p for p in ("Prints:", "Exits:") if not any(ln.startswith(p) for ln in head)], [])
+                exits = next(ln for ln in lines if ln.startswith("Exits:"))
+                self.assertEqual(set(re.findall(r"(?:^Exits:|;) ([0-9]) ", exits)), EXITS[cmd], exits)
+
+    def test_the_root_map_fits_a_screen_and_names_every_command(self):
+        lines = self.bridge_raw("--help").stdout.splitlines()
+        self.assertLessEqual(len(lines), 30)
+        listed = [ln.split()[0] for ln in lines if ln.startswith("    ") and ln.strip()]
+        self.assertEqual(sorted(listed), sorted(c for (c,) in COMMANDS[1:]))
 
 
 if __name__ == "__main__":

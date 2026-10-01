@@ -1,4 +1,4 @@
-"""`batch start` and `batch clean`, and the `next` a batch's reply names."""
+"""`batch` and `clean`, and the `next` a batch's reply names."""
 
 from __future__ import annotations
 
@@ -36,10 +36,10 @@ def batch(args):
     elif note:
         out["worktrees"] = {"count": 0, "note": note}
     out.update(runs=results, manifest=str(group_path(runs_dir, args.group)))
-    # The follower of the group, left out when there is nothing to follow.
+    # The call that waits for the group and prints its result, left out when nothing started to wait for.
     if not out["spawned"]:
         return out
-    return with_next(out, "requested", "status", "--group", args.group, "--follow", project=args.project,
+    return with_next(out, "requested", "result", "--group", args.group, "--wait", project=args.project,
                      runs_dir=args.runs_dir)
 
 

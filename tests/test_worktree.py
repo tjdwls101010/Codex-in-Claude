@@ -1,24 +1,37 @@
-"""`batch start --worktree`: which members get a checkout, what the checkout holds, how `batch clean` protects work nobody collected, and how `overlaps` compares paths across checkouts.
+"""`batch --worktree`: which members get a checkout, what the checkout holds, how `clean` protects work nobody collected, and how `overlaps` compares paths across checkouts.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import shlex
+import shutil
 import signal
 import subprocess
 import unicodedata
 import unittest
 from pathlib import Path
 
-from support.harness import BridgeCase, alive, wait_until
+from support.harness import ENTRY, BridgeCase, alive, wait_until
 
 
 class WorktreeCase(BridgeCase):
 
+    def call(self, *words):
+        """This CLI's own call for `words`, written out whole the way the pre-approval matches it."""
+        return " ".join(["uv run", f'"{ENTRY}"', *words])
+
+    def run_returned(self, command, cwd=None):
+        """Run a command a reply handed back, as the caller would: exactly as written, through a shell."""
+        if not shutil.which("uv"):
+            self.skipTest("uv is not on PATH, and the command handed back is a `uv run`")
+        p = subprocess.run(command, shell=True, cwd=str(cwd or self.project), env=self.env, capture_output=True,
+                           text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return json.loads(p.stdout)
+
     def group(self, *extra, n=2, name="p1", **kw):
-        return self.bridge("batch", "start", "--group", name,
+        return self.bridge("batch", "--group", name,
                            *[a for i in range(n) for a in ("--task", f"task {i}")], *extra, **kw)
 
     def finished(self, *extra, **kw):
@@ -74,7 +87,7 @@ class WhoGetsACheckout(WorktreeCase):
         other.mkdir()
         tf = self.tasks_file("w1", "w2", {"prompt": "look", "sandbox": "read-only"},
                              {"prompt": "there", "cwd": str(other)})
-        out = self.bridge("batch", "start", "--group", "p1", "--worktree", "--tasks-file", tf)
+        out = self.bridge("batch", "--group", "p1", "--worktree", "--tasks-file", tf)
         self.wait_all(out)
         self.assertTrue(all(r.get("worktree") for r in out["runs"][:2]))
         self.assertEqual([(r.get("worktree"), r["cwd"]) for r in out["runs"][2:]],
@@ -82,7 +95,7 @@ class WhoGetsACheckout(WorktreeCase):
 
     def test_a_phase_that_continues_threads_keeps_their_directories(self):
         one = self.finished()
-        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--worktree",
+        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--worktree",
                           "--task", "a", "--task", "b")
         self.wait_all(two)
         self.assertEqual([r["cwd"] for r in two["runs"]], [r["worktree"] for r in one["runs"]])
@@ -143,7 +156,7 @@ class WhatACheckoutHolds(WorktreeCase):
 
     def test_a_member_refused_at_spawn_leaves_no_checkout(self):
         tf = self.tasks_file({"prompt": "a", "image": ["/nonexistent/x.png"]}, "b", "c")
-        out = self.bridge("batch", "start", "--group", "p1", "--worktree", "--tasks-file", tf)
+        out = self.bridge("batch", "--group", "p1", "--worktree", "--tasks-file", tf)
         self.wait_all(out)
         self.assertIn("image not found", out["runs"][0]["error"])
         self.assertEqual(len(self.registered_worktrees()), 2)
@@ -153,7 +166,7 @@ class Clean(WorktreeCase):
 
     def test_a_clean_group_is_removed_and_its_name_released(self):
         out = self.finished()
-        res = self.bridge("batch", "clean", "--group", "p1")
+        res = self.bridge("clean", "--group", "p1")
         self.assertEqual((len(res["removed"]), res["kept"], res["name_released"]), (2, [], True))
         for r in out["runs"]:
             self.assertFalse(Path(r["worktree"]).exists())
@@ -164,44 +177,44 @@ class Clean(WorktreeCase):
         out = self.finished()
         dirty = Path(out["runs"][0]["worktree"])
         (dirty / "result.txt").write_text("work\n")
-        res = self.bridge("batch", "clean", "--group", "p1")
+        res = self.bridge("clean", "--group", "p1")
         self.assertEqual([(k["path"], k["dirty"]) for k in res["kept"]], [(str(dirty), True)])
         self.assertFalse(res["name_released"])
         self.assertTrue(dirty.exists())
-        forced = self.bridge("batch", "clean", "--group", "p1", "--force")
+        forced = self.bridge("clean", "--group", "p1", "--force")
         self.assertTrue(forced["name_released"])
         self.assertEqual(forced["forced_past"]["discarded_uncommitted"], [str(dirty)])
         self.assertFalse(dirty.exists())
 
     def test_a_clean_that_overrode_nothing_says_nothing(self):
         self.finished()
-        self.assertNotIn("forced_past", self.bridge("batch", "clean", "--group", "p1", "--force"))
+        self.assertNotIn("forced_past", self.bridge("clean", "--group", "p1", "--force"))
 
     def test_a_live_member_refuses_a_plain_clean(self):
         out = self.group("--worktree", env={"FAKE_CODEX_HANG": 60})
-        res = self.bridge("batch", "clean", "--group", "p1", rc=1)
+        res = self.bridge("clean", "--group", "p1", rc=1)
         self.assertEqual(sorted(m["run_id"] for m in res["running"]), sorted(r["run_id"] for r in out["runs"]))
         self.assertTrue(all(Path(r["worktree"]).exists() for r in out["runs"]))
 
     def test_force_does_not_reach_a_live_member(self):
         out = self.group("--worktree", env={"FAKE_CODEX_HANG": 60})
-        res = self.bridge("batch", "clean", "--group", "p1", "--force", rc=1)
+        res = self.bridge("clean", "--group", "p1", "--force", rc=1)
         self.assertEqual(sorted(m["run_id"] for m in res["running"]), sorted(r["run_id"] for r in out["runs"]))
-        self.assertEqual(res["stop"], ["stop --group p1"])
+        self.assertEqual(res["stop"], [self.call("stop", "--group", "p1")])
         self.assertTrue(all(Path(r["worktree"]).exists() for r in out["runs"]))
-        self.bridge(*res["stop"][0].split())
+        self.run_returned(res["stop"][0])
         self.wait_all(out)
-        self.assertTrue(self.bridge("batch", "clean", "--group", "p1", "--force")["name_released"])
+        self.assertTrue(self.bridge("clean", "--group", "p1", "--force")["name_released"])
 
     def test_force_does_not_reach_a_worktree_another_group_is_working_in(self):
         one = self.finished()
-        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b",
+        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b",
                           env={"FAKE_CODEX_HANG": 60})
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual(res["removed"], [])
         self.assertFalse(res["name_released"])
         self.assertEqual(sorted(o for k in res["kept"] for o in k["occupied_by"]), sorted(r["run_id"] for r in two["runs"]))
-        self.assertEqual({c for k in res["kept"] for c in k["stop"]}, {"stop --group p2"})
+        self.assertEqual({c for k in res["kept"] for c in k["stop"]}, {self.call("stop", "--group", "p2")})
         self.assertTrue(all(Path(r["worktree"]).exists() for r in one["runs"]))
 
     def test_force_does_not_reach_a_worktree_a_lone_run_works_inside(self):
@@ -209,9 +222,10 @@ class Clean(WorktreeCase):
         inside = Path(one["runs"][0]["worktree"]) / "sub"
         inside.mkdir()
         lone, _m = self.running("--cwd", inside, "x")
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
-        self.assertEqual([k["stop"] for k in res["kept"]], [[f"stop --run {lone['run_id']}"]])
+        res = self.bridge("clean", "--group", "p1", "--force")
+        self.assertEqual([k["stop"] for k in res["kept"]], [[self.call("stop", "--run", lone["run_id"])]])
         self.assertTrue(inside.exists())
+        self.assertEqual([s["run_id"] for s in self.run_returned(res["kept"][0]["stop"][0])["stopped"]], [lone["run_id"]])
 
     def test_an_orphan_still_writing_refuses_a_plain_clean(self):
         out = self.group("--worktree", n=1, env={"FAKE_CODEX_HANG": 60})
@@ -221,17 +235,17 @@ class Clean(WorktreeCase):
         os.kill(int(m["supervisor_pid"]), signal.SIGKILL)
         wait_until(lambda: not alive(m["supervisor_pid"]), timeout=10)
         self.assertEqual(self.row(rid)["state"], "orphaned")
-        res = self.bridge("batch", "clean", "--group", "p1", rc=1)
+        res = self.bridge("clean", "--group", "p1", rc=1)
         self.assertEqual([x["run_id"] for x in res["running"]], [rid])
 
     def test_a_run_living_in_a_checkout_keeps_it_when_the_group_graph_has_forgotten(self):
         one = self.finished()
-        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b")
+        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b")
         self.wait_all(two)
-        three = self.bridge("batch", "start", "--group", "p3", "--resume-from", "p2", "--task", "a", "--task", "b",
+        three = self.bridge("batch", "--group", "p3", "--resume-from", "p2", "--task", "a", "--task", "b",
                             env={"FAKE_CODEX_HANG": 60})
-        self.bridge("batch", "clean", "--group", "p2", "--force")
-        res = self.bridge("batch", "clean", "--group", "p1")
+        self.bridge("clean", "--group", "p2", "--force")
+        res = self.bridge("clean", "--group", "p1")
         self.assertEqual(res["removed"], [])
         self.assertFalse(res["name_released"])
         self.assertEqual({o for k in res["kept"] for o in k["occupied_by"]}, {r["run_id"] for r in three["runs"]})
@@ -239,27 +253,27 @@ class Clean(WorktreeCase):
 
     def test_a_group_another_group_resumed_is_protected(self):
         self.finished()
-        self.wait_all(self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1",
+        self.wait_all(self.bridge("batch", "--group", "p2", "--resume-from", "p1",
                                   "--task", "a", "--task", "b"))
-        refused = self.bridge("batch", "clean", "--group", "p1", rc=1)
+        refused = self.bridge("clean", "--group", "p1", rc=1)
         self.assertEqual(refused["derived_groups"], ["p2"])
-        forced = self.bridge("batch", "clean", "--group", "p1", "--force")
+        forced = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual(forced["forced_past"]["derived_groups"], ["p2"])
 
     def test_an_unknown_group_is_named(self):
-        self.assertIn("no such group", self.bridge("batch", "clean", "--group", "nope", rc=1)["error"])
+        self.assertIn("no such group", self.bridge("clean", "--group", "nope", rc=1)["error"])
 
     def test_force_lifts_a_git_lock_left_by_an_interrupted_checkout(self):
         out = self.finished()
         path = out["runs"][0]["worktree"]
         self.git("worktree", "lock", "--reason", "initializing", path)
-        refused = self.bridge("batch", "clean", "--group", "p1")
+        refused = self.bridge("clean", "--group", "p1")
         self.assertIn(path, [k["path"] for k in refused["kept"]])
-        self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual(self.registered_worktrees(), [])
 
     def test_checkouts_cut_by_a_batch_killed_mid_spawn_are_still_cleaned(self):
-        p = self.spawn("batch", "start", "--group", "p1", "--worktree", "--task", "one", "--task", "two",
+        p = self.spawn("batch", "--group", "p1", "--worktree", "--task", "one", "--task", "two",
                        "--task", "three", env={"FAKE_CODEX_PRE_DELAY": 6})
         manifest = self.runs_dir / ".groups" / "p1.json"
 
@@ -280,7 +294,7 @@ class Clean(WorktreeCase):
         self.write_meta(orphans[0], {**self.meta(orphans[0]), "worktree": None, "cwd": str(self.project)})
         status = self.bridge("status", "--group", "p1")
         self.assertEqual(len(status["runs"]) + len(status["unstarted"]), 3)
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual(self.registered_worktrees(), [], res)
 
     def test_force_removes_a_checkout_git_add_never_finished(self):
@@ -289,9 +303,9 @@ class Clean(WorktreeCase):
         # What `git worktree add` leaves when it is killed before writing the checkout's .git file.
         self.git("worktree", "lock", "--reason", "initializing", half)
         (half / ".git").unlink()
-        refused = self.bridge("batch", "clean", "--group", "p1")
+        refused = self.bridge("clean", "--group", "p1")
         self.assertIn(str(half), [k["path"] for k in refused["kept"]])
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertTrue(res["name_released"], res)
         self.assertFalse(half.exists())
         self.assertEqual(self.registered_worktrees(), [])
@@ -304,7 +318,7 @@ class Clean(WorktreeCase):
                 half = Path(out["runs"][0]["worktree"])
                 self.git("worktree", "lock", "--reason", "initializing", half)
                 (half / ".git").write_text(content)
-                res = self.bridge("batch", "clean", "--group", f"p{len(content)}", "--force")
+                res = self.bridge("clean", "--group", f"p{len(content)}", "--force")
                 self.assertTrue(res["name_released"], res)
                 self.assertFalse(half.exists())
         self.assertEqual(self.registered_worktrees(), [])
@@ -318,7 +332,7 @@ class Clean(WorktreeCase):
         half = Path(out["runs"][0]["worktree"])
         self.git("worktree", "lock", "--reason", "initializing", half)
         (half / ".git").write_text("gitdir: ")
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertTrue(res["name_released"], res)
         self.assertFalse(half.exists())
 
@@ -329,7 +343,7 @@ class Clean(WorktreeCase):
         (wt / "tracked.txt").write_text("work nobody collected\n")
         admin = Path((wt / ".git").read_text().strip()[len("gitdir: "):])
         subprocess.run(["rm", "-rf", str(admin)], check=True)
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertIn(str(wt), [k["path"] for k in res["kept"]], res)
         self.assertEqual((wt / "tracked.txt").read_text(), "work nobody collected\n")
 
@@ -355,7 +369,7 @@ class Clean(WorktreeCase):
                 wt = Path(out["runs"][0]["worktree"])
                 (wt / "tracked.txt").write_text("work nobody collected\n")
                 break_it(wt)
-                res = self.bridge("batch", "clean", "--group", f"k{n}", "--force")
+                res = self.bridge("clean", "--group", f"k{n}", "--force")
                 self.assertIn(str(wt), [k["path"] for k in res["kept"]], res)
                 self.assertEqual((wt / "tracked.txt").read_text(), "work nobody collected\n")
 
@@ -369,7 +383,7 @@ class Clean(WorktreeCase):
         other = self.tmp / "other-repo"
         other.mkdir()
         self.git("init", "-q", cwd=other)
-        res = self.bridge("batch", "clean", "--group", "p1", "--force", "--runs-dir", self.runs_dir, cwd=other)
+        res = self.bridge("clean", "--group", "p1", "--force", "--runs-dir", self.runs_dir, cwd=other)
         self.assertTrue(res["name_released"], res)
         self.assertEqual(self.registered_worktrees(), [])
 
@@ -381,7 +395,7 @@ class Clean(WorktreeCase):
         (stranger / "keep.txt").write_text("mine")
         m = self.meta(rid)
         self.write_meta(rid, {**m, "worktree": {**m["worktree"], "path": str(stranger)}})
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual([k["path"] for k in res["kept"]], [str(stranger)])
         self.assertEqual((stranger / "keep.txt").read_text(), "mine")
 
@@ -389,7 +403,7 @@ class Clean(WorktreeCase):
         out = self.finished()
         gone = out["runs"][0]["worktree"]
         subprocess.run(["rm", "-rf", gone], check=True)
-        res = self.bridge("batch", "clean", "--group", "p1")
+        res = self.bridge("clean", "--group", "p1")
         self.assertEqual([r["path"] for r in res["removed"]], [out["runs"][1]["worktree"]])
         self.assertEqual(self.registered_worktrees(), [])
         self.assertTrue(res["name_released"])
@@ -401,7 +415,7 @@ class Clean(WorktreeCase):
         self.bridge("stop", "--run", other["run_id"])
         self.wait_state(other["run_id"])
         (self.runs_dir / victim["run_id"] / "meta.json").write_text("{ truncated")
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual([r["run_id"] for r in res["removed"]], [other["run_id"]])
         self.assertEqual([k["run_id"] for k in res["kept"]], [victim["run_id"]])
         self.assertFalse(res["name_released"])
@@ -411,7 +425,7 @@ class Clean(WorktreeCase):
         out = self.group()
         self.wait_all(out)
         (self.runs_dir / out["runs"][0]["run_id"] / "meta.json").write_text("{ truncated")
-        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertFalse(res["name_released"])
         self.assertIn(out["runs"][0]["run_id"], res["note"])
 
@@ -419,16 +433,16 @@ class Clean(WorktreeCase):
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()
         out = self.group("--worktree", "--project", self.project, cwd=elsewhere, env={"FAKE_CODEX_HANG": 60})
-        res = self.bridge("batch", "clean", "--group", "p1", "--project", self.project, rc=1, cwd=elsewhere)
+        res = self.bridge("clean", "--group", "p1", "--project", self.project, rc=1, cwd=elsewhere)
         self.assertEqual(len(res["stop"]), 1)
-        stopped = self.bridge(*shlex.split(res["stop"][0]), cwd=elsewhere)["stopped"]
+        stopped = self.run_returned(res["stop"][0], cwd=elsewhere)["stopped"]
         self.assertEqual(sorted(s["run_id"] for s in stopped), sorted(r["run_id"] for r in out["runs"]))
 
     def test_a_member_whose_meta_will_not_parse_is_not_presumed_dead(self):
         out = self.finished()
         victim = out["runs"][0]["run_id"]
         (self.runs_dir / victim / "meta.json").write_text("{ truncated")
-        res = self.bridge("batch", "clean", "--group", "p1", rc=1)
+        res = self.bridge("clean", "--group", "p1", rc=1)
         self.assertIn(victim, [r["run_id"] for r in res["running"]])
         self.assertTrue((self.runs_dir / victim / "wt").exists())
 
@@ -459,7 +473,7 @@ class Overlaps(WorktreeCase):
         (other / "x").write_text("x")
         self.git("add", "-A", cwd=other)
         self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i", cwd=other)
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file",
+        out = self.bridge("batch", "--group", "p1", "--tasks-file",
                           self.tasks_file("a", {"prompt": "b", "cwd": str(other)}))
         self.wait_all(out)
         for r, root in zip(out["runs"], (self.project, other)):
@@ -469,7 +483,7 @@ class Overlaps(WorktreeCase):
     def test_nested_roots_in_one_repository_see_one_file(self):
         sub = self.project / "src"
         sub.mkdir()
-        out = self.bridge("batch", "start", "--group", "p1", "--tasks-file",
+        out = self.bridge("batch", "--group", "p1", "--tasks-file",
                           self.tasks_file("a", {"prompt": "b", "cwd": str(sub)}))
         self.wait_all(out)
         for r in out["runs"]:
@@ -486,7 +500,7 @@ class Overlaps(WorktreeCase):
         one = self.finished()
         for r in one["runs"]:
             self.plant(r["run_id"], [Path(r["worktree"]) / "shared.py"])
-        two = self.bridge("batch", "start", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b")
+        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b")
         self.wait_all(two)
         for r in two["runs"]:
             self.plant(r["run_id"], [Path(r["cwd"]) / "shared.py"])

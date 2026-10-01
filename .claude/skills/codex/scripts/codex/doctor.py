@@ -34,7 +34,7 @@ def doctor(args):
     _check_codex(report, blockers, warnings)
     _check_config(report, warnings)
     report["skill_dir"] = str(ENTRY.parent.parent)
-    report["bridge_path"] = str(ENTRY)
+    report["entry"] = str(ENTRY)
     report["plugin_root_env"] = os.environ.get("CLAUDE_PLUGIN_ROOT")
     report["project"] = str(project)
     report["project_is_git_repo"] = git_toplevel(project) is not None
@@ -128,7 +128,7 @@ def _check_registry(report, blockers, warnings, project, runs_dir):
     report["worktrees"] = len(live_wt)
     if live_wt:
         warnings.append(
-            f"{len(live_wt)} batch worktree(s) are still checked out under {runs_dir}, holding their runs' uncommitted results; `batch clean --group <name>` removes a group's once collected")
+            f"{len(live_wt)} batch worktree(s) are still checked out under {runs_dir}, holding their runs' uncommitted results; `clean --group <name>` removes a group's once collected")
 
 
 def _overlapping_writers(runs_dir):

@@ -8,7 +8,7 @@ import signal
 import unittest
 from unittest import mock
 
-from support.harness import BridgeCase, FAKE_CODEX_DIR, engine
+from support.harness import ENTRY, BridgeCase, FAKE_CODEX_DIR, engine
 
 
 class Doctor(BridgeCase):
@@ -22,6 +22,8 @@ class Doctor(BridgeCase):
         self.assertTrue(rep["login_ok"])
         self.assertEqual(rep["effective_defaults"], {"model": None, "effort": None, "service_tier": None})
         self.assertEqual(rep["models_catalog"], 2)
+        self.assertEqual(rep.get("entry"), str(ENTRY.resolve()))
+        self.assertNotIn("bridge_path", rep)
         self.assertFalse((self.project / ".codex-runs").exists(), "a diagnostic does not create what it diagnoses")
 
     def test_a_relative_codex_home_means_the_directory_it_named_when_the_command_ran(self):
@@ -94,7 +96,7 @@ class Doctor(BridgeCase):
         self.assertFalse([w for w in self.bridge("doctor")["warnings"] if "overlap" in w])
 
     def test_only_checkouts_this_skill_cut_are_counted(self):
-        out = self.bridge("batch", "start", "--group", "g", "--worktree", "--task", "a")
+        out = self.bridge("batch", "--group", "g", "--worktree", "--task", "a")
         self.wait_all(out)
         mine = self.tmp / "users-own-worktree"
         self.git("worktree", "add", "--detach", mine, "HEAD")

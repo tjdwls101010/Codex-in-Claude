@@ -130,24 +130,24 @@ class ExitCodes(BridgeCase):
 
 
 class TheNextStep(BridgeCase):
-    """A detached run announces nothing, so every reply that starts work names the follower to run in the background, written out whole the way the pre-approval matches it."""
+    """A detached run announces nothing, so every reply that starts work names the call that waits for it and prints its result, to run in the background, written out whole the way the pre-approval matches it."""
 
     def follow(self, *words):
         return {"command": " ".join(["uv run", f'"{ENTRY}"', *words]), "run_in_background": True}
 
-    def test_start_and_resume_name_the_follower_of_the_run_they_made(self):
+    def test_start_and_resume_name_the_wait_for_the_run_they_made(self):
         out = self.bridge("start", "x")
-        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow"))
+        self.assertEqual(out["next"], self.follow("result", "--run", out["run_id"], "--wait"))
         self.wait_state(out["run_id"])
         again = self.bridge("resume", out["run_id"], "y")
-        self.assertEqual(again["next"], self.follow("log", "--run", again["run_id"], "--follow"))
+        self.assertEqual(again["next"], self.follow("result", "--run", again["run_id"], "--wait"))
         self.wait_state(again["run_id"])
         last = self.bridge("resume", "--last", "z")
-        self.assertEqual(last["next"], self.follow("log", "--run", last["run_id"], "--follow"))
+        self.assertEqual(last["next"], self.follow("result", "--run", last["run_id"], "--wait"))
 
-    def test_a_batch_names_the_follower_of_its_group(self):
+    def test_a_batch_names_the_wait_for_its_group(self):
         out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b")
-        self.assertEqual(out["next"], self.follow("status", "--group", "g", "--follow"))
+        self.assertEqual(out["next"], self.follow("result", "--group", "g", "--wait"))
 
     def test_a_batch_that_started_nothing_has_nothing_to_follow(self):
         tf = self.tasks_file({"prompt": "a", "schema": str(self.tmp / "nope.json")})
@@ -159,16 +159,27 @@ class TheNextStep(BridgeCase):
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()
         out = self.bridge("start", "--project", self.project, "x", cwd=elsewhere)
-        self.assertEqual(out["next"], self.follow("log", "--run", out["run_id"], "--follow", "--project", str(self.project)))
+        self.assertEqual(out["next"], self.follow("result", "--run", out["run_id"], "--wait", "--project", str(self.project)))
 
-    def test_the_command_it_names_runs_to_the_end(self):
+    def test_the_command_it_names_waits_and_prints_the_result(self):
         if not shutil.which("uv"):
             self.skipTest("uv is not on PATH, and the command it names is a `uv run`")
-        out = self.bridge("start", "x")
+        out = self.bridge("start", "x", env={"FAKE_CODEX_HANG": 2})
         p = subprocess.run(out["next"]["command"], shell=True, cwd=str(self.project), env=self.env,
                            capture_output=True, text=True, timeout=120)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertRegex(p.stdout.splitlines()[-2], rf"^run\.completed run={re.escape(out['run_id'])} exit=0$")
+        header, _, body = p.stdout.partition("\n")
+        self.assertEqual((json.loads(header)["run_id"], json.loads(header)["state"], body), (out["run_id"], "completed", "OK\n"))
+
+    def test_the_command_a_batch_names_waits_for_every_member(self):
+        if not shutil.which("uv"):
+            self.skipTest("uv is not on PATH, and the command it names is a `uv run`")
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b", env={"FAKE_CODEX_HANG": 2})
+        p = subprocess.run(out["next"]["command"], shell=True, cwd=str(self.project), env=self.env,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        header = json.loads(p.stdout.partition("\n")[0])
+        self.assertEqual((header["group_state"], len(header["done"])), ("completed", 2))
 
 
 class BatchAndCleanAreCommandsOfTheirOwn(BridgeCase):

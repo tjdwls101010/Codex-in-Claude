@@ -1,4 +1,4 @@
-"""Groups: `<runs_dir>/.groups/<name>.json`, the set of runs one `batch start` created, addressed afterwards as one thing.
+"""Groups: `<runs_dir>/.groups/<name>.json`, the set of runs one `batch` created, addressed afterwards as one thing.
 
 The manifest is a file rather than a query over the registry: claiming it is the atomic claim on the name, it records start order (which `--resume-from` pairs against and which run ids cannot recover — same-second, same-label starts are the normal case), and reading a group does not walk the whole registry on every follower tick.
 """
@@ -60,7 +60,7 @@ def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> di
         return _claim(runs_dir, name, derived_from, requested)
     except FileExistsError:
         existing = group_manifest(runs_dir, name) or {}
-        raise Refusal(f"group {name!r} already exists; `batch clean --group {name}` releases the name once nothing is left",
+        raise Refusal(f"group {name!r} already exists; `clean --group {name}` releases the name once nothing is left",
                       created_at=existing.get("created_at"), members=len(existing.get("members") or [])) from None
 
 
@@ -141,14 +141,14 @@ def group_gaps(runs_dir: Path, name: str):
 
 
 def _unstarted_members(runs_dir: Path, name: str):
-    """Slots that never became runs, including tasks a killed `batch start` never reached, so no group view answers as if fewer were asked for."""
+    """Slots that never became runs, including tasks a killed `batch` never reached, so no group view answers as if fewer were asked for."""
     g = group_manifest(runs_dir, name) or {}
     members = g.get("members", [])
     never = [{"index": m.get("index"), "label": m.get("label"), "kind": m.get("kind"), "error": m.get("error")}
              for m in members if not m.get("run_id")]
     for i in range(len(members), g.get("requested") or 0):
         never.append({"index": i, "label": None, "kind": None,
-                      "error": "batch start recorded no run for this task"})
+                      "error": "batch recorded no run for this task"})
     return never
 
 

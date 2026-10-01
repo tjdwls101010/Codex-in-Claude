@@ -102,7 +102,7 @@ def worktree_report(project, runs_dir, base, count):
            "note": "each writing member has its own checkout at "
                    "<run_dir>/wt. Their changes are not in your tree; "
                    "`result --group` reports which paths more than one wrote. "
-                   "`batch clean --group` removes them once you have collected."}
+                   "`clean --group` removes them once you have collected."}
     try:
         own = runs_dir.relative_to(project).as_posix() + "/"
     except ValueError:

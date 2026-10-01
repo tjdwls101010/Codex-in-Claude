@@ -1,4 +1,4 @@
-"""`batch start` and `batch clean`, and the `next` a batch's reply names."""
+"""`batch` and `clean`, and the `next` a batch's reply names."""
 
 from __future__ import annotations
 

@@ -34,7 +34,7 @@ def load_tasks(args):
             if line and not line.startswith("#"):
                 tasks.append(_task_from_line(n, line, args))
     if not tasks:
-        raise Refusal("batch start needs at least one --task or a --tasks-file", arguments=True)
+        raise Refusal("batch needs at least one --task or a --tasks-file", arguments=True)
     return tasks
 
 

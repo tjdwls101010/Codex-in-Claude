@@ -65,10 +65,10 @@ A group's `group_state` is `running` while any member is live, `completed` when 
 `idle_seconds` is the time since the run's last event."""
 
 
-BATCH_START_EPILOG = f"""\
+BATCH_EPILOG = f"""\
 Returns once every member's spawn has been tried, each after up to {THREAD_ID_WAIT:.0f} s for its thread id. A member that fails to spawn keeps its slot with an `error` and no `run_id`, and the others start anyway. Group options are defaults each task's own fields override.
 Nothing announces the end: run the reply's `next.command` — `status --group <name> --follow` — in the background; it is left out when no member started.
-Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt when it is a fresh start (not a resume), its sandbox can write, it has no cwd of its own, and the project is a git repository with a commit to cut from. A checkout holds only what git tracks at --base, none of your uncommitted or ignored files; the reply's `missing_ignored` names ignored entries the checkouts lack. Results stay in the checkouts: `result --group` reports which paths more than one member wrote, moving the changes into your tree is yours to do, and `batch clean` removes the checkouts.
+Worktrees: with --worktree, a member gets a detached checkout at <run_dir>/wt when it is a fresh start (not a resume), its sandbox can write, it has no cwd of its own, and the project is a git repository with a commit to cut from. A checkout holds only what git tracks at --base, none of your uncommitted or ignored files; the reply's `missing_ignored` names ignored entries the checkouts lack. Results stay in the checkouts: `result --group` reports which paths more than one member wrote, moving the changes into your tree is yours to do, and `clean` removes the checkouts.
 Without --worktree, members work in your tree as they go and none can tell another member's edit from its own; the reply says so when two or more writers share a directory.
 Each member is told the group's name and size; a member with a checkout is also told it is not your tree, which commit it came from, and how many uncommitted files yours has."""
 
@@ -98,7 +98,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
         # Arguments no parser claimed are reported by the root, whose own help says nothing about them; the namespace already names the command they were given to.
         ns, extras = self.parse_known_args(args, namespace)
         if extras:
-            self.refuse(f"unrecognized arguments: {' '.join(extras)}", command_words(ns) if getattr(ns, "cmd", None) else [])
+            self.refuse(f"unrecognized arguments: {' '.join(extras)}", [ns.cmd] if getattr(ns, "cmd", None) else [])
         return ns
 
     def error(self, message):
@@ -162,7 +162,7 @@ def cmd_log(args):
     return log(args)
 
 
-def cmd_batch_start(args):
+def cmd_batch(args):
     if args.base and not args.worktree:
         # Refused before the claim, so a typo does not burn the name.
         raise Refusal("--base requires --worktree", arguments=True, base=args.base)
@@ -188,7 +188,7 @@ def add_follow_options(p, *, closing):
 
 
 def add_run_options(p, *, kind):
-    """Options shared by `start` (kind "start"), `resume` and `batch start` (kind "batch")."""
+    """Options shared by `start` (kind "start"), `resume` and `batch` (kind "batch")."""
     p.add_argument("--label", help="short name shown in the run id and in `status`" + ("; a resume keeps the thread's label unless this replaces it" if kind == "resume" else ""))
     if kind == "resume":
         p.add_argument("--sandbox", choices=SANDBOX_MODES, help="change the thread's sandbox for this and later turns (default: the sandbox the thread recorded). Required for a thread this registry never recorded. A change is reported as `sandbox_changed_from`")
@@ -219,7 +219,7 @@ def build_parser():
         description="Drive the OpenAI Codex CLI as a managed subagent: detached runs with a handle, resumable threads, filtered event logs, and batches addressed as one group. Each command's --help has its flags, defaults and refusals.")
     ap.subparser_map = {}
     # An explicit metavar: argparse's default one lists the suppressed internal command.
-    sub = ap.add_subparsers(dest="cmd", required=True, metavar="{start,resume,status,log,show,stop,result,batch,models,doctor}")
+    sub = ap.add_subparsers(dest="cmd", required=True, metavar="{start,resume,status,log,show,stop,result,batch,clean,models,doctor}")
 
     def command(name, help, **kw):
         return sub.add_parser(name, help=help, formatter_class=OneLinePerParagraph, **kw)
@@ -288,10 +288,8 @@ def build_parser():
     selector.add_argument("--group", help=f"every member: a header with `group_state`, usage totals, `overlaps` (the paths more than one member wrote), `unstarted` (members that never started) and each member's state and sizes, then each member's message after its separator line, capped at {GROUP_MESSAGE_CAP} B and cut at a character boundary, the full size stated")
     p.set_defaults(func=result)
 
-    p = command("batch", "several runs under one group name",
-                description="A group is the set of runs one `batch start` created, addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `batch clean`, and by `batch start --resume-from`. It outlives the session that started it, and its name stays reserved until `batch clean` releases it.")
-    bsub = p.add_subparsers(dest="batch_cmd", required=True)
-    b = bsub.add_parser("start", help="start N runs as one group", formatter_class=OneLinePerParagraph, epilog=BATCH_START_EPILOG)
+    b = command("batch", "start N runs as one group", epilog=BATCH_EPILOG,
+                description="A group is the set of runs one `batch` created, addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `clean`, and by `batch --resume-from`. It outlives the session that started it, and its name stays reserved until `clean` releases it.")
     add_common(b)
     add_run_options(b, kind="batch")
     b.add_argument("--group", required=True, type=group_name, help="name for the group: 1–64 characters, ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit; refused while the name is reserved")
@@ -301,17 +299,17 @@ def build_parser():
     b.add_argument("--worktree", action="store_true", help="give each eligible member its own git checkout (default: members share your tree); eligibility is below")
     b.add_argument("--base", help="commit the worktrees are cut from (default: HEAD). Requires --worktree")
     b.add_argument("--resume-from", metavar="GROUP", help="continue an earlier group: task i resumes member i in start order, in the directory that member's thread already uses, its worktree included, unless --cwd or the task's `cwd` names another. A task naming its own `resume` target keeps it. Refused, before anything is claimed, unless every started member has recorded a thread and finished (see --force) and the task count matches")
-    b.set_defaults(func=cmd_batch_start)
+    b.set_defaults(func=cmd_batch)
 
-    b = bsub.add_parser("clean", help="remove a group's worktrees and release its name", formatter_class=OneLinePerParagraph,
-                        description="Remove a group's worktrees and release its name once nothing is left.")
+    b = command("clean", "remove a group's worktrees and release its name",
+                description="Remove a group's worktrees and release its name once nothing is left.")
     add_common(b)
     b.add_argument("--group", required=True, help="the group to clean. Refused while a member is live, and a worktree another live run works in is kept; both name the `stop` that ends them. A worktree whose run's meta.json will not parse is kept too. Refused, unless --force, when the manifest or a member's meta.json will not parse or another group was resumed from this one; a worktree with uncommitted changes is kept unless --force")
     b.add_argument("--force", action="store_true", help="lift the refusals --group says --force lifts, all at once, and discard uncommitted changes in the worktrees — that work has no other copy. `forced_past` in the reply says what was overridden")
     b.set_defaults(func=clean)
 
     p = command("models", "the models and efforts this Codex install offers",
-                description="This install's model catalog from `codex debug models`: each model's slug, efforts and default effort. `start`, `resume` and `batch start` check a --model or --effort against it before spawning. When it cannot be read the check is skipped and this command exits 1.")
+                description="This install's model catalog from `codex debug models`: each model's slug, efforts and default effort. `start`, `resume` and `batch` check a --model or --effort against it before spawning. When it cannot be read the check is skipped and this command exits 1.")
     p.set_defaults(func=models)
 
     p = command("doctor", "check the environment a run would start in",
@@ -345,14 +343,14 @@ def render(out):
         sys.stdout.flush()
 
 
-def command_words(args):
-    """The words that name the command a namespace came from: `status`, or `batch start`."""
-    return [args.cmd, args.batch_cmd] if args.cmd == "batch" else [args.cmd]
-
-
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
     pin_codex_home()
+    if raw[:1] == ["batch"] and raw[1:2] in (["start"], ["clean"]):
+        # A caller holding an older SKILL.md is told the new name once, rather than meeting a parse error.
+        new = "batch" if raw[1] == "start" else "clean"
+        reply({"error": f"`batch {raw[1]}` is now `{new}`, with the same options", "help": invocation(new, "--help")},
+              code=EXIT_ARGUMENTS)
     ap = build_parser()
     # `resume [REF] PROMPT` has two optional positionals; plain parsing would drop the prompt when an option sits between them, and parse_intermixed_args cannot run on a parser that owns subparsers.
     if raw[:1] == ["resume"]:
@@ -370,7 +368,7 @@ def main(argv=None):
         except Refusal as e:
             out = {"error": e.error, **e.fields}
             if e.arguments:
-                out["help"] = invocation(*command_words(args), "--help")
+                out["help"] = invocation(args.cmd, "--help")
             reply(out, code=EXIT_ARGUMENTS if e.arguments else EXIT_REFUSED)
         except KeyboardInterrupt:
             reply({"error": "interrupted"}, code=EXIT_REFUSED)

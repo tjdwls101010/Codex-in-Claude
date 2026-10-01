@@ -260,7 +260,7 @@ class LegacyWaitingRun(BridgeCase):
         self.assertIn(LEGACY_WAITER, self.bridge("status", "--all")["running"])
         refused = self.bridge("resume", LEGACY_PREDECESSOR, "another turn", rc=1)
         self.assertIn(LEGACY_WAITER, str(refused["live_runs"]))
-        self.assertIn(LEGACY_WAITER, str(self.bridge("batch", "clean", "--group", "p2", rc=1)["running"]))
+        self.assertIn(LEGACY_WAITER, str(self.bridge("clean", "--group", "p2", rc=1)["running"]))
         p = self.bridge_raw("status", "--group", "p2", "--follow", "--follow-timeout", 1.5)
         self.assertRegex(p.stdout.splitlines()[-1], r"^group\.still-running group=p2 ")
         p = self.bridge_raw("log", "--run", LEGACY_WAITER, "--follow", "--follow-timeout", 1.5)

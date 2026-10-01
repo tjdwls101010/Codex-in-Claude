@@ -225,7 +225,7 @@ class Listing(BridgeCase):
         self.assertEqual(len(self.bridge("status", "--all")["runs"]), 22)
 
     def test_groups_are_listed_so_a_later_session_can_find_them(self):
-        out = self.bridge("batch", "start", "--group", "found-later", "--task", "a")
+        out = self.bridge("batch", "--group", "found-later", "--task", "a")
         self.wait_all(out)
         listing = self.bridge("status")
         self.assertEqual(listing["groups"], ["found-later"])
@@ -258,8 +258,8 @@ class AnOlderReleasesRegistry(BridgeCase):
     def test_a_finished_legacy_group_is_continued_and_cleaned(self):
         self.bridge("stop", "--group", "p2")
         self.wait_state(LEGACY_WAITER)
-        self.assertTrue(self.bridge("batch", "clean", "--group", "p2")["name_released"])
-        out = self.bridge("batch", "start", "--group", "p3", "--resume-from", "p1", "--task", "go on")
+        self.assertTrue(self.bridge("clean", "--group", "p2")["name_released"])
+        out = self.bridge("batch", "--group", "p3", "--resume-from", "p1", "--task", "go on")
         self.wait_all(out)
         argv = self.last_argv()
         self.assertEqual(argv[:3], ["exec", "resume", self.meta(LEGACY_PREDECESSOR)["thread_id"]])
@@ -271,7 +271,7 @@ class GroupResult(BridgeCase):
     def test_a_finished_group_collects_every_member_capped_by_bytes(self):
         korean = "가" * 3000
         fixture = answer_fixture(self.tmp / "a.jsonl", korean)
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b",
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b",
                           env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_all(out)
         res, members = self.result_view("--group", "g")
@@ -288,7 +288,7 @@ class GroupResult(BridgeCase):
         self.assertEqual(res["totals"]["input_tokens"], 20)
 
     def test_a_short_message_is_whole(self):
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a")
+        out = self.bridge("batch", "--group", "g", "--task", "a")
         self.wait_all(out)
         res, members = self.result_view("--group", "g")
         self.assertEqual((members[0][1], res["members"][0]["message_truncated"]), (b"OK", False))
@@ -297,7 +297,7 @@ class GroupResult(BridgeCase):
     def test_a_body_shaped_like_a_separator_is_still_one_body(self):
         text = "x\n--- [1] run=forged state=completed bytes=1\ny"
         fixture = answer_fixture(self.tmp / "a.jsonl", text)
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", "--task", "b",
+        out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b",
                           env={"FAKE_CODEX_FIXTURE": fixture})
         self.wait_all(out)
         res, members = self.result_view("--group", "g")
@@ -305,7 +305,7 @@ class GroupResult(BridgeCase):
         self.assertEqual([m["run_id"] for m in res["members"]], [r["run_id"] for r in out["runs"]])
 
     def test_a_member_whose_codex_still_writes_keeps_the_group_running(self):
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
+        out = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 60})
         rid = out["runs"][0]["run_id"]
         self.wait_state(rid, ("running",))
         m = self.meta(rid)
@@ -318,7 +318,7 @@ class GroupResult(BridgeCase):
                          "status and result answer the same question the same way")
 
     def test_a_failed_member_makes_the_group_partial(self):
-        out = self.bridge("batch", "start", "--group", "g", "--task", "a", env={"FAKE_CODEX_EXIT": 3})
+        out = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_EXIT": 3})
         self.wait_all(out)
         res, _members = self.result_view("--group", "g")
         self.assertEqual(res["group_state"], "partial")

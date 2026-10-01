@@ -94,7 +94,7 @@ class Doctor(BridgeCase):
         self.assertFalse([w for w in self.bridge("doctor")["warnings"] if "overlap" in w])
 
     def test_only_checkouts_this_skill_cut_are_counted(self):
-        out = self.bridge("batch", "start", "--group", "g", "--worktree", "--task", "a")
+        out = self.bridge("batch", "--group", "g", "--worktree", "--task", "a")
         self.wait_all(out)
         mine = self.tmp / "users-own-worktree"
         self.git("worktree", "add", "--detach", mine, "HEAD")

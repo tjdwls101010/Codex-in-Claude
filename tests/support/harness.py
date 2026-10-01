@@ -269,7 +269,7 @@ class BridgeCase(unittest.TestCase):
         return found
 
     def wait_all(self, out):
-        """Wait for every spawned member of a `batch start` reply."""
+        """Wait for every spawned member of a `batch` reply."""
         for r in out["runs"]:
             if r.get("run_id"):
                 self.wait_state(r["run_id"])

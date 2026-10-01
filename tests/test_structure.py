@@ -131,21 +131,36 @@ def call_name(call):
 
 
 def imported_unit(call):
-    """The unit an `engine("codex.U")`-like call returns, `cli` for `engine("cli")`, else None."""
-    if not (isinstance(call, ast.Call) and call_name(call) in IMPORTERS and call.args
-            and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)):
+    """The unit an `engine("codex.U")`-like call returns — its name given positionally or by keyword — `cli` for `engine("cli")`, else None."""
+    if not (isinstance(call, ast.Call) and call_name(call) in IMPORTERS):
         return None
-    name = call.args[0].value
+    given = call.args[:1] + [k.value for k in call.keywords]
+    if not (given and isinstance(given[0], ast.Constant) and isinstance(given[0].value, str)):
+        return None
+    name = given[0].value
     if name == "cli":
         return "cli"
     parts = name.split(".")
     return parts[1] if len(parts) == 2 and parts[0] == "codex" else None
 
 
+def named_past(value, here, allowed, inner, *, importer):
+    """Why a string a file hands to a call or lists names something past a unit's interface, or None: the dotted path of a module file inside a unit, or `codex.U.<name>` with the name outside U's interface. Handed to an importer (`engine`, `import_module`, `patch`), `cli.<name>` must also be in `CLI_SEAM`; elsewhere a string such as `cli.py` is only a file name."""
+    if any(value == m or value.startswith(m + ".") for m in inner):
+        return f"names module {value}, inside a unit"
+    parts = value.split(".")
+    if (len(parts) >= 3 and parts[0] == "codex" and parts[1] in allowed and parts[1] != here
+            and not allowed[parts[1]](parts[2])):
+        return f"names {value}, past the interface of codex.{parts[1]}"
+    if importer and len(parts) >= 2 and parts[0] == "cli" and here != "cli" and not allowed["cli"](parts[1]):
+        return f"names {value}, past the interface of cli"
+    return None
+
+
 def interface_violations(files, package=PACKAGE, here_of=None):
     """Every place a file reaches past another unit's interface.
 
-    An import of `codex.U.<deeper>`; a `from codex.U import n` with `n` outside U's interface; an attribute of a name bound to U (`x = engine("codex.U")`, `import codex.U as x`, `from codex import U`) outside it; and, for module names a test hands to an importer or a subprocess, the dotted path of a module file inside a unit. `cli` counts as a unit whose interface, for tests, is `CLI_SEAM`. Returns `(violations, bindings seen)`."""
+    An import of `codex.U.<deeper>`; a `from codex.U import n` with `n` outside U's interface; an attribute of a name bound to U (`x = engine("codex.U")`, `x: T = engine("codex.U")`, `import codex.U as x`, `from codex import U`) outside it; and a string handed to a call, positionally or by keyword, or listed (a subprocess argv), that `named_past` rejects. `cli` counts as a unit whose interface, for tests, is `CLI_SEAM`. Returns `(violations, bindings seen)`."""
     allowed = interfaces(package)
     allowed["cli"] = CLI_SEAM.__contains__
     inner = inner_modules(package)
@@ -187,15 +202,21 @@ def interface_violations(files, package=PACKAGE, here_of=None):
                 for t in node.targets:
                     if dotted(t):
                         bound[dotted(t)] = imported_unit(node.value)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None and imported_unit(node.value) and dotted(node.target):
+                bound[dotted(node.target)] = imported_unit(node.value)
             elif isinstance(node, ast.Call):
-                values = [a for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
-                for a in values:
-                    if any(a.value == m or a.value.startswith(m + ".") for m in inner):
-                        wrong.append(f"{path.name}:{node.lineno} names module {a.value}, inside a unit")
+                importer = call_name(node) in IMPORTERS
+                for a in list(node.args) + [k.value for k in node.keywords]:
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                        why = named_past(a.value, here, allowed, inner, importer=importer)
+                        if why:
+                            wrong.append(f"{path.name}:{node.lineno} {why}")
             if isinstance(node, (ast.List, ast.Tuple)):
                 for e in node.elts:
-                    if isinstance(e, ast.Constant) and isinstance(e.value, str) and any(e.value == m or e.value.startswith(m + ".") for m in inner):
-                        wrong.append(f"{path.name}:{node.lineno} names module {e.value}, inside a unit")
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str):
+                        why = named_past(e.value, here, allowed, inner, importer=False)
+                        if why:
+                            wrong.append(f"{path.name}:{node.lineno} {why}")
         seen += len(bound)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute):
@@ -423,6 +444,11 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
     def test_a_test_naming_a_module_inside_a_unit_is_caught(self):
         for test in ('from support.harness import engine\nengine("codex.store.inner")\n',
                      'from unittest import mock\nmock.patch("codex.store.inner.put")\n',
+                     'from unittest import mock\nmock.patch(target="codex.store.inner.put")\n',
+                     'import importlib\nimportlib.import_module(name="codex.store.inner")\n',
+                     'from unittest import mock\nmock.patch("codex.feature._private")\n',
+                     'from unittest import mock\nmock.patch("codex.store.hidden")\n',
+                     'from unittest import mock\nmock.patch("cli.main")\n',
                      'import subprocess, sys\nsubprocess.run([sys.executable, "-c", "x", "codex.store.inner"])\n'):
             with self.subTest(test=test):
                 root, package = self.tree(test=test)
@@ -430,6 +456,8 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
 
     def test_an_attribute_past_the_interface_is_caught(self):
         for test in ('from support.harness import engine\nstore = engine("codex.store")\nstore.hidden()\n',
+                     'from support.harness import engine\nstore: object = engine("codex.store")\nstore.hidden()\n',
+                     'import importlib\nstore = importlib.import_module(name="codex.store")\nstore.hidden()\n',
                      'from support.harness import engine\nengine("codex.store").inner\n',
                      'from codex import store\nstore.inner.hidden()\n',
                      'import codex.store as s\ns.hidden()\n',

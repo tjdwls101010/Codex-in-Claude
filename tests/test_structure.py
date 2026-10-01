@@ -34,8 +34,12 @@ FEATURE_EDGES = {("batch", "runs")}
 # What tests may take from `cli.py`: the parser is the command surface the model sees, so it is the seam for "every argument explains itself". Nothing in the package imports `cli` at all.
 CLI_SEAM = {"build_parser"}
 
-# Calls whose string argument names a module to import or patch.
-IMPORTERS = {"engine", "import_module", "patch", "__import__"}
+# Calls whose string argument names a module to import, and the keyword each takes it by.
+IMPORTERS = {"engine", "import_module", "__import__"}
+MODULE_KEYWORDS = {"name", "module"}
+
+# `mock.patch` resolves its target by attribute from the package down, so `codex.observe.show` there is the interface function that shadows the module file of the same name.
+PATCHERS = {"patch"}
 
 
 def unit_of(path, package=PACKAGE):
@@ -134,7 +138,7 @@ def imported_unit(call):
     """The unit an `engine("codex.U")`-like call returns — its name given positionally or by keyword — `cli` for `engine("cli")`, else None."""
     if not (isinstance(call, ast.Call) and call_name(call) in IMPORTERS):
         return None
-    given = call.args[:1] + [k.value for k in call.keywords]
+    given = call.args[:1] + [k.value for k in call.keywords if k.arg in MODULE_KEYWORDS]
     if not (given and isinstance(given[0], ast.Constant) and isinstance(given[0].value, str)):
         return None
     name = given[0].value
@@ -144,19 +148,22 @@ def imported_unit(call):
     return parts[1] if len(parts) == 2 and parts[0] == "codex" else None
 
 
-def named_past(value, here, allowed, inner, *, importer):
-    """Why a string a file hands to a call or lists names something past a unit's interface, or None: the dotted path of a module file inside a unit, or `codex.U.<name>` with the name outside U's interface. Handed to an importer (`engine`, `import_module`, `patch`), `cli.<name>` must also be in `CLI_SEAM`; elsewhere a string such as `cli.py` is only a file name."""
-    if any(value == m or value.startswith(m + ".") for m in inner):
-        return f"names module {value}, inside a unit"
+def named_past(value, here, allowed, inner, *, how=None):
+    """Why a string a file hands to a call or lists names something past a unit's interface, or None.
+
+    `how` is how the string will be resolved. `"attribute"` (a patch target): name by name from the package, so `codex.U.<name>` needs the name in U's interface, whatever module file shares it. Otherwise as a module path (an importer, a subprocess argv, any other call): the dotted path of a module file inside a unit is past the interface, and so is `codex.U.<name>` outside it. `cli.<name>` must be in `CLI_SEAM` only where the string is resolved — elsewhere a string such as `cli.py` is a file name."""
     parts = value.split(".")
-    if (len(parts) >= 3 and parts[0] == "codex" and parts[1] in allowed and parts[1] != here
-            and not allowed[parts[1]](parts[2])):
-        return f"names {value}, past the interface of codex.{parts[1]}"
-    if importer and len(parts) >= 2 and parts[0] == "cli" and here != "cli" and not allowed["cli"](parts[1]):
+    if len(parts) >= 3 and parts[0] == "codex" and parts[1] in allowed and parts[1] != here:
+        if how != "attribute" and any(value == m or value.startswith(m + ".") for m in inner):
+            return f"names module {value}, inside a unit"
+        if not allowed[parts[1]](parts[2]):
+            return f"names {value}, past the interface of codex.{parts[1]}"
+    if how and len(parts) >= 2 and parts[0] == "cli" and here != "cli" and not allowed["cli"](parts[1]):
         return f"names {value}, past the interface of cli"
     return None
 
 
+# 성진: the interface check reads syntax, so a name computed at run time (`getattr(m, name)`, a target string built by concatenation) passes it; extend it if such access ever appears in the package or tests.
 def interface_violations(files, package=PACKAGE, here_of=None):
     """Every place a file reaches past another unit's interface.
 
@@ -205,16 +212,16 @@ def interface_violations(files, package=PACKAGE, here_of=None):
             elif isinstance(node, ast.AnnAssign) and node.value is not None and imported_unit(node.value) and dotted(node.target):
                 bound[dotted(node.target)] = imported_unit(node.value)
             elif isinstance(node, ast.Call):
-                importer = call_name(node) in IMPORTERS
+                how = "attribute" if call_name(node) in PATCHERS else ("module" if call_name(node) in IMPORTERS else None)
                 for a in list(node.args) + [k.value for k in node.keywords]:
                     if isinstance(a, ast.Constant) and isinstance(a.value, str):
-                        why = named_past(a.value, here, allowed, inner, importer=importer)
+                        why = named_past(a.value, here, allowed, inner, how=how)
                         if why:
                             wrong.append(f"{path.name}:{node.lineno} {why}")
             if isinstance(node, (ast.List, ast.Tuple)):
                 for e in node.elts:
                     if isinstance(e, ast.Constant) and isinstance(e.value, str):
-                        why = named_past(e.value, here, allowed, inner, importer=False)
+                        why = named_past(e.value, here, allowed, inner)
                         if why:
                             wrong.append(f"{path.name}:{node.lineno} {why}")
         seen += len(bound)
@@ -406,7 +413,8 @@ class Structure(unittest.TestCase):
 class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
     """Each interface check run against a small tree that keeps the rules, then against the same tree with one rule broken: a check that stays quiet on the broken one would pass the real tree for nothing."""
 
-    STORE_INIT = '__all__ = ["put"]\nfrom codex.store.inner import put\n'
+    # `put` is both an interface function and a module file, as `codex.observe.show` is: the package attribute is the function.
+    STORE_INIT = '__all__ = ["put"]\nfrom codex.store.put import put\n'
 
     def tree(self, *, store_init=STORE_INIT, feature="from codex.store import put\n", test="x = 1\n"):
         root = Path(tempfile.mkdtemp(prefix="codex-structure-"))
@@ -415,7 +423,8 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
         (package / "store").mkdir(parents=True)
         (package / "__init__.py").write_text("")
         (package / "store" / "__init__.py").write_text(store_init)
-        (package / "store" / "inner.py").write_text("def put():\n    pass\n\n\ndef hidden():\n    pass\n")
+        (package / "store" / "put.py").write_text("def put():\n    pass\n")
+        (package / "store" / "inner.py").write_text("def hidden():\n    pass\n")
         (package / "feature.py").write_text(feature)
         (root / "scripts" / "cli.py").write_text("from codex.feature import go\n")
         (root / "tests").mkdir()
@@ -430,13 +439,14 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
         return interface_violations(test_files(root / "tests"), package)
 
     def test_a_tree_that_keeps_the_rules_passes(self):
-        root, package = self.tree(test='from support.harness import engine\nstore = engine("codex.store")\nstore.put()\n')
+        root, package = self.tree(test='from support.harness import engine\nfrom unittest import mock\nstore = engine("codex.store")\nstore.put()\n'
+                                       'mock.patch("codex.store.put")\nmock.patch(target="codex.store.put")\n')
         self.assertEqual(self.in_skill(package), [])
         self.assertEqual(self.in_tests(root, package), ([], 1))
         self.assertEqual(all_violations(package), [])
 
     def test_an_import_past_the_interface_is_caught(self):
-        for feature in ("from codex.store.inner import put\n", "import codex.store.inner\n", "from codex.store import hidden\n"):
+        for feature in ("from codex.store.inner import hidden\n", "import codex.store.inner\n", "from codex.store import hidden\n"):
             with self.subTest(feature=feature):
                 _root, package = self.tree(feature=feature)
                 self.assertTrue(self.in_skill(package))
@@ -446,6 +456,7 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
                      'from unittest import mock\nmock.patch("codex.store.inner.put")\n',
                      'from unittest import mock\nmock.patch(target="codex.store.inner.put")\n',
                      'import importlib\nimportlib.import_module(name="codex.store.inner")\n',
+                     'from support.harness import engine\nengine("codex.store.put")\n',
                      'from unittest import mock\nmock.patch("codex.feature._private")\n',
                      'from unittest import mock\nmock.patch("codex.store.hidden")\n',
                      'from unittest import mock\nmock.patch("cli.main")\n',
@@ -458,6 +469,7 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
         for test in ('from support.harness import engine\nstore = engine("codex.store")\nstore.hidden()\n',
                      'from support.harness import engine\nstore: object = engine("codex.store")\nstore.hidden()\n',
                      'import importlib\nstore = importlib.import_module(name="codex.store")\nstore.hidden()\n',
+                     'import importlib\nstore = importlib.import_module(package=None, name="codex.store")\nstore.hidden()\n',
                      'from support.harness import engine\nengine("codex.store").inner\n',
                      'from codex import store\nstore.inner.hidden()\n',
                      'import codex.store as s\ns.hidden()\n',
@@ -467,8 +479,8 @@ class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
                 self.assertTrue(self.in_tests(root, package)[0])
 
     def test_an_interface_that_is_missing_undefined_or_a_module_is_caught(self):
-        for init in ('from codex.store.inner import put\n',
-                     '__all__ = ["put", "gone"]\nfrom codex.store.inner import put\n',
+        for init in ('from codex.store.put import put\n',
+                     '__all__ = ["put", "gone"]\nfrom codex.store.put import put\n',
                      '__all__ = ["inner"]\nfrom codex.store import inner\n'):
             with self.subTest(init=init):
                 _root, package = self.tree(store_init=init)

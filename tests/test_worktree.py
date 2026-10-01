@@ -296,6 +296,69 @@ class Clean(WorktreeCase):
         self.assertFalse(half.exists())
         self.assertEqual(self.registered_worktrees(), [])
 
+    def test_force_removes_a_checkout_whose_git_file_add_left_half_written(self):
+        # Killed while `git worktree add` wrote the checkout's .git file: present, but not a `gitdir:` line naming a directory.
+        for content in ("", "gitdir: ", "gitdir: /nowhere/at/all\n", f"gitdir: {self.project}/.git/worktrees"):
+            with self.subTest(content=content):
+                out = self.finished(name=f"p{len(content)}")
+                half = Path(out["runs"][0]["worktree"])
+                self.git("worktree", "lock", "--reason", "initializing", half)
+                (half / ".git").write_text(content)
+                res = self.bridge("batch", "clean", "--group", f"p{len(content)}", "--force")
+                self.assertTrue(res["name_released"], res)
+                self.assertFalse(half.exists())
+        self.assertEqual(self.registered_worktrees(), [])
+
+    def test_force_removes_a_half_written_checkout_under_a_symlinked_registry(self):
+        # git records the checkout's physical path; the registry's own path goes through the link.
+        real = self.tmp / "real-registry"
+        real.mkdir()
+        self.runs_dir.symlink_to(real, target_is_directory=True)
+        out = self.finished()
+        half = Path(out["runs"][0]["worktree"])
+        self.git("worktree", "lock", "--reason", "initializing", half)
+        (half / ".git").write_text("gitdir: ")
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertTrue(res["name_released"], res)
+        self.assertFalse(half.exists())
+
+    def test_force_keeps_a_finished_checkout_git_no_longer_records(self):
+        # A checkout whose record git pruned looks like one git's own cleanup was removing when it was killed; the first holds finished work, so neither is deleted by hand.
+        out = self.finished()
+        wt = Path(out["runs"][0]["worktree"])
+        (wt / "tracked.txt").write_text("work nobody collected\n")
+        admin = Path((wt / ".git").read_text().strip()[len("gitdir: "):])
+        subprocess.run(["rm", "-rf", str(admin)], check=True)
+        res = self.bridge("batch", "clean", "--group", "p1", "--force")
+        self.assertIn(str(wt), [k["path"] for k in res["kept"]], res)
+        self.assertEqual((wt / "tracked.txt").read_text(), "work nobody collected\n")
+
+    def test_force_never_deletes_by_hand_a_finished_checkout_git_will_not_remove(self):
+        # Only git decides what a finished checkout loses: whatever makes git refuse it, its work is not deleted around git.
+        def unreadable(wt):
+            os.chmod(wt / ".git", 0o000)
+            self.addCleanup(os.chmod, wt / ".git", 0o600)
+
+        def relative(wt):
+            line = (wt / ".git").read_text().strip()
+            (wt / ".git").write_text("gitdir: " + os.path.relpath(line[len("gitdir: "):], wt) + "\n")
+            os.chmod(wt, 0o500)
+            self.addCleanup(os.chmod, wt, 0o700)
+
+        def unwritable(wt):
+            os.chmod(wt, 0o500)
+            self.addCleanup(os.chmod, wt, 0o700)
+
+        for n, break_it in enumerate((unreadable, relative, unwritable)):
+            with self.subTest(case=break_it.__name__):
+                out = self.finished(name=f"k{n}")
+                wt = Path(out["runs"][0]["worktree"])
+                (wt / "tracked.txt").write_text("work nobody collected\n")
+                break_it(wt)
+                res = self.bridge("batch", "clean", "--group", f"k{n}", "--force")
+                self.assertIn(str(wt), [k["path"] for k in res["kept"]], res)
+                self.assertEqual((wt / "tracked.txt").read_text(), "work nobody collected\n")
+
     def test_a_half_built_checkout_is_cleaned_in_its_own_repository_from_anywhere(self):
         out = self.finished(n=1)
         rid, half = out["runs"][0]["run_id"], Path(out["runs"][0]["worktree"])

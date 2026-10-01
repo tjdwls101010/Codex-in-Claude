@@ -4,11 +4,11 @@
     batch/       feature: batch start and batch clean — a batch is N runs, so it builds members with runs/, the one import between features
     observe/     feature: status, log, show, result, for a run and for a group
     doctor.py    feature: doctor and models
-    codex_cli/   system: the formats the Codex CLI owns — argv, CODEX_HOME and config.toml, the model catalog, the event stream
+    codex_cli/   system: the formats the Codex CLI owns — argv, CODEX_HOME and config.toml, the model catalog, login, the event stream and stderr
     git/         system: repository questions and worktrees, asked of the git CLI
     registry/    store: <project>/.codex-runs — run records, group manifests, locks
     errors.py    shared: Refusal, the one way a command says no
-    util.py      shared: time, text, paths, process liveness, the entrypoint's path
+    util.py      shared: time, text, paths, process liveness, the entrypoint's path and how this CLI is called again
 
-Imports run from features to systems and stores to shared helpers, never back; tests/test_structure.py holds the tree to that.
+Each unit is used through its interface alone — a subpackage's `__all__`, a module's names without a leading underscore — by cli.py, by other units and by tests, so what is behind it can change without touching them. Imports run from features to systems and stores to shared helpers, never back; tests/test_structure.py holds the tree to both.
 """

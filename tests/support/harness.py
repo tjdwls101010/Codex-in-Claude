@@ -30,7 +30,7 @@ SCRIPTS = ENTRY.parent
 
 
 def engine(module):
-    """Import an engine module (`"codex.runs.settings"`, `"codex.codex_cli.argv"`, …) from the scripts under test, for the pure functions and the races that are tested below the CLI."""
+    """Import a unit's interface (`"codex.runs"`, `"codex.registry"`, …) from the scripts under test, for the pure functions and the races that are tested below the CLI. Only interfaces: tests/test_structure.py refuses a module inside a unit."""
     if str(SCRIPTS) not in sys.path:
         sys.path.insert(0, str(SCRIPTS))
     return importlib.import_module(module)

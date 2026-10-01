@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import sys
 from pathlib import Path
 
@@ -35,6 +34,7 @@ from codex.observe.status import LISTING_ROWS
 from codex.registry.groups import valid_name
 from codex.runs import commands as run_commands
 from codex.runs.supervisor import DEFAULT_GRACE, THREAD_ID_WAIT, supervise
+from codex.util import invocation
 
 EXIT_REFUSED, EXIT_ARGUMENTS, EXIT_BLOCKED = 1, 2, 3
 
@@ -98,14 +98,6 @@ class OneLinePerParagraph(argparse.HelpFormatter):
         for sub in super()._iter_indented_subactions(action):
             if sub.help is not argparse.SUPPRESS:
                 yield sub
-
-
-def invocation(*words):
-    """This CLI called again the way SKILL.md calls it: `uv run "<this file, as the caller named it>" <words>`. The path is not resolved, so a symlinked install keeps the path its pre-approval matches."""
-    path = os.path.abspath(sys.argv[0])
-    # Double quotes are what the pre-approval pattern has; a path they cannot hold safely gets shell quoting instead.
-    quoted = shlex.quote(path) if any(c in path for c in '"$`\\') else f'"{path}"'
-    return " ".join(["uv run", quoted, *(shlex.quote(str(w)) for w in words)])
 
 
 class JsonArgumentParser(argparse.ArgumentParser):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 
 from codex.errors import Refusal
@@ -11,17 +10,18 @@ from codex.registry import (
     derived_groups, find_run, group_manifest, group_path, group_unreadable, is_live, iter_runs, list_groups, live_runs,
     member_run_ids, meta_unreadable, owned_run_ids, release_group, still_writing,
 )
-from codex.util import is_within
+from codex.util import invocation, is_within
 
 
 def stop_commands(runs, runs_dir, explicit_registry=False):
-    """The `stop` calls that end these runs: the group's when the run is one of its recorded members, else the run's own. A registry the caller named is named in the command too."""
-    where = f" --runs-dir {shlex.quote(str(runs_dir))}" if explicit_registry else ""
+    """The `stop` calls that end these runs, each written out whole the way `next` is, so it runs as handed back: the group's when the run is one of its recorded members, else the run's own. A registry the caller named is named in the command too."""
+    where = ["--runs-dir", str(runs_dir)] if explicit_registry else []
     out = []
     for m in runs:
         g = m.get("group")
-        cmd = (f"stop --group {g}" if g and m["run_id"] in (member_run_ids(runs_dir, g) or [])
-               else f"stop --run {m['run_id']}") + where
+        target = (["--group", g] if g and m["run_id"] in (member_run_ids(runs_dir, g) or [])
+                  else ["--run", m["run_id"]])
+        cmd = invocation("stop", *target, *where)
         if cmd not in out:
             out.append(cmd)
     return out

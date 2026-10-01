@@ -5,17 +5,30 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
+import shutil
 import signal
 import subprocess
 import unicodedata
 import unittest
 from pathlib import Path
 
-from support.harness import BridgeCase, alive, wait_until
+from support.harness import ENTRY, BridgeCase, alive, wait_until
 
 
 class WorktreeCase(BridgeCase):
+
+    def call(self, *words):
+        """This CLI's own call for `words`, written out whole the way the pre-approval matches it."""
+        return " ".join(["uv run", f'"{ENTRY}"', *words])
+
+    def run_returned(self, command, cwd=None):
+        """Run a command a reply handed back, as the caller would: exactly as written, through a shell."""
+        if not shutil.which("uv"):
+            self.skipTest("uv is not on PATH, and the command handed back is a `uv run`")
+        p = subprocess.run(command, shell=True, cwd=str(cwd or self.project), env=self.env, capture_output=True,
+                           text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return json.loads(p.stdout)
 
     def group(self, *extra, n=2, name="p1", **kw):
         return self.bridge("batch", "--group", name,
@@ -187,9 +200,9 @@ class Clean(WorktreeCase):
         out = self.group("--worktree", env={"FAKE_CODEX_HANG": 60})
         res = self.bridge("clean", "--group", "p1", "--force", rc=1)
         self.assertEqual(sorted(m["run_id"] for m in res["running"]), sorted(r["run_id"] for r in out["runs"]))
-        self.assertEqual(res["stop"], ["stop --group p1"])
+        self.assertEqual(res["stop"], [self.call("stop", "--group", "p1")])
         self.assertTrue(all(Path(r["worktree"]).exists() for r in out["runs"]))
-        self.bridge(*res["stop"][0].split())
+        self.run_returned(res["stop"][0])
         self.wait_all(out)
         self.assertTrue(self.bridge("clean", "--group", "p1", "--force")["name_released"])
 
@@ -201,7 +214,7 @@ class Clean(WorktreeCase):
         self.assertEqual(res["removed"], [])
         self.assertFalse(res["name_released"])
         self.assertEqual(sorted(o for k in res["kept"] for o in k["occupied_by"]), sorted(r["run_id"] for r in two["runs"]))
-        self.assertEqual({c for k in res["kept"] for c in k["stop"]}, {"stop --group p2"})
+        self.assertEqual({c for k in res["kept"] for c in k["stop"]}, {self.call("stop", "--group", "p2")})
         self.assertTrue(all(Path(r["worktree"]).exists() for r in one["runs"]))
 
     def test_force_does_not_reach_a_worktree_a_lone_run_works_inside(self):
@@ -210,8 +223,9 @@ class Clean(WorktreeCase):
         inside.mkdir()
         lone, _m = self.running("--cwd", inside, "x")
         res = self.bridge("clean", "--group", "p1", "--force")
-        self.assertEqual([k["stop"] for k in res["kept"]], [[f"stop --run {lone['run_id']}"]])
+        self.assertEqual([k["stop"] for k in res["kept"]], [[self.call("stop", "--run", lone["run_id"])]])
         self.assertTrue(inside.exists())
+        self.assertEqual([s["run_id"] for s in self.run_returned(res["kept"][0]["stop"][0])["stopped"]], [lone["run_id"]])
 
     def test_an_orphan_still_writing_refuses_a_plain_clean(self):
         out = self.group("--worktree", n=1, env={"FAKE_CODEX_HANG": 60})
@@ -421,7 +435,7 @@ class Clean(WorktreeCase):
         out = self.group("--worktree", "--project", self.project, cwd=elsewhere, env={"FAKE_CODEX_HANG": 60})
         res = self.bridge("clean", "--group", "p1", "--project", self.project, rc=1, cwd=elsewhere)
         self.assertEqual(len(res["stop"]), 1)
-        stopped = self.bridge(*shlex.split(res["stop"][0]), cwd=elsewhere)["stopped"]
+        stopped = self.run_returned(res["stop"][0], cwd=elsewhere)["stopped"]
         self.assertEqual(sorted(s["run_id"] for s in stopped), sorted(r["run_id"] for r in out["runs"]))
 
     def test_a_member_whose_meta_will_not_parse_is_not_presumed_dead(self):

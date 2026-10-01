@@ -174,10 +174,10 @@
     "semantic_hash": ""
   },
   "tests/test_worktree.py": {
-    "mtime": 1790410596.4763765,
-    "seen": 1790410607.834252,
-    "ast_hash": "f4041cddc685bff38a469f71193e4249",
-    "semantic_hash": "f4041cddc685bff38a469f71193e4249"
+    "mtime": 1790871709.1274364,
+    "seen": 1790871710.4693608,
+    "ast_hash": "b05f4f03e8e265ff29002c1122b7b4d3",
+    "semantic_hash": ""
   },
   "tests/support/legacy_registry/20260803-204347-reviewer-4efc/last-message.txt": {
     "mtime": 1790331852.8414097,
@@ -324,10 +324,10 @@
     "semantic_hash": "295e62fd0924418629fa16591f1468bf"
   },
   ".claude/skills/codex/scripts/codex/git/worktree.py": {
-    "mtime": 1790407027.6199162,
-    "seen": 1790407058.674381,
-    "ast_hash": "919d083b1dc3a2046bc7c64775974a51",
-    "semantic_hash": "919d083b1dc3a2046bc7c64775974a51"
+    "mtime": 1790871709.1268032,
+    "seen": 1790871710.469339,
+    "ast_hash": "fdfee7c34af28fd2525f34267ac4d68b",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/__init__.py": {
     "mtime": 1790870621.9990609,

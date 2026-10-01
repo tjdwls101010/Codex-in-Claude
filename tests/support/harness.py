@@ -102,11 +102,14 @@ class BridgeCase(unittest.TestCase):
                     m = json.loads((d / "meta.json").read_text())
                 except Exception:
                     continue
+                pgid = m.get("pgid")
                 for key in ("supervisor_pid", "codex_pid"):
                     pid = m.get(key)
-                    if pid and int(pid) != os.getpid():
+                    # Only a process still in the run's own group: once the run has ended, its pid can be any later process's — another suite's, or the developer's.
+                    if pid and pgid and int(pid) != os.getpid():
                         try:
-                            os.kill(int(pid), signal.SIGKILL)
+                            if os.getpgid(int(pid)) == int(pgid):
+                                os.kill(int(pid), signal.SIGKILL)
                         except OSError:
                             pass
         shutil.rmtree(self.tmp, ignore_errors=True)

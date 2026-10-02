@@ -18,7 +18,7 @@ Waiting and collecting are one call, and every command's `--help` states what it
 - **`next` is `result --run <id> --wait` — BREAKING** (`result --group <name> --wait` after `batch`, left out when no member started). It was the follower `log --run <id> --follow` (`status --group <name> --follow`). Run in the background, its output file is the result. **Migration:** run `next.command` and read its output; `log --follow` and `status --group --follow` remain for watching a run as it goes.
 - **`batch start` is `batch`, and `batch clean` is `clean` — BREAKING.** Options and behaviour are unchanged. The old two-word forms are refused with exit 2, an `error` naming the new command and its `--help`, and nothing claimed. **Migration:** drop `start`; replace `batch clean` with `clean`.
 - **`status --run` prints the run's row itself — BREAKING.** It was wrapped as `runs[0]` beside `running`, `done`, `failed`, `threads` and `groups`. `status --group` and the default listing are unchanged. **Migration:** read the fields at the top level.
-- **A `--schema` result is one JSON document indented by two spaces — BREAKING** (keys unchanged); 0.9.0 printed it on one line, and sessions re-printed it through `python3` to read its findings. While the run is live it is the header fields, `note` and `"json": null` with exit 0, instead of a refusal from parsing the message so far.
+- **A `--schema` result is one JSON document indented by two spaces — BREAKING** (keys unchanged); 0.9.0 printed it on one line, and sessions re-printed it through `python3` to read its findings. While the run is live it is the header fields, `note` and `"json": null` with exit 0, instead of a refusal from parsing the message so far. **Migration:** parse the whole of stdout as one document, not its first line, and treat `json` as the answer only once the run has ended — `--wait` gives that.
 - **`clean`'s `stop` and `kept[].stop` are whole calls — BREAKING**, written like `next` and runnable as handed back (`uv run "<cli.py>" stop --group <name>`), where they were `stop --group <name>` fragments.
 - **`doctor`'s `bridge_path` is `entry` — BREAKING** (same value).
 - `--wait-timeout` and `--follow-timeout` refuse NaN and infinity (exit 2), which disabled the bound.
@@ -27,7 +27,7 @@ Waiting and collecting are one call, and every command's `--help` states what it
 
 ### Removed
 
-- **`--heartbeat` (`status`, `log`) and `status --thread` with the `threads` map — BREAKING.** Neither was used in six weeks of sessions. Both are refused with exit 2.
+- **`--heartbeat` (`status`, `log`) and `status --thread` with the `threads` map — BREAKING.** Neither was used in six weeks of sessions. Both are refused with exit 2. **Migration:** drop `--heartbeat`; the follower's closing line, and `result --wait`, report the end. Nothing lists a thread's turns any more: `status --run <thread_id>` gives the newest, and the others are found by run id through `status --all` and `status --run <run_id>`.
 
 ### Fixed
 

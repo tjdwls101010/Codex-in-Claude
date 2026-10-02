@@ -1,6 +1,6 @@
 """S5: the real Codex CLI, end to end. Opt-in because it spends tokens: `CODEX_BRIDGE_REAL=1 python3 tests/smoke_real_codex.py`.
 
-A thread is started, followed, collected and resumed with no `--sandbox`, and the rollout Codex itself writes is the judge of what each turn ran under: `codex exec resume` has no sandbox flag, so only the bridge's re-assertion keeps the second turn on the first turn's sandbox.
+A thread is started, waited for with the `next` each reply names, and resumed with no `--sandbox`, and the rollout Codex itself writes is the judge of what each turn ran under: `codex exec resume` has no sandbox flag, so only the bridge's re-assertion keeps the second turn on the first turn's sandbox.
 """
 
 from __future__ import annotations
@@ -45,9 +45,10 @@ class RealCodex(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return p.stdout
 
-    def result(self, run_id):
-        """`result`'s JSON header line and the message after it."""
-        header, _, body = self.cli("result", "--run", run_id).partition("\n")
+    def waited(self, reply):
+        """What the reply's `next` prints once the run has ended — `result --run <id> --wait`, bounded here — as its JSON header line and the message after it."""
+        self.assertIn(f" result --run {reply['run_id']} --wait", reply["next"]["command"])
+        header, _, body = self.cli("result", "--run", reply["run_id"], "--wait", "--wait-timeout", "500").partition("\n")
         return json.loads(header), body
 
     def turn_sandboxes(self, thread_id):
@@ -61,16 +62,14 @@ class RealCodex(unittest.TestCase):
             with self.subTest(sandbox=sandbox):
                 started = json.loads(self.cli("start", "--sandbox", sandbox, "--label", "smoke", "Reply with exactly the word: first"))
                 run_id = started["run_id"]
-                self.cli("log", "--run", run_id, "--follow", "--follow-timeout", "500")
-                first, answer = self.result(run_id)
+                first, answer = self.waited(started)
                 self.assertEqual(first["state"], "completed", first)
                 self.assertIn("first", answer.lower())
                 # `start` may return before Codex reports the thread id; the finished run has it.
                 thread_id = first["thread_id"]
 
                 resumed = json.loads(self.cli("resume", run_id, "Reply with exactly the word: second"))
-                self.cli("log", "--run", resumed["run_id"], "--follow", "--follow-timeout", "500")
-                second, answer = self.result(resumed["run_id"])
+                second, answer = self.waited(resumed)
                 self.assertEqual(second["state"], "completed", second)
                 self.assertIn("second", answer.lower())
 

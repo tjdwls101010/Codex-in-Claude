@@ -30,7 +30,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 ## 2. Features
 
-- **Detached runs** — `start` returns a `run_id`/`thread_id` immediately instead of blocking, with `next`: the follower to run in a background call, which tells Claude when the run ends.
+- **Detached runs** — `start` returns a `run_id`/`thread_id` immediately instead of blocking, with `next`: `result --wait`, to run in a background call, which waits for the run and prints its result when it ends — the notification Claude gets points at the answer.
 - **Sandbox stability across turns** — every `resume` re-asserts the sandbox, model, and reasoning effort its thread was created with.
 - **Your Codex defaults survive isolation** — `--ignore-user-config` drops `config.toml` whole, so an isolated run would lose the model, reasoning effort and Fast mode you configured and take the server's defaults instead. Three keys are read back out of the file and re-injected; an explicit flag still wins, and a resumed thread re-asserts what it recorded rather than what the file says now. `sandbox_mode` is deliberately not one of them.
 - **A filtered live event log** — four verbosity levels (`compact` by default, `normal`, `full`, `raw`); the default reports each command's output by size, and `show` fetches the one you need.
@@ -38,7 +38,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 - **Resume a thread started elsewhere** — one begun in the Codex TUI continues by its id, with `--sandbox` stating what it may do.
 - **Schema-shaped results** — pass `--schema` and Codex shapes its final message to it; `result` hands back the parsed JSON instead of a message you have to eyeball.
 - **A deadline you choose** — `--timeout` works in the background and records a state of its own, so "it ran out of the time I gave it" never reads as "Codex failed". The thread stays resumable across it.
-- **Run several as one group** — `batch start` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Members share your tree by default, the way a fan-out of Claude's own subagents does; `--worktree` gives each writing member its own git checkout when they would edit the same files. Continue every member's thread in a next round with `--resume-from`, once the whole group has finished.
+- **Run several as one group** — `batch` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Members share your tree by default, the way a fan-out of Claude's own subagents does; `--worktree` gives each writing member its own git checkout when they would edit the same files. Continue every member's thread in a next round with `--resume-from`, once the whole group has finished.
 - **Built-in diagnostics** — `doctor` checks your PATH, Codex auth, config, and the run registry in a single call.
 
 ## 3. Quick Start
@@ -89,7 +89,7 @@ The skill pre-approves its own command, but Claude Code applies that only when y
 }
 ```
 
-The skill rule is separate, and without it a headless session cannot load the skill at all: `Skill(codex)` for a symlinked skill, `Skill(codex:codex)` for the plugin. A plugin install's `skill_dir` contains the plugin's version (`…/plugins/cache/codex-in-claude/codex/0.9.0/…`); replace that segment with `*` so the rule survives an update.
+The skill rule is separate, and without it a headless session cannot load the skill at all: `Skill(codex)` for a symlinked skill, `Skill(codex:codex)` for the plugin. A plugin install's `skill_dir` contains the plugin's version (`…/plugins/cache/codex-in-claude/codex/0.10.0/…`); replace that segment with `*` so the rule survives an update.
 
 **Upgrading from 0.8.0?** The entrypoint is now `scripts/cli.py`, run with `uv run`, so a rule naming `python3 …/scripts/cli_codex.py` (or 0.7.0's `codex_bridge.py`) no longer matches anything — replace it with the one above.
 
@@ -109,30 +109,30 @@ From there, a typical loop looks like this (`$CODEX` below is shorthand for the 
 
 ```bash
 $CODEX start --label refactor "Refactor the auth module to use the new session store"
-# → {"run_id": "...", "thread_id": "...", "state": "running", "next": {"command": "uv run \"<skill dir>/scripts/cli.py\" log --run <run_id> --follow", "run_in_background": true}, ...}
+# → {"run_id": "...", "thread_id": "...", "state": "running", "next": {"command": "uv run \"<skill dir>/scripts/cli.py\" result --run <run_id> --wait", "run_in_background": true}, ...}
+
+$CODEX result --run <run_id> --wait
+# → prints nothing until the run ends, then a one-line JSON header (state, usage, files changed, message_bytes) and the final message as text
 
 $CODEX log --run <run_id> --follow
-# → the run's events as they happen; exits when the run ends
-
-$CODEX result --run <run_id>
-# → a one-line JSON header (state, usage, files changed, message_bytes), then the final message as text
+# → the run's events as they happen, when you want to watch it work
 ```
 
-`$CODEX --help` lists the commands and the exit codes, and `$CODEX <command> --help` has every flag, default and refusal. A command line that has to change exits `2` with the `--help` to read in `help`.
+`$CODEX --help` maps the commands and the exit codes they share, and `$CODEX <command> --help` says, before its options, what the command prints and which exit codes it can end with, then every flag, default and refusal. A command line that has to change exits `2` with the `--help` to read in `help`.
 
 ## 4. Usage
 
 | Command | What it does |
 |---|---|
-| `start` | New thread. Background by default; returns `{run_id, thread_id}` immediately, with the follower to run as `next` |
+| `start` | New thread. Background by default; returns `{run_id, thread_id}` immediately, with `next`: the `result --wait` to run in the background |
 | `resume` | Add a turn to an existing thread; every recorded setting is re-asserted |
-| `status` | Whether a run is live, how far along, and what it last said; a summary row per run by default |
+| `status` | Whether a run is live, how far along, and what it last said; a summary row per run by default, the run's own row with `--run` |
 | `log` | Filtered events, followed live with `--follow` or read incrementally with `--since <cursor>` |
 | `show` | One item's full output, fetched on request |
 | `stop` | Interrupt by process group — never by matching a process name |
-| `result` | A JSON header with state and usage, then the final message as text; one JSON document with the parsed answer when `--schema` was used |
-| `batch start` | N runs as one named group, sharing your tree unless `--worktree` gives each writing member a checkout |
-| `batch clean` | Remove a finished group's worktrees, once you've collected them |
+| `result` | A JSON header with state and usage, then the final message as text; one indented JSON document with the parsed answer when `--schema` was used. `--wait` waits for the end first |
+| `batch` | N runs as one named group, sharing your tree unless `--worktree` gives each writing member a checkout |
+| `clean` | Remove a finished group's worktrees, once you've collected them |
 | `models` | The models and reasoning efforts this Codex install offers |
 | `doctor` | PATH, version, `CODEX_HOME`, auth, config defaults, registry health, worktrees |
 
@@ -158,19 +158,18 @@ $CODEX resume <run_id> "Stop rewriting tests — just fix the failing assertion"
 To hand three independent pieces of work to three Codex runs at once and collect them as one thing:
 
 ```bash
-$CODEX batch start --group audit --task "audit the parser" --task "audit the lexer" --task "audit the cache"
-$CODEX status --group audit --follow      # ends on a terminal line, never in silence
-$CODEX result --group audit               # each message, plus which paths more than one wrote
-$CODEX batch clean --group audit          # removes any worktrees and releases the group name
+$CODEX batch --group audit --task "audit the parser" --task "audit the lexer" --task "audit the cache"
+$CODEX result --group audit --wait        # once no member is live: each message, plus which paths more than one wrote
+$CODEX clean --group audit                # removes any worktrees and releases the group name
 ```
 
 Members work in your tree, the way a fan-out of your own subagents does: their changes are there as they make them, with nothing to collect. Add `--worktree` when they would edit the same files, and each writing member gets its own checkout instead.
 
 ## 5. Project Status
 
-Codex in Claude is at **v0.9.0** — an early, actively developed release, verified against `codex-cli 0.156.1` and Claude Code `2.1.283`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
+Codex in Claude is at **v0.10.0** — an early, actively developed release, verified against `codex-cli 0.159.0` and Claude Code `2.1.287`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
 
-**Upgrading from v0.8.0?** The entrypoint and how it is run, the exit codes, and the shapes of `result` and the default `status` changed; see the [changelog](CHANGELOG.md#090--2026-09-26).
+**Upgrading from v0.9.0?** `batch start` and `batch clean` are now `batch` and `clean`, `next` is `result --wait`, `status --run` prints the row itself, and `--heartbeat` and `status --thread` are gone; see the [changelog](CHANGELOG.md#0100--2026-10-02).
 
 A few things are deliberately out of scope for now, not overlooked: `codex cloud`, `codex mcp-server`/`app-server` integration, and true mid-turn steering.
 

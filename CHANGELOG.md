@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-10-02
+
+Waiting and collecting are one call, and every command's `--help` states what it prints and how it can end before its options. `batch start` and `batch clean` become top-level commands, and inside the skill every unit is used through a small interface.
+
+**Read Changed and Removed before upgrading.** `next`, the two batch commands, `status --run` and the `--schema` answer change shape, and two flags are gone.
+
+### Added
+
+- **`result --wait` and `--wait-timeout SEC`.** `--wait` prints nothing until the run has ended — terminal and its Codex no longer writing — or, for `--group`, until no readable member is live, then prints what `result` would. A slot that never started and a member whose `meta.json` will not parse, or stops parsing, are not waited for; the header's `unstarted` names them. `--wait-timeout` prints the result as it stands when it passes, marked partial. A printed result exits 0 whatever the run's state. With 0.9.0, 56 of 109 follows were run in the foreground and chained to a `result` call to do this.
+- **Each command's `--help` states its contract first**: a one-line usage ending in `[options]`, then what it answers, `Prints:` (the reply's shape, text views included) and `Exits:` (the codes it can end with and when, derived from every place the code refuses), within the first five lines. The root `--help` is the command map and the meaning of the exit codes they share, in one screen.
+
+### Changed
+
+- **`next` is `result --run <id> --wait` — BREAKING** (`result --group <name> --wait` after `batch`, left out when no member started). It was the follower `log --run <id> --follow` (`status --group <name> --follow`). Run in the background, its output file is the result. **Migration:** run `next.command` and read its output; `log --follow` and `status --group --follow` remain for watching a run as it goes.
+- **`batch start` is `batch`, and `batch clean` is `clean` — BREAKING.** Options and behaviour are unchanged. The old two-word forms are refused with exit 2, an `error` naming the new command and its `--help`, and nothing claimed. **Migration:** drop `start`; replace `batch clean` with `clean`.
+- **`status --run` prints the run's row itself — BREAKING.** It was wrapped as `runs[0]` beside `running`, `done`, `failed`, `threads` and `groups`. `status --group` and the default listing are unchanged. **Migration:** read the fields at the top level.
+- **A `--schema` result is one JSON document indented by two spaces — BREAKING** (keys unchanged); 0.9.0 printed it on one line, and sessions re-printed it through `python3` to read its findings. While the run is live it is the header fields, `note` and `"json": null` with exit 0, instead of a refusal from parsing the message so far.
+- **`clean`'s `stop` and `kept[].stop` are whole calls — BREAKING**, written like `next` and runnable as handed back (`uv run "<cli.py>" stop --group <name>`), where they were `stop --group <name>` fragments.
+- **`doctor`'s `bridge_path` is `entry` — BREAKING** (same value).
+- `--wait-timeout` and `--follow-timeout` refuse NaN and infinity (exit 2), which disabled the bound.
+- **`SKILL.md` follows the new interface**: run `next.command` in the background and read its output as the result, or in the foreground with `--wait-timeout` when there is no later turn; `batch`, `clean`. In real headless sessions against v0.9.0's skill, the draft reached the result with no call between starting the work and the answer in all three scenarios, where v0.9.0's needed a follower in between; once in two runs of the batch scenario the draft waited in the foreground instead of the background.
+- Inside the skill, every unit — `registry`, `codex_cli`, `git`, `runs`, `batch`, `observe` — has an `__all__` interface that `cli.py`, other units and tests use alone; Codex's formats (events, `codex login status`, config keys, stderr) are read only in `codex_cli`, and repeated call sequences became one operation each (`run`, `live_runs`, `publish_run`, `group_view`). `tests/test_structure.py` fails a reach past an interface.
+
+### Removed
+
+- **`--heartbeat` (`status`, `log`) and `status --thread` with the `threads` map — BREAKING.** Neither was used in six weeks of sessions. Both are refused with exit 2.
+
+### Fixed
+
+- **`clean --force` could not remove a checkout `git worktree add` was killed while writing**, when the checkout's `.git` file was left empty or cut short: git refused it as "not a .git file" and the group's name stayed reserved. A checkout git still holds under the `initializing` lock its add takes is now removed too; a finished checkout is still never deleted around git, and one whose git record was pruned is kept.
+- **Group followers (`status --group --follow`, `log --group`) resolved the members once**, so a member a still-starting batch added was not followed, a member whose `meta.json` stopped parsing mid-follow could be lost from the counts, and a name released by `clean` and claimed again could be taken for the same group. Each look reads members, gaps and the claim's epoch from one read of the manifest; `log --group` announces a later member with a `group.members` line of its own.
+- **The test harness killed the recorded pids of ended runs**, which could by then belong to any later process. It kills a pid only while it is still in the run's process group.
+
 ## [0.9.0] — 2026-09-26
 
 The skill's code takes the layout every bundled skill shares and runs under `uv`, and its replies are shaped for how the model actually reads them: `result` is text, the default `status` no longer grows with the registry, a start says which follower to run, and the exit code says whether to fix the command line or wait.

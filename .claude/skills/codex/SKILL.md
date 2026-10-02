@@ -1,14 +1,14 @@
 ---
 name: codex
 description: >-
-  Hand non-interactive work to the local Codex CLI (GPT models) and manage it like a subagent: start runs in the background, continue their threads, watch, stop and redirect them, run several as one group, and collect text or schema-shaped JSON results. Use when work is being delegated to Codex or GPT, when a second, independent model should review or verify something, when an agent should keep working while Claude does something else, when an earlier Codex thread should be continued, or to diagnose the local Codex CLI. Triggers include: codex, 코덱스, 코덱스로, 코덱스한테, 코덱스에게, GPT한테, GPT에게 시켜, delegate to codex, ask codex, resume codex. Not for general questions about GPT, OpenAI or their API; not Claude's own subagents, the Task tool or background Bash; not Codex Cloud, `codex mcp-server` or `app-server`.
+  Hand non-interactive work to the local Codex CLI (GPT models) and manage it like a subagent: start runs in the background, continue their threads, watch, stop and redirect them, run several as one group, and wait for and collect text or schema-shaped JSON results. Use when work is being delegated to Codex or GPT, when a second, independent model should review or verify something, when an agent should keep working while Claude does something else, when an earlier Codex thread should be continued, or to diagnose the local Codex CLI. Triggers include: codex, 코덱스, 코덱스로, 코덱스한테, 코덱스에게, GPT한테, GPT에게 시켜, delegate to codex, ask codex, resume codex. Not for general questions about GPT, OpenAI or their API; not Claude's own subagents, the Task tool or background Bash; not Codex Cloud, `codex mcp-server` or `app-server`.
 allowed-tools:
   - Bash(uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" *)
 ---
 
 # Codex as a managed subagent
 
-Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written out in full on one line: the pre-approval matches the command text, so a path kept in a shell variable, a `$(…)` or a pipe added to the call, or a command continued with `\` asks for permission every time. Replies are made to be read as printed — `result` gives the answer itself after a one-line header — so nothing needs parsing out of them. `--help` lists the commands, and `<command> --help` owns every flag, default, refusal, output shape and exit code.
+Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written out in full on one line: the pre-approval matches the command text, so a path kept in a shell variable, a `$(…)` or a pipe added to the call, or a command continued with `\` asks for permission every time. Replies are made to be read as printed — an answer, a `--schema` answer and a run's status included — so no reply needs a pipe or a parser. `--help` lists the commands, and `<command> --help` owns every flag, default, refusal, output shape and exit code.
 
 ## Handing work over
 
@@ -22,9 +22,9 @@ Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written 
 
 | Yours | Here | Not available |
 |---|---|---|
-| `Agent` | `start`, its reply's `next.command` in the background, then `result` | — |
-| `Workflow` `parallel()` | `batch start` with several `--task` | runs calling or messaging each other |
-| a next stage | `batch start --resume-from <group>` once every member has finished | a stage that starts itself: each round is computed and started from your context |
+| `Agent` | `start`, then its reply's `next.command` in the background, which prints the result when the run ends | — |
+| `Workflow` `parallel()` | `batch` with several `--task` | runs calling or messaging each other |
+| a next stage | `batch --resume-from <group>` once every member has finished | a stage that starts itself: each round is computed and started from your context |
 
 ## Several runs at once
 
@@ -36,15 +36,15 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 
 **Rounds:** `--resume-from` continues each member's thread with the next round's prompts, written in advance or computed from the last results; choose it over a new batch by the same test as `resume` over `start`.
 
-**A group outlives the session.** Its name is the one thing nobody can re-derive, and `status` lists the project's groups. Collect with `result --group`; moving changes out of worktrees into your tree is yours to do; finish with `batch clean`.
+**A group outlives the session.** Its name is the one thing nobody can re-derive, and `status` lists the project's groups. Collect with `result --group`; moving changes out of worktrees into your tree is yours to do; finish with `clean`.
 
 ## Waiting and collecting
 
-**A detached run announces nothing.** Run the reply's `next.command` in a background Bash call, as given: it is the follower for that run, or for the group after `batch start`, written the way the pre-approval matches. It exits when the work ends, and that exit notifies you. Then use the turn for other work or hand it back; don't invent work to fill the wait.
+**A detached run announces nothing.** Run the reply's `next.command` in a background Bash call, as given: it waits for that run, or for the group after `batch`, and prints its result, written the way the pre-approval matches. Its exit notifies you, and the output file the notice points to is the result. Then use the turn for other work or hand it back; don't invent work to fill the wait.
 
-**Ended is not collected.** Take `result`, then check the claims and changes that matter before relying on them.
+**A result read is not a result checked.** Check the claims and changes that matter before relying on them.
 
-**If this is your only turn** — nothing will wake you later — make the follower the turn's last call in the foreground, with `--follow-timeout` added and the Bash call's own timeout set above it, then take `result`. If the budget runs out first, hand back the run id and say the work is unfinished.
+**If this is your only turn** — nothing will wake you later — run `next.command` in the foreground instead, with `--wait-timeout` added and the Bash call's own timeout set above it. If the budget runs out first, hand back the run id and say the work is unfinished.
 
 **Per-event notifications**, worth it only when you would act mid-run, come from Monitor running a follower: `log --follow` to stop a run going wrong, since only the log shows what it is doing; a group's `status --follow` to move members on as each lands. Monitor ends at its own deadline and that end reads like the run's; set it longer than the run and re-arm it when it expires.
 

@@ -1,7 +1,7 @@
 # Graph Report - codex in claude  (2026-10-02)
 
 ## Corpus Check
-- 78 files · ~74,962 words
+- 78 files · ~76,077 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 8 file(s) not represented in the graph (top: .jsonl 6, (none) 2)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `ec0679e4`
+- Built from commit: `375f82c8`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -43,7 +43,7 @@
 - Model Catalog Checks
 - batch/commands.py
 - Doctor Diagnostics Tests
-- Real Codex Smoke Tests
+- RealCodex
 - ExitCodes
 - TheSkillTextPointsAtRealThings
 - argv.py
@@ -207,9 +207,9 @@ Nodes (4): ABrokenLookupNeverBlocksARun, ChecksBeforeSpawning, Models, The model
 Cohesion: 0.12
 Nodes (23): batch(), `batch` and `clean`, and the `next` a batch's reply names., The group name's rule and `--base` without `--worktree` are the command…, Several runs as one group: `batch` and `clean`. A batch is N runs, so it builds…, Spawning a batch: each member's slot recorded before it starts, each member…, Start one member, as `start` or `resume` would. A resume target outside the…, Spawn every task in order. A member that fails keeps its slot with the error,…, spawn_members() (+15 more)
 
-### Community 27 - "Real Codex Smoke Tests"
+### Community 27 - "RealCodex"
 Cohesion: 0.29
-Nodes (4): skipUnless, S5: the real Codex CLI, end to end. Opt-in because it spends tokens:…, `result`'s JSON header line and the message after it., RealCodex
+Nodes (4): skipUnless, S5: the real Codex CLI, end to end. Opt-in because it spends tokens:…, What the reply's `next` prints once the run has ended — `result --run <id>…, RealCodex
 
 ### Community 28 - "ExitCodes"
 Cohesion: 0.24

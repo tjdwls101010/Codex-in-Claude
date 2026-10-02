@@ -452,7 +452,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "code",
       "norm_label": "realcodex",
       "source_file": "tests/smoke_real_codex.py",
@@ -5145,23 +5145,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "code",
       "norm_label": ".cli()",
       "source_file": "tests/smoke_real_codex.py",
       "source_location": "L42"
-    },
-    {
-      "id": "tests_smoke_real_codex_realcodex_result",
-      "label": ".result()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "Real Codex Smoke Tests",
-      "file_type": "code",
-      "norm_label": ".result()",
-      "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L48"
     },
     {
       "id": "tests_smoke_real_codex_realcodex_setup",
@@ -5169,7 +5157,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "code",
       "norm_label": ".setup()",
       "source_file": "tests/smoke_real_codex.py",
@@ -5181,11 +5169,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "code",
       "norm_label": ".test_a_resumed_turn_keeps_the_sandbox_its_thread_started_with()",
       "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L59"
+      "source_location": "L60"
     },
     {
       "id": "tests_smoke_real_codex_realcodex_turn_sandboxes",
@@ -5193,11 +5181,23 @@
       "_callable": true,
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "code",
       "norm_label": ".turn_sandboxes()",
       "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L53"
+      "source_location": "L54"
+    },
+    {
+      "id": "tests_smoke_real_codex_realcodex_waited",
+      "label": ".waited()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 27,
+      "community_name": "RealCodex",
+      "file_type": "code",
+      "norm_label": ".waited()",
+      "source_file": "tests/smoke_real_codex.py",
+      "source_location": "L48"
     },
     {
       "id": "tests_test_cli_contract_batchandcleanarecommandsoftheirown_help_for",
@@ -10933,7 +10933,7 @@
       "label": "skipUnless",
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "code",
       "norm_label": "skipunless",
       "source_file": "",
@@ -10944,7 +10944,7 @@
       "label": "smoke_real_codex.py",
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "code",
       "norm_label": "smoke_real_codex.py",
       "source_file": "tests/smoke_real_codex.py",
@@ -10955,7 +10955,7 @@
       "label": "S5: the real Codex CLI, end to end. Opt-in because it spends tokens:\u2026",
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "rationale",
       "norm_label": "s5: the real codex cli, end to end. opt-in because it spends tokens:...",
       "source_file": "tests/smoke_real_codex.py",
@@ -10963,12 +10963,12 @@
     },
     {
       "id": "tests_smoke_real_codex_rationale_49",
-      "label": "`result`'s JSON header line and the message after it.",
+      "label": "What the reply's `next` prints once the run has ended \u2014 `result --run <id>\u2026",
       "_origin": "ast",
       "community": 27,
-      "community_name": "Real Codex Smoke Tests",
+      "community_name": "RealCodex",
       "file_type": "rationale",
-      "norm_label": "`result`'s json header line and the message after it.",
+      "norm_label": "what the reply's `next` prints once the run has ended \u2014 `result --run <id>...",
       "source_file": "tests/smoke_real_codex.py",
       "source_location": "L49"
     },
@@ -19211,18 +19211,6 @@
       "weight": 1.0
     },
     {
-      "source": "tests_smoke_real_codex_realcodex_result",
-      "target": "tests_smoke_real_codex_realcodex_cli",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L50",
-      "weight": 1.0
-    },
-    {
       "source": "tests_smoke_real_codex_realcodex_test_a_resumed_turn_keeps_the_sandbox_its_thread_started_with",
       "target": "tests_smoke_real_codex_realcodex_cli",
       "relation": "calls",
@@ -19231,12 +19219,12 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L62",
+      "source_location": "L63",
       "weight": 1.0
     },
     {
       "source": "tests_smoke_real_codex_realcodex_test_a_resumed_turn_keeps_the_sandbox_its_thread_started_with",
-      "target": "tests_smoke_real_codex_realcodex_result",
+      "target": "tests_smoke_real_codex_realcodex_waited",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -19255,7 +19243,19 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L77",
+      "source_location": "L76",
+      "weight": 1.0
+    },
+    {
+      "source": "tests_smoke_real_codex_realcodex_waited",
+      "target": "tests_smoke_real_codex_realcodex_cli",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "tests/smoke_real_codex.py",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -34537,7 +34537,7 @@
     },
     {
       "source": "tests_smoke_real_codex_realcodex",
-      "target": "tests_smoke_real_codex_realcodex_result",
+      "target": "tests_smoke_real_codex_realcodex_waited",
       "relation": "method",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -34554,7 +34554,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L53",
+      "source_location": "L54",
       "weight": 1.0
     },
     {
@@ -34565,7 +34565,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/smoke_real_codex.py",
-      "source_location": "L59",
+      "source_location": "L60",
       "weight": 1.0
     },
     {
@@ -41137,7 +41137,7 @@
     },
     {
       "source": "tests_smoke_real_codex_rationale_49",
-      "target": "tests_smoke_real_codex_realcodex_result",
+      "target": "tests_smoke_real_codex_realcodex_waited",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -42774,5 +42774,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "ec0679e4935297b407d1f3c57478bd6c546038b7"
+  "built_at_commit": "375f82c8844369230f694231587d42b83fe7af6a"
 }

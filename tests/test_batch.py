@@ -101,6 +101,8 @@ class TasksAreValidatedBeforeAnythingStarts(BatchCase):
         ({"prompt": "a", "kind": "resume"}, "needs a 'resume' field"),
         ({"prompt": "a", "model": "no-such-model"}, "unknown model"),
         ({"prompt": "a", "model": "fake-small", "effort": "ultra"}, "does not accept effort"),
+        ({"prompt": "a", "image": ["one.png"]}, "unknown field"),
+        ({"prompt": "a", "resume": "some-run"}, "kind"),
     ]
 
     def test_each_broken_task_refuses_the_batch_and_names_its_line(self):

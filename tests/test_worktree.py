@@ -248,20 +248,29 @@ class Clean(WorktreeCase):
         self.wait_all(two)
         three = self.next_round("p3", two, env={"FAKE_CODEX_HANG": 60})
         self.bridge("clean", "--group", "p2", "--force")
-        res = self.bridge("clean", "--group", "p1")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual(res["removed"], [])
         self.assertFalse(res["name_released"])
         self.assertEqual({o for k in res["kept"] for o in k["occupied_by"]}, {r["run_id"] for r in three["runs"]})
         self.assertTrue(all(Path(r["worktree"]).exists() for r in one["runs"]))
 
-    def test_a_group_another_group_resumed_is_protected(self):
-        self.finished()
-        self.wait_all(self.bridge("batch", "--group", "p2", "--resume-from", "p1",
-                                  "--task", "a", "--task", "b"))
+    def test_a_checkout_another_run_continued_in_is_protected(self):
+        # Whoever continued a member's thread — a later batch's `kind: resume` task or a single `resume` — works in its checkout, so removing it would take that thread's directory away. Asked of the registry, so it holds however the run was started.
+        one = self.finished()
+        two = self.next_round("p2", one)
+        self.wait_all(two)
         refused = self.bridge("clean", "--group", "p1", rc=1)
-        self.assertEqual(refused["derived_groups"], ["p2"])
+        self.assertEqual(sorted(refused["continued_by"]), sorted(r["run_id"] for r in two["runs"]))
+        self.assertTrue(all(Path(r["worktree"]).exists() for r in one["runs"]))
         forced = self.bridge("clean", "--group", "p1", "--force")
-        self.assertEqual(forced["forced_past"]["derived_groups"], ["p2"])
+        self.assertEqual(sorted(forced["forced_past"]["continued_by"]), sorted(r["run_id"] for r in two["runs"]))
+        self.assertTrue(forced["name_released"])
+
+    def test_a_single_resume_in_a_checkout_protects_it_too(self):
+        one = self.finished(n=1)
+        again = self.bridge("resume", one["runs"][0]["run_id"], "go on")
+        self.wait_state(again["run_id"])
+        self.assertEqual(self.bridge("clean", "--group", "p1", rc=1)["continued_by"], [again["run_id"]])
 
     def test_an_unknown_group_is_named(self):
         self.assertIn("no such group", self.bridge("clean", "--group", "nope", rc=1)["error"])

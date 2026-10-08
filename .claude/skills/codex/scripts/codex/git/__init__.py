@@ -1,7 +1,7 @@
 """The git CLI: repository questions and the worktrees a batch cuts. A git behaviour change lands here, and what leaves is paths, shas, counts and `(ok, error)` pairs, never git's own output."""
 
 from codex.git.repo import (
-    git_toplevel, ignored_entries, is_dirty, missing_at_base, repo_identity, resolve_base, resolve_project,
+    git_toplevel, ignored_entries, is_dirty, main_checkout, missing_at_base, repo_identity, resolve_base, resolve_project,
     uncommitted_count,
 )
 from codex.git.worktree import (
@@ -9,6 +9,6 @@ from codex.git.worktree import (
 )
 
 __all__ = [
-    "git_toplevel", "resolve_project", "resolve_base", "repo_identity", "missing_at_base", "ignored_entries",
+    "git_toplevel", "resolve_project", "main_checkout", "resolve_base", "repo_identity", "missing_at_base", "ignored_entries",
     "uncommitted_count", "is_dirty", "worktree_add", "worktree_remove", "worktree_prune", "worktrees_registered",
 ]

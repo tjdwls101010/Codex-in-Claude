@@ -10,7 +10,7 @@ from codex.codex_cli import (
     WRITING_SANDBOXES, codex_home, codex_version, config_summary, login_status, model_catalog, read_only_blocker,
     refuse_without_isolation, user_defaults,
 )
-from codex.git import git_toplevel, resolve_project, worktrees_registered
+from codex.git import git_toplevel, main_checkout, resolve_project, worktrees_registered
 from codex.errors import Refusal
 from codex.registry import iter_runs, list_groups, live_runs, resolve_runs_dir, unreadable_runs
 from codex.util import ENTRY, clip, is_within
@@ -27,7 +27,7 @@ def models(args):
 
 def doctor(args):
     project = resolve_project(args.project)
-    runs_dir = resolve_runs_dir(project, args.runs_dir)
+    runs_dir = resolve_runs_dir(main_checkout(project), args.runs_dir)
     report, blockers, warnings = {}, [], []
     report["python"] = sys.version.split()[0]
     if sys.version_info < (3, 11):

@@ -13,7 +13,11 @@ WALK_CAP = 500
 
 
 def run_git(cwd, *args, timeout=60):
-    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout)
+    """git's answer. When git cannot be run or does not answer in time the returncode is None: no answer, which a question about a repository reads as "not one" and a decision that cannot be undone must read as unknown, never as a no."""
+    try:
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return subprocess.CompletedProcess(["git", *args], None, "", str(e))
 
 
 def git_toplevel(path: Path):
@@ -31,6 +35,21 @@ def resolve_project(explicit=None) -> Path:
     """The project a command works on: the git top level of `explicit`, or of the current directory, else that directory itself."""
     base = Path(explicit).expanduser().resolve() if explicit else Path.cwd().resolve()
     return git_toplevel(base) or base
+
+
+def main_checkout(path: Path) -> Path:
+    """The working tree of the main checkout of the repository `path` is in, from any of its checkouts.
+
+    It is the first record `git worktree list` gives — for a submodule's linked worktree that record is `.git/modules/<name>`, which `--show-toplevel` resolves to the submodule's own checkout. A worktree of a bare repository has no main working tree and answers itself, as does a directory in no repository or one git cannot answer for — a linked worktree whose main checkout was deleted, or no git at all.
+    """
+    r = run_git(path, "worktree", "list", "--porcelain")
+    first = r.stdout.split("\n\n", 1)[0].splitlines() if r.returncode == 0 else []
+    if not first or not first[0].startswith("worktree ") or "bare" in first:
+        return path
+    top = run_git(first[0][len("worktree "):], "rev-parse", "--path-format=absolute", "--show-toplevel")
+    if top.returncode != 0 or not top.stdout.strip():
+        return path
+    return Path(nfc(top.stdout.strip())).resolve()
 
 
 def resolve_base(cwd: Path):
@@ -110,5 +129,8 @@ def uncommitted_count(cwd: Path):
 
 
 def is_dirty(target: Path) -> bool:
+    """Whether a checkout has uncommitted changes — True when git gave no answer, since a caller about to discard the checkout must not take unknown for clean."""
     r = run_git(target, "status", "--porcelain")
+    if r.returncode is None:
+        return True
     return r.returncode == 0 and bool(r.stdout.strip())

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 from codex.errors import Refusal
-from codex.git import resolve_project
+from codex.git import main_checkout, resolve_project
 from codex.registry import find_run, group_runs, live_runs, resolve_runs_dir, run
 from codex.runs.create import create_run
 from codex.runs.supervisor import stop_run
@@ -24,7 +24,7 @@ def follow_up(out, args):
 def resume(args):
     """`args.ref` and `args.prompt` arrive split out of `resume REF [PROMPT]` by the command surface."""
     project = resolve_project(args.project)
-    runs_dir = resolve_runs_dir(project, args.runs_dir)
+    runs_dir = resolve_runs_dir(main_checkout(project), args.runs_dir)
     _, base = find_run(runs_dir, args.ref)
     if base and not base.get("thread_id"):
         raise Refusal(f"run {base.get('run_id')} has no thread id, so there is nothing to resume; `status --run` shows why",
@@ -38,7 +38,7 @@ def resume(args):
 def stop(args):
     """Exactly one of `--run` or `--group` is set; the command surface refuses the rest."""
     project = resolve_project(args.project)
-    runs_dir = resolve_runs_dir(project, args.runs_dir)
+    runs_dir = resolve_runs_dir(main_checkout(project), args.runs_dir)
     if args.run:
         targets = [run(runs_dir, ref) for ref in args.run]
     else:

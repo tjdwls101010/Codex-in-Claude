@@ -1,4 +1,4 @@
-"""The run registry, the one store this skill keeps: `<project>/.codex-runs/<run_id>/`.
+"""The run registry, the one store this skill keeps: `<main checkout>/.codex-runs/<run_id>/`, one per repository whichever of its checkouts a command runs from. The caller hands the root in: this store does not ask git.
 
     .codex-runs/
     ├── .gitignore            # `*`, so the registry never lands in the user's history

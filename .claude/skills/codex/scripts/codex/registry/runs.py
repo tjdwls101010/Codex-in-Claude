@@ -35,10 +35,11 @@ def is_live(meta: dict) -> bool:
 
 # -- locating things --------------------------------------------------------
 
-def resolve_runs_dir(project: Path, explicit=None) -> Path:
+def resolve_runs_dir(root: Path, explicit=None) -> Path:
+    """`explicit`, else `<root>/.codex-runs`; `root` is the main checkout the caller resolved."""
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return project / ".codex-runs"
+    return root / ".codex-runs"
 
 
 def ensure_runs_dir(d: Path) -> Path:

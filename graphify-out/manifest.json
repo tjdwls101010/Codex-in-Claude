@@ -18,9 +18,9 @@
     "semantic_hash": "d86ce5f05ea8e777a920aae592af344e"
   },
   ".claude/skills/codex/SKILL.md": {
-    "mtime": 1790899335.9921274,
-    "seen": 1790899337.41887,
-    "ast_hash": "64e4264fe1953a223cf4745854440329",
+    "mtime": 1791488679.6788278,
+    "seen": 1791488681.398048,
+    "ast_hash": "3d01b6d0786913ba4c659587b2a2a97b",
     "semantic_hash": ""
   },
   "AGENTS.md": {
@@ -54,9 +54,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1790899984.3152137,
-    "seen": 1790899999.559414,
-    "ast_hash": "dbb3b1388ee853234758841e88ad8c7a",
+    "mtime": 1791488679.693903,
+    "seen": 1791488681.398051,
+    "ast_hash": "cb27c4b8a3e62d338632f336423b6d1c",
     "semantic_hash": ""
   },
   "SECURITY.md": {
@@ -78,9 +78,9 @@
     "semantic_hash": ""
   },
   "tests/support/harness.py": {
-    "mtime": 1791483731.943741,
-    "seen": 1791483746.432601,
-    "ast_hash": "16e28b4c120f71ed19fc602eca75cf0c",
+    "mtime": 1791488679.6954143,
+    "seen": 1791488681.398036,
+    "ast_hash": "3596a2d7a303cc51c8eca512394c6fbe",
     "semantic_hash": ""
   },
   "tests/support/legacy_registry/.groups/p1.json": {
@@ -114,9 +114,9 @@
     "semantic_hash": "8360592cfd51aebe70fbd1ae03cefbcf"
   },
   "tests/test_batch.py": {
-    "mtime": 1791483731.9457889,
-    "seen": 1791483746.432606,
-    "ast_hash": "3b42613169cee8ffed07e64ab55dc842",
+    "mtime": 1791488679.6965256,
+    "seen": 1791488681.39804,
+    "ast_hash": "a99891f4b5fbe82d2ad6e495ca017c43",
     "semantic_hash": ""
   },
   "tests/test_catalog.py": {
@@ -126,9 +126,9 @@
     "semantic_hash": ""
   },
   "tests/test_cli_contract.py": {
-    "mtime": 1791483731.9467025,
-    "seen": 1791483746.432607,
-    "ast_hash": "2eb35bccaa00671693a6b5fc17b2429d",
+    "mtime": 1791488679.697251,
+    "seen": 1791488681.398041,
+    "ast_hash": "c7ef3e21f7ae6ea1dadf0e428dca4703",
     "semantic_hash": ""
   },
   "tests/test_doctor.py": {
@@ -138,9 +138,9 @@
     "semantic_hash": ""
   },
   "tests/test_events.py": {
-    "mtime": 1790870622.0089355,
-    "seen": 1790870626.987108,
-    "ast_hash": "7050d753eeddfc02c61dfe09919e81b7",
+    "mtime": 1791488679.6978939,
+    "seen": 1791488681.3980422,
+    "ast_hash": "00af80e33a70f3b06b2f1e43a31c567d",
     "semantic_hash": ""
   },
   "tests/test_install.py": {
@@ -150,33 +150,33 @@
     "semantic_hash": "095e5cc09e3280454dc209df952765a8"
   },
   "tests/test_observe.py": {
-    "mtime": 1791483731.9497154,
-    "seen": 1791483746.432609,
-    "ast_hash": "a9c59241585f29400f046a2a0fc1b482",
+    "mtime": 1791488679.698606,
+    "seen": 1791488681.398043,
+    "ast_hash": "6f864664c639959bc075c8b54f2519b1",
     "semantic_hash": ""
   },
   "tests/test_registry_races.py": {
-    "mtime": 1790870622.0093656,
-    "seen": 1790870626.9871092,
-    "ast_hash": "ab0edbe69c7c01517895733dbee43460",
+    "mtime": 1791488679.6991715,
+    "seen": 1791488681.398043,
+    "ast_hash": "6a5bd2492f74d279bdd4a73d09e6959e",
     "semantic_hash": ""
   },
   "tests/test_resume.py": {
-    "mtime": 1791483731.951684,
-    "seen": 1791483746.43261,
-    "ast_hash": "4e3a580b4c3031cc7689d5cdcd2804cf",
+    "mtime": 1791488679.699765,
+    "seen": 1791488681.3980439,
+    "ast_hash": "cd9afeb5053aded628f8619bbf81aefd",
     "semantic_hash": ""
   },
   "tests/test_run_lifecycle.py": {
-    "mtime": 1790898630.2220428,
-    "seen": 1790898632.016225,
-    "ast_hash": "01fe4a54ac5dc72a362c363b53748e33",
+    "mtime": 1791488679.7005553,
+    "seen": 1791488681.3980439,
+    "ast_hash": "08776b27739182d68f459d12e56e1c11",
     "semantic_hash": ""
   },
   "tests/test_worktree.py": {
-    "mtime": 1790898630.222611,
-    "seen": 1790898632.016226,
-    "ast_hash": "3f6493834b96b422885c8eb4060689f2",
+    "mtime": 1791488679.7021456,
+    "seen": 1791488681.3980448,
+    "ast_hash": "e7d775202ec07e0f091474f7d39b3f7b",
     "semantic_hash": ""
   },
   "tests/support/legacy_registry/20260803-204347-reviewer-4efc/last-message.txt": {
@@ -186,27 +186,27 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/__init__.py": {
-    "mtime": 1790898630.2084212,
-    "seen": 1790898632.016198,
-    "ast_hash": "2d42020b2c959343e0d94698eb22c472",
+    "mtime": 1791488679.680047,
+    "seen": 1791488681.398017,
+    "ast_hash": "15e74c39f4c29e5c7fb9ce521f3db4cb",
     "semantic_hash": ""
   },
   "tests/test_argv.py": {
-    "mtime": 1791483731.9452808,
-    "seen": 1791483746.432605,
-    "ast_hash": "4e4b1a73da3fd1f9a52a77f7bc99de86",
+    "mtime": 1791488679.695968,
+    "seen": 1791488681.398039,
+    "ast_hash": "9633c4786755e297c52f988940b7b94f",
     "semantic_hash": ""
   },
   "tests/test_settings.py": {
-    "mtime": 1791483731.9523277,
-    "seen": 1791483746.432611,
-    "ast_hash": "b2dd39480990e82afd4c8bcd49dc3086",
+    "mtime": 1791488679.7010336,
+    "seen": 1791488681.3980448,
+    "ast_hash": "15238b145de7a14879cf9f70f52fce49",
     "semantic_hash": ""
   },
   "tests/e2e/run_e2e.py": {
-    "mtime": 1790899335.9935837,
-    "seen": 1790899337.418856,
-    "ast_hash": "cefba4df9a6e19faec418af13b791a56",
+    "mtime": 1791488679.6948314,
+    "seen": 1791488681.3980339,
+    "ast_hash": "6799dbb50a0d3fdddd0c6cf03cb687a2",
     "semantic_hash": ""
   },
   "tests/e2e/scenarios.md": {
@@ -222,9 +222,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/cli.py": {
-    "mtime": 1791483731.9365692,
-    "seen": 1791483746.432578,
-    "ast_hash": "25a549820fb431f5818c30c3bb047b9f",
+    "mtime": 1791488679.67952,
+    "seen": 1791488681.398016,
+    "ast_hash": "a3638b7d8f137297c6131174b770d55f",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/__init__.py": {
@@ -234,21 +234,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/clean.py": {
-    "mtime": 1790898630.2095315,
-    "seen": 1790898632.0161989,
-    "ast_hash": "0c5233254f89ff70ab64e57801f4ab98",
+    "mtime": 1791488679.6806774,
+    "seen": 1791488681.3980181,
+    "ast_hash": "de9c09251b96f636634aa86250cb635e",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/commands.py": {
-    "mtime": 1790898630.2099016,
-    "seen": 1790898632.0161989,
-    "ast_hash": "4cd5fab998c2429bf8a410ce8eb30499",
-    "semantic_hash": ""
-  },
-  ".claude/skills/codex/scripts/codex/batch/rounds.py": {
-    "mtime": 1790898630.2102017,
-    "seen": 1790898632.0161998,
-    "ast_hash": "19fc394b8d4ac0e8c8b18b9a500918a3",
+    "mtime": 1791488679.6824498,
+    "seen": 1791488681.398019,
+    "ast_hash": "eca87a7d106e50489fddb0d734ae45d7",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/spawn.py": {
@@ -258,27 +252,27 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/tasks.py": {
-    "mtime": 1791483731.938171,
-    "seen": 1791483746.4325829,
-    "ast_hash": "61e6ad849cad5d47829d4afde2bccb56",
+    "mtime": 1791488679.6829612,
+    "seen": 1791488681.39802,
+    "ast_hash": "978dde0c7190b834fd5702674f75dbb5",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/worktrees.py": {
-    "mtime": 1790898630.211248,
-    "seen": 1790898632.016201,
-    "ast_hash": "6e1ca6c670ca8efe57b401a841d3dca9",
+    "mtime": 1791488679.6845956,
+    "seen": 1791488681.39802,
+    "ast_hash": "f566869b4240ad7a0a8acf802dd48d5a",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/codex_cli/__init__.py": {
-    "mtime": 1791483731.9385204,
-    "seen": 1791483746.432584,
-    "ast_hash": "20a06a5655e3e91df7b647b250a800f8",
+    "mtime": 1791488679.6850255,
+    "seen": 1791488681.3980212,
+    "ast_hash": "c5f01bc476b834da1a94735bb7f0c58b",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/codex_cli/argv.py": {
-    "mtime": 1791483731.939225,
-    "seen": 1791483746.432584,
-    "ast_hash": "bd0812ac678259d878f78ccbd4ccef5b",
+    "mtime": 1791488679.6855264,
+    "seen": 1791488681.3980212,
+    "ast_hash": "991d696e59c011e2e66af3ebd4757368",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/codex_cli/catalog.py": {
@@ -294,9 +288,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/codex_cli/events.py": {
-    "mtime": 1790870621.997607,
-    "seen": 1790870626.987088,
-    "ast_hash": "f1815f15c62004f623115ff7cb503f86",
+    "mtime": 1791488679.6859887,
+    "seen": 1791488681.398023,
+    "ast_hash": "6bffc355865a1913c41990256d4518a5",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/doctor.py": {
@@ -318,10 +312,10 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/git/repo.py": {
-    "mtime": 1790407027.6196811,
-    "seen": 1790407058.674381,
-    "ast_hash": "295e62fd0924418629fa16591f1468bf",
-    "semantic_hash": "295e62fd0924418629fa16591f1468bf"
+    "mtime": 1791488679.6865437,
+    "seen": 1791488681.398025,
+    "ast_hash": "0cff0eb451cbcfc49138fdc47bcb2f35",
+    "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/git/worktree.py": {
     "mtime": 1790871709.1268032,
@@ -330,63 +324,57 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/__init__.py": {
-    "mtime": 1790870621.9990609,
-    "seen": 1790870626.987092,
-    "ast_hash": "a09930e008e237cf2b0e8562309db5f7",
+    "mtime": 1791488679.687049,
+    "seen": 1791488681.398026,
+    "ast_hash": "2f85128f616f00a9c7c89db0e7348c8f",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/collect.py": {
-    "mtime": 1790870621.9994414,
-    "seen": 1790870626.987093,
-    "ast_hash": "e68c756c01bff2d699f819fd85f55514",
+    "mtime": 1791488679.6876233,
+    "seen": 1791488681.398027,
+    "ast_hash": "1fd657a716bb70dfd48adbc3a08332d9",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/follow.py": {
-    "mtime": 1790898630.2129455,
-    "seen": 1790898632.016208,
-    "ast_hash": "b0d23c39dfc46e807a282cdb668e3381",
+    "mtime": 1791488679.68814,
+    "seen": 1791488681.398027,
+    "ast_hash": "9c98ec793e6bbabc4fa4e5531436499c",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/log.py": {
-    "mtime": 1790898630.2135856,
-    "seen": 1790898632.016208,
-    "ast_hash": "28f63892a1f86c7682f831a046bd771d",
+    "mtime": 1791488679.6885188,
+    "seen": 1791488681.3980281,
+    "ast_hash": "2efb777c3691c0fccc5c73d7c44a96ac",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/result.py": {
-    "mtime": 1790898630.2141461,
-    "seen": 1790898632.016209,
-    "ast_hash": "abd1a039b4526f823e298a2718a3ef49",
+    "mtime": 1791488679.688925,
+    "seen": 1791488681.3980281,
+    "ast_hash": "702f583204c71b67dc143d913cb475b7",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/rows.py": {
-    "mtime": 1790898630.214686,
-    "seen": 1790898632.016209,
-    "ast_hash": "5b81d52d94e6d4eee0168aa0a4c9c91c",
-    "semantic_hash": ""
-  },
-  ".claude/skills/codex/scripts/codex/observe/show.py": {
-    "mtime": 1790870622.0019674,
-    "seen": 1790870626.987095,
-    "ast_hash": "48f3ce85085039ae299c5d0aa4c6e9ba",
+    "mtime": 1791488679.6893167,
+    "seen": 1791488681.3980281,
+    "ast_hash": "67e46d4aa09ec6a7c62d112f1f339fad",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/status.py": {
-    "mtime": 1790898630.2151644,
-    "seen": 1790898632.0162098,
-    "ast_hash": "66b833da89db349a990b24837f7f23e7",
+    "mtime": 1791488679.6902254,
+    "seen": 1791488681.398029,
+    "ast_hash": "2f563209e87e3e9a4a7980649f4f00ef",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/registry/__init__.py": {
-    "mtime": 1790898630.2155645,
-    "seen": 1790898632.016211,
-    "ast_hash": "34127ffacd4162be3e59f040b83f1810",
+    "mtime": 1791488679.6907022,
+    "seen": 1791488681.398029,
+    "ast_hash": "b31fd43f3ab79167b259145ae8e15033",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/registry/groups.py": {
-    "mtime": 1790898630.2161467,
-    "seen": 1790898632.016211,
-    "ast_hash": "5adc0890a94ad421d9a01ffe38fddfde",
+    "mtime": 1791488679.6913564,
+    "seen": 1791488681.39803,
+    "ast_hash": "6f7fd61b82457f238953880b8e5b9a08",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/registry/locks.py": {
@@ -396,9 +384,9 @@
     "semantic_hash": "1146764eea0b4d9bac52e49cb67b337f"
   },
   ".claude/skills/codex/scripts/codex/registry/runs.py": {
-    "mtime": 1790870622.0038989,
-    "seen": 1790870626.987097,
-    "ast_hash": "0fb722bd30bbcc78a736193021cd7a68",
+    "mtime": 1791488679.6919208,
+    "seen": 1791488681.398031,
+    "ast_hash": "0b1e244757105ebafdf664776883b3ee",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/__init__.py": {
@@ -408,21 +396,21 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/commands.py": {
-    "mtime": 1790898630.2165568,
-    "seen": 1790898632.016213,
-    "ast_hash": "ca419ae247a8912e1b2ef6e999c576e5",
+    "mtime": 1791488679.6923497,
+    "seen": 1791488681.398031,
+    "ast_hash": "f0556ba1ab9bb35843d1d10258309c2e",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/create.py": {
-    "mtime": 1791483731.9411306,
-    "seen": 1791483746.432597,
-    "ast_hash": "97fd27bfa7b7ef096b287a64295842c9",
+    "mtime": 1791488679.6929007,
+    "seen": 1791488681.398032,
+    "ast_hash": "3b847ffe4c424935211e0c141e71c2a2",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/settings.py": {
-    "mtime": 1791483731.9418058,
-    "seen": 1791483746.432598,
-    "ast_hash": "833293f42fd629219297554db5cfb10b",
+    "mtime": 1791488679.6933343,
+    "seen": 1791488681.398032,
+    "ast_hash": "7d12c6ea15af8f33787ec377085e0c92",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/supervisor.py": {
@@ -438,9 +426,9 @@
     "semantic_hash": ""
   },
   "tests/test_structure.py": {
-    "mtime": 1790870622.0107064,
-    "seen": 1790870626.9871109,
-    "ast_hash": "c04365f5d3ea640eb0ee06faf5597bf0",
+    "mtime": 1791488679.7015824,
+    "seen": 1791488681.3980448,
+    "ast_hash": "d3fc2b9f8ecb3c37df48f50fb59da179",
     "semantic_hash": ""
   },
   "tests/test_config.py": {

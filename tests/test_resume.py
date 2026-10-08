@@ -209,6 +209,14 @@ class ReadOnlyWritesScratch(ResumeCase):
         self.assertEqual(out["read_only"], "scratch", "a directory inside TMPDIR stays read-only: its own entry is the more specific")
         self.assertEqual(self.config_values(argv), read_only_profile(tmpdir / "inside"))
 
+    def test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written(self):
+        # A checker that probes for a writable temporary directory falls back to another one here, and in a sandbox where none is writable it fails outright.
+        tmpdir = self.tmp / "locked-tmp"
+        tmpdir.mkdir()
+        os.chmod(tmpdir, 0o500)
+        self.addCleanup(os.chmod, tmpdir, 0o700)
+        self.assert_strict(*self.started("--cwd", tmpdir, env={"TMPDIR": tmpdir}))
+
 
 class FindingTheThread(ResumeCase):
 

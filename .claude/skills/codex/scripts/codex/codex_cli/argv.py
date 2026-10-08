@@ -6,7 +6,6 @@ Two invariants, both forced by `exec` having `-s` and `-C` while `exec resume` h
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 from codex.codex_cli.catalog import PROFILE_FLOOR, codex_support, floor_text
@@ -79,8 +78,9 @@ def read_only_blocker(cwd):
                  if s["version"] else "`codex --version` could not be read, so the read-only profile is not known to work")
         return f"{which}, {STRICT}; upgrade Codex for read-only runs that can"
     real = os.path.realpath(cwd)
-    for name, path in (("TMPDIR", tempfile.gettempdir()), ("~/.cache", Path.home() / ".cache")):
-        if real == os.path.realpath(path):
+    # TMPDIR as Codex reads it: the variable itself, never probed for writability — a probe falls back to another directory, and fails outright where nothing is writable.
+    for name, path in (("TMPDIR", os.environ.get("TMPDIR")), ("~/.cache", Path.home() / ".cache")):
+        if path and real == os.path.realpath(path):
             return f"{cwd} is itself {name}, which a read-only run may write, so it cannot also stay read-only, {STRICT}"
     return None
 

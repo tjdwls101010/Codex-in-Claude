@@ -2,7 +2,7 @@
 
     runs/        feature: start, resume, stop, and the run engine every one of them and every batch member goes through
     batch/       feature: batch and clean — a batch is N runs, so it builds members with runs/, the one import between features
-    observe/     feature: status, log, show, result, for a run and for a group
+    observe/     feature: status, log, result — for a run, and status and result for a group
     doctor.py    feature: doctor and models
     codex_cli/   system: the formats the Codex CLI owns — argv, CODEX_HOME and config.toml, the model catalog, login, the event stream and stderr
     git/         system: repository questions and worktrees, asked of the git CLI

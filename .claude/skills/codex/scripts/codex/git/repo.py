@@ -34,8 +34,18 @@ def resolve_project(explicit=None) -> Path:
 
 
 def main_checkout(path: Path) -> Path:
-    """Stub: the main checkout of the repository `path` is in."""
-    return path
+    """The working tree of the main checkout of the repository `path` is in, from any of its checkouts.
+
+    It is the first record `git worktree list` gives — for a submodule's linked worktree that record is `.git/modules/<name>`, which `--show-toplevel` resolves to the submodule's own checkout. A worktree of a bare repository has no main working tree and answers itself, as does a directory in no repository or one git cannot answer for, such as a linked worktree whose main checkout was deleted.
+    """
+    r = run_git(path, "worktree", "list", "--porcelain")
+    first = r.stdout.split("\n\n", 1)[0].splitlines() if r.returncode == 0 else []
+    if not first or not first[0].startswith("worktree ") or "bare" in first:
+        return path
+    top = run_git(first[0][len("worktree "):], "rev-parse", "--path-format=absolute", "--show-toplevel")
+    if top.returncode != 0 or not top.stdout.strip():
+        return path
+    return Path(nfc(top.stdout.strip())).resolve()
 
 
 def resolve_base(cwd: Path):

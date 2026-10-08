@@ -16,7 +16,9 @@ from codex.codex_cli import (
     read_only_blocker, refuse_without_isolation, user_defaults,
 )
 from codex.errors import Refusal
-from codex.git import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted, worktree_add
+from codex.git import (
+    git_toplevel, main_checkout, resolve_project, uncommitted_count as worktree_uncommitted, worktree_add,
+)
 from codex.registry import (
     TERMINAL_STATES, ensure_runs_dir, iter_runs, live_runs, publish_run, read_meta, resolve_runs_dir, still_writing,
     unreadable_runs, write_meta,
@@ -198,7 +200,7 @@ def cut_worktree(run_dir: Path, meta: dict, source: Path, worktree_base: str):
 
 def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch=None, worktree_base=None):
     project = resolve_project(args.project)
-    runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
+    runs_dir = ensure_runs_dir(resolve_runs_dir(main_checkout(project), args.runs_dir))
 
     s = resolve_settings(args, kind=kind, base=base, project=project, thread_ref=thread_ref)
     run_id, run_dir, meta = publish(args, s, kind=kind, base=base, project=project, runs_dir=runs_dir,

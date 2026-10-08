@@ -6,7 +6,7 @@ from codex.batch.clean import clean_group
 from codex.batch.spawn import spawn_members
 from codex.batch.tasks import check_task_settings, load_tasks
 from codex.batch.worktrees import plan_worktrees, worktree_report
-from codex.git import resolve_project
+from codex.git import main_checkout, resolve_project
 from codex.registry import claim_group, ensure_runs_dir, group_path, resolve_runs_dir
 from codex.util import with_next
 
@@ -14,7 +14,7 @@ from codex.util import with_next
 def batch(args):
     """The group name's rule is the command surface's to refuse, before this is called."""
     project = resolve_project(args.project)
-    runs_dir = ensure_runs_dir(resolve_runs_dir(project, args.runs_dir))
+    runs_dir = ensure_runs_dir(resolve_runs_dir(main_checkout(project), args.runs_dir))
     tasks = load_tasks(args)
     check_task_settings(tasks, args, runs_dir)
 
@@ -39,6 +39,6 @@ def batch(args):
 
 def clean(args):
     project = resolve_project(args.project)
-    runs_dir = resolve_runs_dir(project, args.runs_dir)
+    runs_dir = resolve_runs_dir(main_checkout(project), args.runs_dir)
     return clean_group(project, runs_dir, args.group, force=args.force,
                        explicit_registry=bool(args.project or args.runs_dir))

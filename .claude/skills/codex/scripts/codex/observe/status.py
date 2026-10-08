@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from codex.git import resolve_project
+from codex.git import main_checkout, resolve_project
 from codex.observe.rows import group_snapshot, note_unreadable, row_is_live, run_row, summary_row
 from codex.registry import group_view, iter_runs, list_groups, resolve_runs_dir, run
 
@@ -12,7 +12,7 @@ LISTING_ROWS = 20
 
 def status(args):
     project = resolve_project(args.project)
-    runs_dir = resolve_runs_dir(project, args.runs_dir)
+    runs_dir = resolve_runs_dir(main_checkout(project), args.runs_dir)
     if args.group:
         return status_group(args, project, runs_dir)
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from codex.errors import Refusal
-from codex.git import is_dirty as worktree_dirty, worktree_prune, worktree_remove
+from codex.git import is_dirty as worktree_dirty, main_checkout, worktree_prune, worktree_remove, worktrees_registered
 from codex.registry import (
     find_run, group_manifest, group_path, group_unreadable, is_live, iter_runs, list_groups, live_runs, member_run_ids,
     meta_unreadable, owned_run_ids, release_group, still_writing,
@@ -148,6 +149,13 @@ def _remove_worktrees(project, runs_dir, name, *, force, explicit_registry, over
         dirty = worktree_dirty(path)
         # The repository the checkout was cut from: recorded with the worktree, or — when `git worktree add` never returned — the cwd the run was published with.
         source = Path((wt or {}).get("source") or meta.get("cwd") or project)
+        if not source.exists():
+            # A linked worktree it was cut from can be gone; its main checkout holds the same repository's records, and is asked only about a checkout it records, so a registry named from elsewhere never prunes another repository.
+            source = main_checkout(project)
+            if os.path.realpath(path) not in {os.path.realpath(p) for p in worktrees_registered(source)}:
+                kept.append({"run_id": rid, "path": str(path), "dirty": dirty,
+                             "reason": f"the checkout it was cut from is gone and {source} does not record this worktree, so it is not this repository's to remove"})
+                continue
         ok, err = worktree_remove(source, path, force=force, owned=path == rd / "wt")
         if ok and dirty and force:
             overrode.setdefault("discarded_uncommitted", []).append(str(path))

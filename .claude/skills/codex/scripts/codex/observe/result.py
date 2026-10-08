@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from codex.errors import Refusal
-from codex.git import resolve_project
+from codex.git import main_checkout, resolve_project
 from codex.observe.collect import final_message, member_result, overlaps, read_final
 from codex.observe.follow import GroupWatch, wait_until
 from codex.observe.rows import group_snapshot, progress, settled, turn_failed_excerpt
@@ -14,7 +14,7 @@ from codex.registry import TERMINAL_STATES, group_view, is_live, read_meta, reap
 
 def result(args):
     project = resolve_project(args.project)
-    runs_dir = resolve_runs_dir(project, args.runs_dir)
+    runs_dir = resolve_runs_dir(main_checkout(project), args.runs_dir)
     if args.group:
         if args.wait:
             # Ended once no readable member is live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.

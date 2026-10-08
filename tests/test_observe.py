@@ -10,7 +10,7 @@ import subprocess
 import time
 import unittest
 
-from support.harness import (BridgeCase, FIXTURES, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
+from support.harness import (BridgeCase, FIXTURES, LEGACY_INHERITED, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
                              wait_until)
 
 
@@ -276,7 +276,8 @@ class AnOlderReleasesRegistry(BridgeCase):
         self.assertEqual((review["kind"], review["state"], review["sandbox"]), ("review", "completed", "read-only"))
         self.assertEqual(self.result_view("--run", LEGACY_REVIEW)[1], b"no findings")
         listing = self.bridge("status")
-        self.assertEqual({r["run_id"] for r in listing["runs"]}, {LEGACY_REVIEW, LEGACY_PREDECESSOR, LEGACY_WAITER})
+        self.assertEqual({r["run_id"] for r in listing["runs"]},
+                         {LEGACY_REVIEW, LEGACY_PREDECESSOR, LEGACY_WAITER, LEGACY_INHERITED})
         self.assertEqual(listing["running"], [LEGACY_WAITER])
         self.assertEqual(listing["groups"], ["p1", "p2"])
         waiter = self.row(LEGACY_WAITER)
@@ -285,7 +286,7 @@ class AnOlderReleasesRegistry(BridgeCase):
         self.assertEqual((done["group_state"], members[0][1]), ("completed", b"phase one done"))
         self.assertEqual(self.result_view("--group", "p2")[0]["group_state"], "running")
         rep = self.bridge("doctor")
-        self.assertEqual((rep["runs_dir_runs"], rep["runs_unreadable"]), (3, 0))
+        self.assertEqual((rep["runs_dir_runs"], rep["runs_unreadable"]), (4, 0))
 
     def test_a_finished_legacy_group_is_continued_and_cleaned(self):
         self.bridge("stop", "--group", "p2")

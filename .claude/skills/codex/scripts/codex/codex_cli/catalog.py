@@ -30,6 +30,11 @@ def codex_version(strict=False):
     return (r.stdout or r.stderr).strip() or None
 
 
+def support_for(version_text):
+    """Stub: what a `codex --version` line says this install can do."""
+    return {"version": None, "isolation": None, "profile": False}
+
+
 def model_catalog():
     """What this Codex install offers, trimmed to the fields a caller chooses from, or None if it cannot be read.
 

@@ -38,10 +38,19 @@ def engine(module):
 
 TERMINAL = ("completed", "failed", "interrupted", "orphaned", "timed_out")
 
-# Run ids in legacy_registry/: a 0.6 `review` run, a finished phase-1 member with a boolean `priority`, and an `--as-ready` member still `waiting` on it.
+# Run ids in legacy_registry/: a 0.6 `review` run (read-only, before read-only could write scratch), a finished phase-1 member with a boolean `priority`, an `--as-ready` member still `waiting` on it, and a read-only run that loaded the user's config.toml (`isolated: false`).
 LEGACY_REVIEW = "20260803-204347-reviewer-4efc"
 LEGACY_PREDECESSOR = "20260810-100000-p1-aaaa"
 LEGACY_WAITER = "20260810-100500-p2-bbbb"
+LEGACY_INHERITED = "20260815-120000-inherited-cccc"
+
+
+def read_only_profile(cwd) -> dict:
+    """The `-c` entries a read-only run that can write scratch hands Codex, as `config_values` reads them: a permissions profile reading everything, writing only TMPDIR and ~/.cache, naming the run's directory read-only, network off — and no `sandbox_mode`."""
+    return {"permissions.codex_skill_read_only.filesystem":
+                f'{{":root"="read", ":tmpdir"="write", "~/.cache"="write", "{cwd}"="read"}}',
+            "permissions.codex_skill_read_only.network.enabled": "false",
+            "default_permissions": '"codex_skill_read_only"'}
 
 
 def alive(pid) -> bool:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def settings_for(*, sandbox=None, model=None, effort=None, priority=None, inherit_config=False, cwd=None,
-            base=None, user=None):
+            base=None, user=None, read_only_blocker=None):
     """Resolve a run's settings from the caller's flags, the run it continues (`base`, or None) and the user's config.toml defaults (`user`).
 
     Each setting: the flag, else what the continued thread recorded, else the config, else nothing (the server decides). The thread's record wins over the config only while isolation is unchanged — an empty record is a record, which is why this is not an `or` chain. The config is consulted only for an isolated run: under `--inherit-config` Codex reads it itself. The sandbox is never taken from the config.
@@ -34,6 +34,7 @@ def settings_for(*, sandbox=None, model=None, effort=None, priority=None, inheri
         "effort": effort or (base.get("effort") if inherits else user.get("effort")),
         "service_tier": tier,
         "cwd": cwd or (base.get("cwd") if base else None),
+        "read_only": None, "read_only_note": None,
         "adopted": {"model": model or user.get("model"), "effort": effort or user.get("effort"),
                     "model_source": None if model else "config.toml",
                     "effort_source": None if effort else "config.toml"},

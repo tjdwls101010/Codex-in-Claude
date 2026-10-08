@@ -79,5 +79,52 @@ class Precedence(unittest.TestCase):
         self.assertEqual((r["isolated"], r["model"]), (True, "m"))
 
 
+class ReadOnlyMarker(unittest.TestCase):
+    """Which read-only a run gets. `scratch` writes TMPDIR and ~/.cache, so tests and builds run; `strict` is the legacy sandbox, which cannot write even a temporary file. A run takes up scratch only when it is new or names --sandbox read-only, and only isolated; a thread that recorded scratch keeps it; any other read-only thread keeps the strict sandbox it recorded, so no thread's permissions widen without being asked. `read_only_blocker` is why this install or directory cannot use scratch, and it becomes the note."""
+
+    LEGACY = {**THREAD}  # read-only, isolated, no marker: recorded before scratch existed
+
+    def marker(self, **kw):
+        r = resolve(**kw)
+        return r["read_only"], r["read_only_note"]
+
+    def test_a_new_read_only_run_takes_scratch(self):
+        self.assertEqual(self.marker(sandbox="read-only"), ("scratch", None))
+
+    def test_a_blocker_makes_it_strict_and_says_why(self):
+        self.assertEqual(self.marker(sandbox="read-only", read_only_blocker="why not"), ("strict", "why not"))
+
+    def test_a_writing_sandbox_has_no_marker(self):
+        for kw in ({}, {"sandbox": "danger-full-access"}, {"base": {**THREAD, "read_only": "scratch"}, "sandbox": "workspace-write"}):
+            with self.subTest(kw=kw):
+                self.assertEqual(self.marker(**kw), (None, None))
+
+    def test_a_thread_that_recorded_scratch_keeps_it(self):
+        self.assertEqual(self.marker(base={**THREAD, "read_only": "scratch"}), ("scratch", None))
+        self.assertEqual(self.marker(base={**THREAD, "read_only": "scratch"}, read_only_blocker="old codex"),
+                         ("strict", "old codex"))
+
+    def test_an_older_or_strict_thread_stays_strict_unless_asked(self):
+        for base in (self.LEGACY, {**THREAD, "read_only": "strict"}):
+            with self.subTest(base=base.get("read_only")):
+                marker, note = self.marker(base=base)
+                self.assertEqual(marker, "strict")
+                self.assertTrue(note)
+                self.assertEqual(self.marker(base=base, sandbox="read-only"), ("scratch", None))
+
+    def test_a_thread_that_loads_the_users_config_stays_strict_even_when_asked(self):
+        base = {**THREAD, "isolated": False}
+        for kw in ({}, {"sandbox": "read-only"}):
+            with self.subTest(kw=kw):
+                marker, note = self.marker(base=base, **kw)
+                self.assertEqual(marker, "strict")
+                self.assertTrue(note)
+
+    def test_a_new_run_that_loads_the_users_config_is_strict(self):
+        marker, note = self.marker(sandbox="read-only", inherit_config=True)
+        self.assertEqual(marker, "strict")
+        self.assertTrue(note)
+
+
 if __name__ == "__main__":
     unittest.main()

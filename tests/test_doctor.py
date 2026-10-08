@@ -105,6 +105,24 @@ class Doctor(BridgeCase):
 
 
 
+class ReadOnlyAndTheCodexVersion(BridgeCase):
+    """What a read-only run started here would get, and the Codex below which no isolated run can start."""
+
+    def test_a_current_codex_gives_read_only_runs_scratch(self):
+        rep = self.bridge("doctor")
+        self.assertEqual(rep["read_only"], "scratch")
+        self.assertEqual(rep["blockers"], [])
+
+    def test_below_the_profile_floor_read_only_is_strict_and_warned(self):
+        rep = self.bridge("doctor", env={"FAKE_CODEX_VERSION": "codex-cli 0.150.0"})
+        self.assertEqual((rep["ok"], rep["read_only"]), (True, "strict"))
+        self.assertTrue(rep["warnings"])
+
+    def test_below_the_isolation_floor_is_a_blocker(self):
+        rep = self.bridge("doctor", rc=3, env={"FAKE_CODEX_VERSION": "codex-cli 0.121.0"})
+        self.assertEqual(len(rep["blockers"]), 1, rep["blockers"])
+
+
 class LoginStatus(unittest.TestCase):
     """`codex.codex_cli.login_status`, asked of the fake codex: the cause says which of four answers the caller acts on."""
 

@@ -128,6 +128,11 @@ class EventLines(unittest.TestCase):
         self.assertEqual(self.lines(started), ["cmd.running make test"])
         self.assertEqual(self.lines(started, self.command(0, "ok\n")), ["cmd exit=0 out=3B make test"])
 
+    def test_the_shell_wrapper_goes_whether_or_not_codex_quoted_the_command(self):
+        bare = {"type": "item.completed", "item": {"id": "c", "type": "command_execution", "command": "/bin/zsh -lc ls",
+                                                   "aggregated_output": "", "exit_code": 0}}
+        self.assertEqual(self.lines(bare), ["cmd exit=0 out=0B ls"])
+
     def test_a_failed_command_carries_the_head_and_tail_of_its_output(self):
         self.assertEqual(self.lines(self.command(2, "boom\n", "failed")), ["cmd exit=2 out=5B make test", "    | boom"])
         big = "".join(f"line {i:04d}\n" for i in range(1000))

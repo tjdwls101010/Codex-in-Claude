@@ -64,7 +64,8 @@ def first_thread_id(events_path: Path):
 
 # -- text shaping -----------------------------------------------------------
 
-_WRAP = re.compile(r"""^/bin/(?:ba|z|)sh\s+-l?c\s+(?P<q>['"])(?P<body>.*)(?P=q)\s*$""", re.S)
+# Codex quotes the command unless it is one bare word.
+_WRAP = re.compile(r"""^/bin/(?:ba|z|)sh\s+-l?c\s+(?:(?P<q>['"])(?P<body>.*)(?P=q)|(?P<bare>[^\s'"]+))\s*$""", re.S)
 
 
 def strip_wrapper(cmd: str) -> str:
@@ -72,7 +73,7 @@ def strip_wrapper(cmd: str) -> str:
     if not cmd:
         return ""
     m = _WRAP.match(cmd.strip())
-    return m.group("body") if m else cmd
+    return (m.group("body") if m.group("q") else m.group("bare")) if m else cmd
 
 
 def head_tail(s: str, head: int, tail: int) -> str:

@@ -128,8 +128,7 @@ def _check_liftable_guards(runs_dir, name, *, force, lost_manifest, unknown):
 
 
 def _remove_worktrees(project, runs_dir, name, *, force, explicit_registry, overrode):
-    removed, kept = [], []
-    worktree_prune(project)
+    removed, kept, pruned = [], [], set()
     for rid, rd, meta, path in member_checkouts(runs_dir, name):
         wt = (meta or {}).get("worktree")
         if meta is None:
@@ -156,6 +155,10 @@ def _remove_worktrees(project, runs_dir, name, *, force, explicit_registry, over
                 kept.append({"run_id": rid, "path": str(path), "dirty": dirty,
                              "reason": f"the checkout it was cut from is gone and {source} does not record this worktree, so it is not this repository's to remove"})
                 continue
+        if source not in pruned:
+            # A stale record of a checkout already gone makes git refuse; pruned only in a repository a checkout is removed from.
+            worktree_prune(source)
+            pruned.add(source)
         ok, err = worktree_remove(source, path, force=force, owned=path == rd / "wt")
         if ok and dirty and force:
             overrode.setdefault("discarded_uncommitted", []).append(str(path))

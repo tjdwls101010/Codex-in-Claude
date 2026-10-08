@@ -138,6 +138,14 @@ class OneRegistryPerRepository(BridgeCase):
         self.assertTrue(out["events"].startswith(str(self.runs_dir) + "/"), out["events"])
         self.assertFalse((checkout / ".codex-runs").exists())
 
+    def test_without_git_a_directory_keeps_its_own_registry(self):
+        plain = self.tmp / "plain"
+        plain.mkdir()
+        self.extra_runs_dirs = [plain / ".codex-runs"]
+        for args in (("status",), ("status", "--runs-dir", plain / ".codex-runs")):
+            with self.subTest(args=args):
+                self.assertEqual(self.bridge(*args, cwd=plain, env={"PATH": "/nonexistent"})["runs_dir"], str(plain / ".codex-runs"))
+
     def test_doctor_names_the_checkout_and_the_registry(self):
         wt = self.linked()
         rep = self.bridge("doctor", cwd=wt)
@@ -174,6 +182,18 @@ class CleaningAfterTheCheckoutIsGone(BridgeCase):
         self.assertEqual([k["path"] for k in res["kept"]], [out["runs"][0]["worktree"]])
         self.assertTrue(res["kept"][0]["reason"])
         self.assertTrue(Path(out["runs"][0]["worktree"]).exists())
+
+    def test_nor_prunes_the_repository_it_is_called_from(self):
+        wt = self.tmp / "linked"
+        self.git("worktree", "add", "-q", wt, "-b", "side")
+        self.wait_all(self.bridge("batch", "--group", "g", "--worktree", "--task", "a", cwd=wt))
+        self.git("worktree", "remove", "--force", wt)
+        other = repo(self.tmp / "other")
+        git(other, "worktree", "add", "-q", self.tmp / "others-wt", "-b", "side")
+        shutil.rmtree(self.tmp / "others-wt")
+        self.bridge("clean", "--group", "g", "--runs-dir", self.runs_dir, cwd=other)
+        self.assertIn(str((self.tmp / "others-wt").resolve()), git(other, "worktree", "list", "--porcelain").stdout,
+                      "its stale record is its own to prune")
 
     def test_nor_deletes_a_half_built_checkout_another_repository_never_owned(self):
         # A checkout without its .git file looks like one `git worktree add` never finished, which --force deletes by hand — but only on the word of the repository that cut it.

@@ -311,6 +311,50 @@ class RemovedSurface(BridgeCase):
                 self.assertIn("unrecognized arguments", self.bridge(*args, rc=2)["error"])
         self.assertFalse(self.runs_dir.exists())
 
+class TheSurfaceRemovedIn011(BridgeCase):
+    """A command or flag 0.11 removed is refused like any command line that must change — exit 2 with the `help` to read — and, where something else now does its job, `instead` says what. A caller holding an older SKILL.md meets this rather than a bare parse error."""
+
+    def help_for(self, *words):
+        return " ".join(["uv run", f'"{ENTRY}"', *words, "--help"])
+
+    # (command line, the command whose help it names, whether a replacement exists)
+    CASES = [
+        (("show", "--run", "r", "--item", "item_0"), (), True),
+        (("start", "--image", "a.png", "x"), ("start",), True),
+        (("resume", "r", "--image", "a.png", "x"), ("resume",), True),
+        (("resume", "--last", "x"), ("resume",), True),
+        (("batch", "--group", "g", "--resume-from", "p", "--task", "x"), ("batch",), True),
+        (("batch", "--group", "g", "--worktree", "--base", "HEAD", "--task", "x"), ("batch",), True),
+        (("log", "--run", "r", "--follow"), ("log",), True),
+        (("log", "--group", "g"), ("log",), True),
+        (("log", "--run", "r", "--since", "0"), ("log",), True),
+        (("log", "--run", "r", "--level", "full"), ("log",), True),
+        (("log", "--run", "r", "--follow-timeout", "5"), ("log",), True),
+        (("status", "--group", "g", "--follow"), ("status",), True),
+        (("status", "--group", "g", "--follow-timeout", "5"), ("status",), True),
+        (("status", "--all"), ("status",), True),
+        (("stop", "--all"), ("stop",), True),
+        (("start", "--inherit-config", "x"), ("start",), False),
+        (("resume", "r", "--inherit-config", "x"), ("resume",), False),
+        (("start", "--no-priority", "x"), ("start",), False),
+        (("start", "--add-dir", "/tmp", "x"), ("start",), False),
+        (("batch", "--group", "g", "--force", "--task", "x"), ("batch",), False),
+        (("stop", "--run", "r", "--grace", "1"), ("stop",), False),
+    ]
+
+    def test_each_is_refused_with_its_help_and_what_to_do_instead(self):
+        for args, words, replaced in self.CASES:
+            with self.subTest(args=args):
+                out = self.bridge(*args, rc=2)
+                self.assertEqual(out["help"], self.help_for(*words))
+                self.assertEqual(bool(out.get("instead")), replaced, out)
+        self.assertFalse(self.runs_dir.exists(), "a removed surface claims nothing")
+
+    def test_a_prompt_that_only_mentions_a_removed_flag_is_still_a_prompt(self):
+        out = self.bridge("start", "explain what --image used to do")
+        self.wait_state(out["run_id"])
+
+
 class TheRegistryGoesWhereItIsTold(BridgeCase):
 
     def test_runs_dir_moves_the_registry_and_only_it_resolves_the_run(self):

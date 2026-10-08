@@ -188,7 +188,7 @@ class ManyRunsAtOnce(BridgeCase):
         seen_unreadable = []
 
         def all_done():
-            listing = self.bridge("status", "--all")
+            listing = self.bridge("status")
             if listing.get("runs_unreadable"):
                 seen_unreadable.append(listing["unreadable"])
             return all(r["state"] == "completed" for r in listing["runs"]) and len(listing["runs"]) == 8

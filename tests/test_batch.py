@@ -191,16 +191,21 @@ class ResumeFrom(BatchCase):
         out = self.batch("p1", *(tasks or ("a", "b")), **kw)
         return out
 
-    def test_task_i_resumes_member_i(self):
+    def next_round(self, name, previous, *extra, **kw):
+        """A batch that continues each member of an earlier one: a tasks file with one `kind: resume` line per member."""
+        tf = self.tasks_file(*({"prompt": f"go on {chr(97 + i)}", "kind": "resume", "resume": r["run_id"]}
+                               for i, r in enumerate(previous["runs"])), name=f"{name}.jsonl")
+        return self.bridge("batch", "--group", name, "--tasks-file", tf, *extra, **kw)
+
+    def test_a_next_round_resumes_each_member(self):
         one = self.phase_one()
         self.wait_all(one)
-        two = self.batch("p2", "go on a", "go on b", extra=("--resume-from", "p1"))
+        two = self.next_round("p2", one)
         self.wait_all(two)
         resumed = [r for r in self.runs_invoked() if r["argv"][1] == "resume"]
         self.assertEqual([r["argv"][2] for r in resumed], [r["thread_id"] for r in one["runs"]])
         self.assertTrue(resumed[0]["argv"][-1].endswith("go on a"))
-        self.assertEqual(two["resumed_from"], {"group": "p1", "members": [r["run_id"] for r in one["runs"]]})
-        self.assertEqual(self.manifest("p2")["derived_from"], "p1")
+        self.assertEqual([r["kind"] for r in two["runs"]], ["resume", "resume"])
 
     def test_a_task_that_names_its_own_target_keeps_it(self):
         one = self.phase_one()
@@ -275,7 +280,7 @@ class ResumeFrom(BatchCase):
     def test_writers_sharing_a_tree_are_counted_with_the_sandbox_they_will_get(self):
         one = self.batch("p1", "a", "b", extra=("--sandbox", "read-only"))
         self.wait_all(one)
-        two = self.batch("p2", "x", "y", extra=("--resume-from", "p1", "--sandbox", "workspace-write"))
+        two = self.next_round("p2", one, "--sandbox", "workspace-write")
         self.wait_all(two)
         self.assertEqual([r["sandbox"] for r in two["runs"]], ["workspace-write"] * 2)
         self.assertIn(f"2 members write to {self.project}", two["worktrees"]["note"])
@@ -311,20 +316,19 @@ class FollowingAGroup(BatchCase):
             self.assertRegex(ln, r"^\[\d(:[^\]]+)?\] ")
         self.assertEqual(lines[-1], "group.completed group=g done=3 failed=0")
 
-    def test_a_live_group_follow_can_be_bounded(self):
-        self.batch("g", "a", env={"FAKE_CODEX_HANG": 60})
-        p = self.bridge_raw("status", "--group", "g", "--follow", "--follow-timeout", 1.5)
-        self.assertRegex(p.stdout.splitlines()[-1], r"^group\.still-running group=g running=1 done=0 failed=0$")
-        p = self.bridge_raw("log", "--group", "g", "--follow", "--follow-timeout", 1.5)
-        self.assertRegex(p.stdout.splitlines()[-1], r"^group\.still-running group=g ")
+    def test_a_wait_on_a_live_group_can_be_bounded(self):
+        out = self.batch("g", "a", env={"FAKE_CODEX_HANG": 60})
+        header = self.result_view("--group", "g", "--wait", "--wait-timeout", 1.5)[0]
+        self.assertEqual((header["group_state"], header["running"], header["done"], header["failed"]),
+                         ("running", [out["runs"][0]["run_id"]], [], []))
 
     def test_stopping_a_group_ends_it_partial(self):
         out = self.batch("g", "a", "b", env={"FAKE_CODEX_HANG": 60})
         for r in out["runs"]:
             self.wait_state(r["run_id"], ("running",))
         self.assertEqual(len(self.bridge("stop", "--group", "g")["stopped"]), 2)
-        p = self.bridge_raw("status", "--group", "g", "--follow", "--follow-timeout", 30)
-        self.assertEqual(p.stdout.splitlines()[-1], "group.partial group=g done=0 failed=2")
+        header = self.result_view("--group", "g", "--wait", "--wait-timeout", 30)[0]
+        self.assertEqual((header["group_state"], len(header["done"]), len(header["failed"])), ("partial", 0, 2))
 
 
 class AMalformedRegistry(BridgeCase):

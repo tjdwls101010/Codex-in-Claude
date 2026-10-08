@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 import signal
-import subprocess
 import time
 import unittest
 
@@ -217,12 +216,10 @@ class Listing(BridgeCase):
         self.finished(3)
         self.finished(1, start=3, state="failed")
         live, _m = self.running("live")
-        for args in ((), ("--all",)):
-            with self.subTest(args=args):
-                listing = self.bridge("status", *args)
-                self.assertEqual(listing["counts"], {"live": 1, "completed": 3, "failed": 1})
-                self.assertEqual(listing["running"], [live["run_id"]])
-                self.assertEqual([k for k in ("threads", "done", "failed") if k in listing], [])
+        listing = self.bridge("status")
+        self.assertEqual(listing["counts"], {"live": 1, "completed": 3, "failed": 1})
+        self.assertEqual(listing["running"], [live["run_id"]])
+        self.assertEqual([k for k in ("threads", "done", "failed") if k in listing], [])
 
     def test_the_default_listing_does_not_grow_with_finished_runs(self):
         self.finished(25)
@@ -254,7 +251,9 @@ class Listing(BridgeCase):
         self.assertEqual(listing["runs_truncated"], 22 - len(ids))
         self.assertGreater(listing["runs_truncated"], 0)
         self.assertEqual(listing["running"], [live["run_id"]])
-        self.assertEqual(len(self.bridge("status", "--all")["runs"]), 22)
+        oldest = "20990101-000000-filler-0000"
+        self.assertNotIn(oldest, ids)
+        self.assertEqual(self.row(oldest)["run_id"], oldest, "a run the listing leaves out is still answered by --run")
 
     def test_groups_are_listed_so_a_later_session_can_find_them(self):
         out = self.bridge("batch", "--group", "found-later", "--task", "a")
@@ -292,7 +291,8 @@ class AnOlderReleasesRegistry(BridgeCase):
         self.bridge("stop", "--group", "p2")
         self.wait_state(LEGACY_WAITER)
         self.assertTrue(self.bridge("clean", "--group", "p2")["name_released"])
-        out = self.bridge("batch", "--group", "p3", "--resume-from", "p1", "--task", "go on")
+        out = self.bridge("batch", "--group", "p3", "--tasks-file",
+                          self.tasks_file({"prompt": "go on", "kind": "resume", "resume": LEGACY_PREDECESSOR}))
         self.wait_all(out)
         argv = self.last_argv()
         self.assertEqual(argv[:3], ["exec", "resume", self.meta(LEGACY_PREDECESSOR)["thread_id"]])
@@ -467,16 +467,13 @@ class WaitingForTheResult(BridgeCase):
         pgid = self.wait_state(rid, ("running",))["pgid"]
         self.addCleanup(lambda: alive(pgid) and os.killpg(int(pgid), signal.SIGKILL))
         waiter = self.spawn("result", "--group", "g", "--wait")
-        follower = self.spawn("status", "--group", "g", "--follow")
         time.sleep(1.5)
         (self.runs_dir / rid / "meta.json").write_text("{ truncated")
         stdout, _ = waiter.communicate(timeout=30)
         self.assertEqual(waiter.returncode, 0, stdout)
-        self.assertEqual([u["run_id"] for u in json.loads(stdout.splitlines()[0])["unstarted"]], [rid])
-        followed, _ = follower.communicate(timeout=30)
-        self.assertEqual(follower.returncode, 0)
-        self.assertRegex(followed.splitlines()[-1], r"^group\.partial group=g .* unstarted=1",
-                         "the follower closes under the same condition, counting the member it can no longer read")
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual([u["run_id"] for u in header["unstarted"]], [rid])
+        self.assertEqual(header["group_state"], "partial")
 
     def test_a_member_added_while_waiting_is_waited_for_too(self):
         # A wait started while `batch` is still starting members waits for the ones that start after it.
@@ -490,66 +487,33 @@ class WaitingForTheResult(BridgeCase):
         header = json.loads(res.stdout.splitlines()[0])
         self.assertEqual((header["group_state"], len(header["done"]), header["running"]), ("completed", 2, []), header)
 
-    def test_a_follower_counts_the_slots_it_saw_never_start_even_once_the_name_is_released(self):
-        # `clean` may release the manifest between the last member's end and the follower's next look; what the follower saw at the start still stands.
+    def test_a_wait_counts_the_slots_it_saw_never_start_even_once_the_name_is_released(self):
+        # `clean` may release the manifest between the last member's end and the wait's next look; what the wait saw at the start still stands.
         tf = self.tasks_file("runs", {"prompt": "never starts", "schema": str(self.tmp / "nope.json")})
         out = self.bridge("batch", "--group", "g", "--tasks-file", tf, env={"FAKE_CODEX_HANG": 3})
         rid = out["runs"][0]["run_id"]
         self.wait_state(rid, ("running",))
-        follower = self.spawn("status", "--group", "g", "--follow")
+        waiter = self.spawn("result", "--group", "g", "--wait")
         wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.01)
         self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
-        followed, _ = follower.communicate(timeout=30)
-        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1")
+        stdout, _ = waiter.communicate(timeout=30)
+        self.assertEqual(waiter.returncode, 0, stdout)
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual((header["group_state"], header["done"], [u["index"] for u in header["unstarted"]]),
+                         ("partial", [rid], [1]))
 
-    def test_a_member_that_stops_parsing_while_followed_is_counted_once(self):
+    def test_a_member_that_stops_parsing_while_waited_for_is_counted_once(self):
         out = self.bridge("batch", "--group", "g", "--task", "quick", "--task", "slow",
                           env={"FAKE_CODEX_WHEN": json.dumps({"slow": {"FAKE_CODEX_HANG": 4}})})
         quick, slow = (r["run_id"] for r in out["runs"])
-        follower = self.spawn("status", "--group", "g", "--follow")
+        waiter = self.spawn("result", "--group", "g", "--wait")
         self.wait_state(quick)
         time.sleep(1.2)
         (self.runs_dir / quick / "meta.json").write_text("{ truncated")
-        followed, _ = follower.communicate(timeout=30)
-        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1 unreadable=1")
-
-    def test_a_follower_started_while_a_batch_spawns_follows_the_members_it_adds(self):
-        # The second member gets its run while the first is still live, so the follow sees it start. A slot still unspawned when every run it knows has ended counts as unstarted, as the contract says: it looks the same as a slot a killed batch left.
-        for command in (("status", "--group", "g", "--follow"), ("log", "--group", "g", "--follow")):
-            with self.subTest(command=command[0]):
-                for d in self.runs_dir.glob("*"):
-                    subprocess.run(["rm", "-rf", str(d)])
-                p = self.spawn("batch", "--group", "g", "--task", "first", "--task", "second",
-                               env={"FAKE_CODEX_WHEN": json.dumps({"first": {"FAKE_CODEX_HANG": 6},
-                                                                   "second": {"FAKE_CODEX_PRE_DELAY": 2}})})
-                manifest = self.runs_dir / ".groups" / "g.json"
-                wait_until(lambda: manifest.exists() and any(m.get("run_id") for m in json.loads(manifest.read_text())["members"]),
-                           timeout=30)
-                followed = self.bridge_raw(*command, timeout=120).stdout
-                p.communicate(timeout=60)
-                self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=2 failed=0", followed)
-                if command[0] == "log":
-                    second = json.loads(manifest.read_text())["members"][1]["run_id"]
-                    lines = followed.splitlines()
-                    self.assertIn("[1] msg OK", lines, "the later member's events are shown too")
-                    self.assertIn(f"group.members group=g 1={second}", lines, "and which run [1] is")
-                    self.assertLess(lines.index(f"group.members group=g 1={second}"), lines.index("[1] msg OK"))
-
-    def test_a_follower_does_not_move_to_a_new_group_that_takes_the_name(self):
-        # `clean` can release the name and another batch claim it between two looks; what is followed is the group that was asked for.
-        first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})
-        rid = first["runs"][0]["run_id"]
-        follower = self.spawn("status", "--group", "g", "--follow")
-        time.sleep(1.5)
-        # Paused across the end, the release and the new claim, so all three land between two of its looks.
-        os.kill(follower.pid, signal.SIGSTOP)
-        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.05)
-        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
-        second = self.bridge("batch", "--group", "g", "--task", "b", env={"FAKE_CODEX_HANG": 5})
-        os.kill(follower.pid, signal.SIGCONT)
-        followed, _ = follower.communicate(timeout=60)
-        self.assertNotIn(second["runs"][0]["run_id"], followed)
-        self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=1 failed=0")
+        stdout, _ = waiter.communicate(timeout=30)
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual(([m["run_id"] for m in header["members"]], [u["run_id"] for u in header["unstarted"]]),
+                         ([slow], [quick]))
 
     def test_a_wait_collects_the_group_it_waited_for_not_a_new_one_with_its_name(self):
         first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})

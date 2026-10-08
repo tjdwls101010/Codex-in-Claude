@@ -141,9 +141,6 @@ class TheNextStep(BridgeCase):
         self.wait_state(out["run_id"])
         again = self.bridge("resume", out["run_id"], "y")
         self.assertEqual(again["next"], self.follow("result", "--run", again["run_id"], "--wait"))
-        self.wait_state(again["run_id"])
-        last = self.bridge("resume", "--last", "z")
-        self.assertEqual(last["next"], self.follow("result", "--run", last["run_id"], "--wait"))
 
     def test_a_batch_names_the_wait_for_its_group(self):
         out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b")

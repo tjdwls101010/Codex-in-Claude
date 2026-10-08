@@ -28,7 +28,7 @@ class SettingsAreReasserted(ResumeCase):
 
     def test_every_recorded_setting_reaches_the_resumed_turn(self):
         first, second, rec = self.first_then_resume(
-            ("--sandbox", "read-only", "--model", "fake-big", "--effort", "low", "--no-priority"))
+            ("--sandbox", "read-only", "--model", "fake-big", "--effort", "low"))
         argv = rec["argv"]
         self.assertEqual(argv[:3], ["exec", "resume", first["thread_id"]])
         self.assertEqual(self.config_values(argv),
@@ -84,10 +84,10 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
 
     def test_a_flag_beats_the_config(self):
         self.config(self.CONFIG)
-        argv = self.started_argv("--model", "fake-small", "--effort", "medium", "--no-priority")
+        argv = self.started_argv("--model", "fake-small", "--effort", "medium")
         self.assertEqual(argv[argv.index("-m") + 1], "fake-small")
         self.assertEqual(self.config_values(argv), {"sandbox_mode": '"workspace-write"',
-                                                    "model_reasoning_effort": '"medium"'})
+                                                    "model_reasoning_effort": '"medium"', "service_tier": '"fast"'})
 
     def test_the_sandbox_is_never_taken_from_the_config(self):
         self.config('sandbox_mode = "danger-full-access"\n')
@@ -98,12 +98,16 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
         self.config('[profiles.work]\nmodel = "fake-small"\n')
         self.assertNotIn("-m", self.started_argv())
 
-    def test_inheriting_the_config_does_not_restate_it(self):
+    def test_a_thread_that_loads_the_config_is_not_handed_it_again(self):
         self.config(self.CONFIG)
-        argv = self.started_argv("--inherit-config")
+        self.install_legacy_registry()
+        out = self.bridge("resume", LEGACY_INHERITED, "again")
+        self.wait_state(out["run_id"])
+        argv = self.last_argv()
         self.assertNotIn("--ignore-user-config", argv)
         self.assertNotIn("-m", argv)
-        self.assertEqual(self.config_values(argv), {"sandbox_mode": '"workspace-write"'})
+        self.assertEqual(self.config_values(argv), {"sandbox_mode": '"read-only"'},
+                         "Codex reads config.toml itself, and the thread's recorded empty tier stays empty")
 
     def test_no_config_pins_nothing(self):
         argv = self.started_argv()
@@ -122,15 +126,18 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
         self.assertEqual(self.config_values(argv)["model_reasoning_effort"], '"high"')
 
     def test_a_recorded_no_tier_stays_no_tier(self):
+        first = self.bridge("start", "x")
+        self.wait_state(first["run_id"])
         self.config(self.CONFIG)
-        _f, _s, rec = self.first_then_resume(("--no-priority",))
-        self.assertNotIn("service_tier", self.config_values(rec["argv"]))
+        out = self.bridge("resume", first["run_id"], "y")
+        self.wait_state(out["run_id"])
+        self.assertNotIn("service_tier", self.config_values(self.last_argv()))
 
     def test_a_thread_from_an_older_release_keeps_its_boolean_tier(self):
         self.install_legacy_registry()
         for ref in (LEGACY_PREDECESSOR, LEGACY_REVIEW):
             with self.subTest(ref=ref):
-                self.bridge("stop", "--all")
+                self.bridge("stop", "--group", "p2")
                 out = self.bridge("resume", ref, "--force", "again")
                 self.wait_state(out["run_id"])
                 argv = self.last_argv()

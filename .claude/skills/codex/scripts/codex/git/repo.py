@@ -13,11 +13,11 @@ WALK_CAP = 500
 
 
 def run_git(cwd, *args, timeout=60):
-    """git's answer, or — when git cannot be run or does not answer in time — a failed one (127), so every question about a repository degrades to "not a repository" rather than an error."""
+    """git's answer. When git cannot be run or does not answer in time the returncode is None: no answer, which a question about a repository reads as "not one" and a decision that cannot be undone must read as unknown, never as a no."""
     try:
         return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as e:
-        return subprocess.CompletedProcess(["git", *args], 127, "", str(e))
+        return subprocess.CompletedProcess(["git", *args], None, "", str(e))
 
 
 def git_toplevel(path: Path):
@@ -129,5 +129,8 @@ def uncommitted_count(cwd: Path):
 
 
 def is_dirty(target: Path) -> bool:
+    """Whether a checkout has uncommitted changes — True when git gave no answer, since a caller about to discard the checkout must not take unknown for clean."""
     r = run_git(target, "status", "--porcelain")
+    if r.returncode is None:
+        return True
     return r.returncode == 0 and bool(r.stdout.strip())

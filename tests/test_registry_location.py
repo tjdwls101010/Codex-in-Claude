@@ -164,6 +164,33 @@ class OneRegistryPerRepository(BridgeCase):
         self.assertEqual((rep["project"], rep["runs_dir"]), (str(wt), str(self.runs_dir)))
 
 
+class WhenGitCannotAnswer(BridgeCase):
+    """"git could not say" is unknown, never a no: nothing is deleted by hand, and a checkout is not taken for clean."""
+
+    def no_git(self):
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        if not (bin_dir / "python3").exists():
+            (bin_dir / "python3").symlink_to(sys.executable)
+        return {"PATH": str(bin_dir)}
+
+    def test_force_deletes_nothing_by_hand(self):
+        out = self.bridge("batch", "--group", "g", "--worktree", "--task", "a")
+        self.wait_all(out)
+        checkout = Path(out["runs"][0]["worktree"])
+        (checkout / ".git").unlink()
+        res = self.bridge("clean", "--group", "g", "--force", env=self.no_git())
+        self.assertEqual((res["removed"], [k["path"] for k in res["kept"]]), ([], [str(checkout)]))
+        self.assertTrue((checkout / "f.txt").exists() or (checkout / "tracked.txt").exists(), "the checkout's files are still there")
+
+    def test_a_checkout_git_cannot_ask_about_counts_as_dirty(self):
+        from unittest import mock
+        out = self.bridge("batch", "--group", "g", "--worktree", "--task", "a")
+        self.wait_all(out)
+        with mock.patch.dict(os.environ, self.no_git()):
+            self.assertTrue(engine("codex.git").is_dirty(Path(out["runs"][0]["worktree"])))
+
+
 class CleaningAfterTheCheckoutIsGone(BridgeCase):
     """A batch cut from a linked worktree records that worktree as the repository its checkouts came from; once it is removed, `clean` asks the main checkout instead, and only about checkouts that repository records."""
 

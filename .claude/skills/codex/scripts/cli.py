@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from codex.batch import TASK_FIELDS, batch, clean
-from codex.codex_cli import ISOLATION_FLOOR_TEXT, SANDBOX_MODES, pin_codex_home
+from codex.codex_cli import FAIL_HEAD_BYTES, ISOLATION_FLOOR_TEXT, SANDBOX_MODES, pin_codex_home
 from codex.doctor import doctor, models
 from codex.errors import Refusal
 from codex.observe import GROUP_MESSAGE_CAP, LISTING_ROWS, STALL_SECONDS, log, result, status
@@ -87,9 +87,9 @@ A group's `group_state` is `running` while any member is live, `completed` when 
 `idle_seconds` is the time since the run's last event."""
 
 
-LOG_DESC = """\
-What one run did, from its events, read once.
-Prints: text — the run's event lines, then `# cursor=<n> run=<id>`.
+LOG_DESC = f"""\
+What one run did, read once from its events.
+Prints: text, one line per event — `thread <id>`, `turn.started`, the agent's messages whole (`msg …`), each command as `cmd exit=<n> out=<bytes>B <command>` with a {FAIL_HEAD_BYTES} B head and tail of its output indented beneath when it exited non-zero, `cmd.running <command>` for one still running, `file <kind> <path>` per changed path relative to the run's directory, `error`, `search` and `mcp` lines, `turn.completed` with token usage — then `run=<id> state=<state>`.
 Exits: 0 printed; 1 refused — a --run that is not there or whose meta.json will not parse — or an internal error; 2 the command line must change — no --run, or anything else the parser refuses."""
 
 

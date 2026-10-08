@@ -1,6 +1,6 @@
-"""Reading what a run's Codex wrote: the `codex exec --json` event stream, filtered to a level and summarised, and its stderr. Every reader here hands back the skill's terms, so nothing outside this unit parses an event or a line Codex prints.
+"""Reading what a run's Codex wrote: the `codex exec --json` event stream, rendered as `log` prints it and summarised, and its stderr. Every reader here hands back the skill's terms, so nothing outside this unit parses an event or a line Codex prints.
 
-`file_change` events carry paths and a kind, never file contents. The context risk is one field, `command_execution.aggregated_output`, which holds a command's whole stdout. That is why the levels split where they do, and why `normal` splits on exit code rather than size: a failed command's output is the case where the output is what the caller needs.
+`file_change` events carry paths and a kind, never file contents. The context risk is one field, `command_execution.aggregated_output`, which holds a command's whole stdout. That is why a command is shown by its exit code and size, and why only a failed one's output is excerpted: there the output is what the caller needs, and elsewhere the agent's own messages, never cut, usually say what it showed.
 """
 
 from __future__ import annotations
@@ -11,52 +11,28 @@ from pathlib import Path
 
 from codex.util import clip, nfc
 
-LEVELS = ("compact", "normal", "full", "raw")
-
-# The agent's own messages are never filtered at any level, so command output in `compact` would usually be a second copy of a summary the caller already has; each command line's size marker says when it is not.
-DEFAULT_LEVEL = "compact"
-
-# `normal`: head and tail kept of a failed command's output — a stack trace's top frames and its final error line.
+# Head and tail kept of a failed command's output — a stack trace's top frames and its final error line.
 FAIL_HEAD_BYTES = 1200
 FAIL_TAIL_BYTES = 1200
 
-# `full`: per-item cap.
-FULL_ITEM_BYTES = 4000
-
-# Command lines are echoed at every level and a heredoc can be thousands of characters.
+# Every command line is echoed, and a heredoc can be thousands of characters.
 CMD_MAX_CHARS = 300
-
-class CursorOutOfRange(ValueError):
-    """`--since` is not a cursor this run's file produced: past its end, or not on a line boundary. Almost always one fed back from a different run."""
 
 
 # -- reading ----------------------------------------------------------------
 
-def read_events(path: Path, since: int = 0):
-    """Read complete JSONL lines from a byte offset; returns `(events, new_cursor)`.
+def read_events(path: Path):
+    """Read the complete JSONL lines; returns `(events, bytes read)`.
 
-    Only whole lines are consumed and the cursor lands after the last complete one, because the file is appended to live: nothing is duplicated or skipped across polls. A line that will not parse comes back as `{"type": "_unparsed", "raw": ...}` rather than being dropped.
+    Only whole lines are read, because the file is appended to live: a line still being written is not an event yet. A line that will not parse comes back as `{"type": "_unparsed", "raw": ...}` rather than being dropped.
     """
     if not path.exists():
-        return [], since
-    since = max(0, since)
-    size = path.stat().st_size
-    if since > size:
-        raise CursorOutOfRange(f"--since {since} is past the end of this run's events file ({size} bytes); check the `run=` of the trailer it came from")
-    if since == size:
-        return [], since
-    with path.open("rb") as fh:
-        # A cursor this function produced always lands just after a newline. Reading from anywhere else would start mid-line and destroy the event that straddles it.
-        if since:
-            fh.seek(since - 1)
-            if fh.read(1) != b"\n":
-                raise CursorOutOfRange(f"--since {since} is not a line boundary of this run's events file, so it is not a cursor this run printed; check the `run=` of the trailer it came from")
-        fh.seek(since)
-        blob = fh.read()
+        return [], 0
+    blob = path.read_bytes()
     cut = blob.rfind(b"\n")
     if cut == -1:
-        return [], since
-    complete, cursor = blob[: cut + 1], since + cut + 1
+        return [], 0
+    complete, cursor = blob[: cut + 1], cut + 1
     events = []
     for line in complete.decode("utf-8", "replace").splitlines():
         line = line.strip()
@@ -122,20 +98,14 @@ def _indent(text: str, prefix: str = "    | ") -> str:
 
 # -- filtering --------------------------------------------------------------
 
-def event_lines(path: Path, since: int = 0, level: str = DEFAULT_LEVEL, rel_to: Path = None):
-    """The events after byte offset `since` rendered at `level`, paths shown relative to `rel_to`; returns `(lines, new cursor)`. A line can hold newlines of its own (an output excerpt under it). Raises `CursorOutOfRange` for a `since` this file did not produce."""
-    events, cursor = read_events(path, since)
-    return format_events(events, level, rel_to), cursor
-
-
-def format_events(events, level: str, project: Path = None):
-    """Render events as text lines at the given level."""
+def event_lines(path: Path, rel_to: Path = None):
+    """A run's events as `log` prints them, paths shown relative to `rel_to`. A line can hold newlines of its own (an output excerpt under it)."""
+    events, _read = read_events(path)
+    # A command that finished is shown by its result alone; one still running by its start, so a long build is not silence.
+    finished = {(ev.get("item") or {}).get("id") for ev in events if ev.get("type") == "item.completed"}
     out = []
     for ev in events:
         t = ev.get("type")
-        if level == "raw":
-            out.append(json.dumps(ev, ensure_ascii=False))
-            continue
         if t == "thread.started":
             out.append(f"thread {ev.get('thread_id')}")
         elif t == "turn.started":
@@ -148,7 +118,7 @@ def format_events(events, level: str, project: Path = None):
         elif t == "turn.failed":
             out.append("turn.failed " + clip(json.dumps(ev.get("error") or {}, ensure_ascii=False), 400))
         elif t in ("item.started", "item.completed"):
-            out.extend(_format_item(t, ev.get("item") or {}, level, project))
+            out.extend(_format_item(t, ev.get("item") or {}, finished, rel_to))
         elif t == "_unparsed":
             out.append("unparsed " + clip(ev.get("raw", ""), 200))
         else:
@@ -157,57 +127,45 @@ def format_events(events, level: str, project: Path = None):
     return out
 
 
-def _format_item(evtype: str, item: dict, level: str, project):
-    iid = item.get("id", "?")
+def _format_item(evtype: str, item: dict, finished, project):
     itype = item.get("type")
     lines = []
 
     if itype == "command_execution":
         cmd = clip(strip_wrapper(item.get("command") or ""), CMD_MAX_CHARS)
         if evtype == "item.started":
-            # Without a start line a long build and a hung run look the same to a poller.
-            return [f"cmd.start[{iid}] {cmd}"]
+            return [] if item.get("id") in finished else [f"cmd.running {cmd}"]
         output = item.get("aggregated_output") or ""
         nbytes = len(output.encode("utf-8", "replace"))
         exit_code = item.get("exit_code")
-        # The size is shown even when the output is withheld, so fetching it with `show` is a decision rather than a guess.
-        lines.append(f"cmd[{iid}] exit={exit_code} out={nbytes}B {cmd}")
-        if level == "compact" or not output:
-            return lines
-        if level == "normal":
-            if exit_code not in (0, None):
-                lines.append(_indent(head_tail(output, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES)))
-        elif level == "full":
-            lines.append(_indent(head_tail(output, FULL_ITEM_BYTES // 2, FULL_ITEM_BYTES // 2)))
+        lines.append(f"cmd exit={exit_code} out={nbytes}B {cmd}")
+        if exit_code not in (0, None) and output:
+            lines.append(_indent(head_tail(output, FAIL_HEAD_BYTES, FAIL_TAIL_BYTES)))
         return lines
 
     if evtype == "item.started":
         return []
 
     if itype == "agent_message":
-        # Never truncated at any level: this is the answer the run was for.
+        # Never cut: this is the answer the run was for.
         lines.append("msg " + (item.get("text") or "").strip())
-    elif itype == "reasoning":
-        if level == "full":
-            lines.append("reasoning " + clip(item.get("text") or "", 2000))
+    elif itype in ("reasoning", "todo_list"):
+        pass
     elif itype == "file_change":
         changes = item.get("changes") or []
         for ch in changes:
             p = ch.get("path") or ""
             lines.append(f"file {ch.get('kind')} {relativize(p, project) if project else p}")
         if not changes:
-            lines.append(f"file[{iid}] (no changes listed)")
+            lines.append("file (no changes listed)")
     elif itype == "error":
         lines.append("error " + clip(item.get("message") or "", 400))
-    elif itype == "todo_list":
-        if level in ("normal", "full"):
-            lines.append("todo " + clip(json.dumps(item.get("items") or [], ensure_ascii=False), 400))
     elif itype == "web_search":
         lines.append("search " + clip(item.get("query") or "", 200))
     elif itype == "mcp_tool_call":
-        lines.append(f"mcp[{iid}] {item.get('server')}/{item.get('tool')} status={item.get('status')}")
+        lines.append(f"mcp {item.get('server')}/{item.get('tool')} status={item.get('status')}")
     else:
-        lines.append(f"{itype}[{iid}] " + clip(json.dumps(item, ensure_ascii=False), 300))
+        lines.append(f"{itype} " + clip(json.dumps(item, ensure_ascii=False), 300))
     return lines
 
 
@@ -224,7 +182,7 @@ def scan_progress(events_path: Path, terminal: bool = False):
             # Lines this skill could not read, kept apart from `errors` (Codex reporting a problem with the work).
             "unparsed_events": 0}
     started, completed = {}, set()
-    events, cursor = read_events(events_path, 0)
+    events, cursor = read_events(events_path)
     if terminal:
         try:
             if events_path.stat().st_size > cursor:
@@ -269,7 +227,7 @@ def scan_progress(events_path: Path, terminal: bool = False):
 def changed_paths(events_path: Path):
     """The paths a run's file changes name, as Codex recorded them — absolute in practice — in NFC."""
     paths = set()
-    for ev in read_events(events_path, 0)[0]:
+    for ev in read_events(events_path)[0]:
         item = ev.get("item") or {}
         if item.get("type") != "file_change":
             continue

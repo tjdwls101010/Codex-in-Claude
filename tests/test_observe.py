@@ -193,6 +193,23 @@ class StatusOfOneRun(BridgeCase):
         self.assertIn("no such run", self.bridge("status", "--run", "nothing-like-it", rc=1)["error"])
 
 
+class AStateThatMovesWhileItIsRead(BridgeCase):
+    """A view reports the state and the events it read together: a run recorded completed while its events were being read is reported completed with its whole turn, never running with it, nor completed without its end."""
+
+    def test_status_of_one_run(self):
+        rid, writer = self.run_ending_mid_read()
+        row = self.row(rid)
+        writer.join(timeout=15)
+        self.assertEqual((row["state"], row["turns_completed"]), ("completed", 1))
+
+    def test_result_of_one_run(self):
+        rid, writer = self.run_ending_mid_read()
+        header, _body = self.result_view("--run", rid)
+        writer.join(timeout=15)
+        self.assertEqual((header["state"], header["usage"]), ("completed", {"input_tokens": 7, "output_tokens": 1}))
+        self.assertNotIn("note", header)
+
+
 class Listing(BridgeCase):
 
     def test_the_default_listing_is_one_summary_row_per_run(self):

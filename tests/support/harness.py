@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -233,6 +234,41 @@ class BridgeCase(unittest.TestCase):
         sup = self.detached_process()
         self.write_meta(LEGACY_WAITER, {**self.meta(LEGACY_WAITER), "supervisor_pid": sup, "pgid": sup})
         return sup
+
+    def run_ending_mid_read(self):
+        """A run whose events are a FIFO and whose end is recorded while a view reads them: the first read gets a turn without its end, the run is then recorded completed, and a second read, if the view makes one, gets the whole turn. Its supervisor stays alive, so nothing but meta.json says it ended. Returns `(run_id, writer thread)`."""
+        sup = self.detached_process()
+        rid = "20990101-000000-fifo-0001"
+        self.write_meta(rid, {"run_id": rid, "state": "running", "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
+                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project)})
+        fifo = self.runs_dir / rid / "events.jsonl"
+        os.mkfifo(fifo)
+        first = '{"type": "turn.started"}\n'
+        whole = first + '{"type": "turn.completed", "usage": {"input_tokens": 7, "output_tokens": 1}}\n'
+
+        def serve(text, then=None):
+            # Opened without blocking, so a view that never reads a second time leaves this to give up rather than hang the suite.
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                try:
+                    fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                    break
+                except OSError:
+                    time.sleep(0.02)
+            else:
+                return
+            if then:
+                then()
+            with os.fdopen(fd, "w") as fh:
+                fh.write(text)
+
+        def writer():
+            serve(first, then=lambda: self.write_meta(rid, {**self.meta(rid), "state": "completed", "exit_code": 0}))
+            serve(whole)
+
+        t = threading.Thread(target=writer, daemon=True)
+        t.start()
+        return rid, t
 
     def run_dirs(self):
         return sorted(p.name for p in self.runs_dir.iterdir()

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from codex.codex_cli import scan_progress, stderr_tail as read_stderr_tail
-from codex.registry import TERMINAL_STATES, is_live, reap, still_writing, unreadable_runs
+from codex.registry import TERMINAL_STATES, is_live, read_meta, reap, still_writing, unreadable_runs
 from codex.util import clip
 
 # Advisory: a run idle this long is shown `stalled`, never killed for it. One long command is legitimately silent, which is why `in_progress_item` is reported beside it.
@@ -26,6 +26,18 @@ def turn_failed_excerpt(info):
     return clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400) if info["turn_failed"] else None
 
 
+def settled(run_dir: Path, meta: dict, read):
+    """`(meta, read(meta))` that agree with each other. The run's state is read before and after its events, and the events again if the state moved meanwhile: a run records its end only once Codex has stopped writing, so the second read is final. Either single order can contradict itself — the earlier state beside events that already show the end, or the later state beside events read before the last line landed."""
+    meta = reap(run_dir, meta)
+    data = read(meta)
+    again = read_meta(run_dir)
+    if again:
+        again = reap(run_dir, again)
+        if again.get("state") != meta.get("state"):
+            return again, read(again)
+    return meta, data
+
+
 def progress(run_dir: Path, meta: dict):
     """The event-stream summary for a reaped run. A trailing fragment counts as unparsed only once nothing will write again."""
     return scan_progress(run_dir / "events.jsonl", terminal=not is_live(meta))
@@ -33,9 +45,8 @@ def progress(run_dir: Path, meta: dict):
 
 def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
     """The row `status` prints for one run, reaped first so a dead supervisor is never reported live."""
-    meta = reap(run_dir, meta)
+    meta, info = settled(run_dir, meta, lambda m: progress(run_dir, m))
     events_path = run_dir / "events.jsonl"
-    info = progress(run_dir, meta)
     now = time.time()
 
     def stamp(field):

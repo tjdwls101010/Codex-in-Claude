@@ -8,7 +8,7 @@ from codex.errors import Refusal
 from codex.git import resolve_project
 from codex.observe.collect import final_message, member_result, overlaps, written_paths
 from codex.observe.follow import GroupWatch, wait_until
-from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
+from codex.observe.rows import group_snapshot, progress, settled, turn_failed_excerpt
 from codex.registry import TERMINAL_STATES, group_view, is_live, read_meta, reap, resolve_runs_dir, run, still_writing
 
 
@@ -32,8 +32,7 @@ def result(args):
             return not now or not is_live(reap(rd, now))
         wait_until(ended, args.wait_timeout)
         rd, meta = run(runs_dir, rd.name)
-    meta = reap(rd, meta)
-    info = progress(rd, meta)
+    meta, info = settled(rd, meta, lambda m: progress(rd, m))
     # A live run has no final answer yet: what it has said so far is not the object its schema shapes.
     answer_due = meta.get("schema_path") and not is_live(meta)
     try:

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 
@@ -91,25 +89,11 @@ class WhatLogPrints(BridgeCase):
         self.assertEqual(self.end, f"run={self.rid} state=completed")
         self.assertFalse([ln for ln in self.body if ln.startswith("run=") or ln.startswith("# ")])
 
-    def test_the_state_is_read_after_the_events(self):
-        # A FIFO holds `log` inside its read of the events while the run records its end, with its supervisor still alive: the closing line has to name the state as it is once the events are printed.
-        sup = self.detached_process()
-        rid = "20990101-000000-fifo-0001"
-        self.write_meta(rid, {"run_id": rid, "state": "running", "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
-                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project)})
-        fifo = self.runs_dir / rid / "events.jsonl"
-        os.mkfifo(fifo)
-
-        def finish():
-            with open(fifo, "w") as fh:
-                self.write_meta(rid, {**self.meta(rid), "state": "completed", "exit_code": 0})
-                fh.write('{"type": "turn.completed", "usage": {}}\n')
-
-        writer = threading.Thread(target=finish)
-        writer.start()
+    def test_the_state_and_the_events_agree_when_the_run_ends_mid_read(self):
+        rid, writer = self.run_ending_mid_read()
         body, end = self.log("--run", rid)
-        writer.join()
-        self.assertEqual(end, f"run={rid} state=completed")
+        writer.join(timeout=15)
+        self.assertEqual((body[-1], end), ("turn.completed in=7 cached=? out=1 reasoning=?", f"run={rid} state=completed"))
 
     def test_a_live_run_shows_the_command_it_is_inside(self):
         out, _m = self.running("y", FAKE_CODEX_FIXTURE=FIXTURES / "mid-command.jsonl")

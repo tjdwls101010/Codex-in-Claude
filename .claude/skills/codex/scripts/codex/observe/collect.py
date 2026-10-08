@@ -6,7 +6,7 @@ from pathlib import Path
 
 from codex.codex_cli import changed_paths
 from codex.git import repo_identity
-from codex.observe.rows import progress, turn_failed_excerpt
+from codex.observe.rows import progress, settled, turn_failed_excerpt
 from codex.registry import still_writing
 from codex.util import nfc
 
@@ -43,7 +43,7 @@ def final_message(run_dir, info, errors="replace"):
 
 def member_result(rd, meta):
     """One member of `result --group`: its row and the part of its message that is shown, capped in bytes (cut and counted in the same unit). Returns `(row, info, shown)`."""
-    info = progress(rd, meta)
+    meta, info = settled(rd, meta, lambda m: progress(rd, m))
     message = final_message(rd, info)
     raw = message.encode("utf-8")
     truncated = len(raw) > GROUP_MESSAGE_CAP

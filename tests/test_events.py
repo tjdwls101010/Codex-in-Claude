@@ -60,6 +60,43 @@ class DamagedLines(BridgeCase):
         self.assertEqual(self.row(rid)["unparsed_events"], 1)
 
 
+class WhatLogPrints(BridgeCase):
+    """`log` is one look at what a run did: every command with its exit code and output size, a failed command's output excerpted, the agent's own words whole, and a closing line naming the run and its state."""
+
+    def setUp(self):
+        super().setUp()
+        out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": MIXED})
+        self.wait_state(out["run_id"])
+        self.rid = out["run_id"]
+        self.body, self.end = self.log("--run", self.rid)
+
+    def test_each_command_is_its_exit_code_and_size_without_the_shell(self):
+        cmds = [ln for ln in self.body if ln.startswith("cmd ")]
+        self.assertEqual(len(cmds), 3, self.body)
+        self.assertRegex(cmds[0], r"^cmd exit=0 out=\d{5}B cat big\.txt$")
+        self.assertRegex(cmds[1], r"^cmd exit=1 out=\d+B ls /definitely/not/a/real/path$")
+        self.assertFalse([ln for ln in self.body if "/bin/zsh" in ln or "item_" in ln], "the shell wrapper and item ids are noise")
+
+    def test_a_failed_commands_output_is_excerpted_and_a_successful_ones_is_not(self):
+        excerpt = [ln for ln in self.body if ln.startswith("    | ")]
+        self.assertTrue(any("No such file" in ln for ln in excerpt), self.body)
+        self.assertFalse(any("quick brown fox" in ln for ln in excerpt))
+
+    def test_the_agents_own_words_are_never_cut(self):
+        self.assertIn("Exit codes, in order:\n\n1. `cat big.txt`: `0`", "\n".join(self.body))
+
+    def test_it_ends_on_the_run_and_its_state(self):
+        self.assertEqual(self.end, f"run={self.rid} state=completed")
+        self.assertFalse([ln for ln in self.body if ln.startswith("run=") or ln.startswith("# ")])
+
+    def test_a_live_run_shows_the_command_it_is_inside(self):
+        out, _m = self.running("y", FAKE_CODEX_FIXTURE=FIXTURES / "mid-command.jsonl")
+        body, end = self.log("--run", out["run_id"])
+        self.assertEqual(body[-1], "cmd.running sleep 2 && echo tick4")
+        self.assertEqual(len([ln for ln in body if ln.startswith("cmd.running")]), 1, "a finished command shows only its result")
+        self.assertEqual(end, f"run={out['run_id']} state=running")
+
+
 def stream(*events):
     """An event file holding these events built by hand, one JSON line each."""
     path = Path(tempfile.mkdtemp(prefix="codex-events-")) / "events.jsonl"
@@ -73,28 +110,37 @@ class EventLines(unittest.TestCase):
     def setUp(self):
         self.codex_cli = engine("codex.codex_cli")
 
-    def lines(self, level, *events, project=None):
-        path = stream(*events)
-        lines, cursor = self.codex_cli.event_lines(path, 0, level, project)
-        self.assertEqual(cursor, path.stat().st_size)
-        return lines
+    def lines(self, *events, project=None):
+        return self.codex_cli.event_lines(stream(*events), rel_to=project)
+
+    def command(self, exit_code, output, status="completed"):
+        return {"type": "item.completed", "item": {"id": "item_3", "type": "command_execution", "command": "/bin/zsh -lc 'make test'",
+                                                   "aggregated_output": output, "exit_code": exit_code, "status": status}}
 
     def test_turn_lines(self):
         usage = {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 2, "reasoning_output_tokens": 1}
-        self.assertEqual(self.lines("compact", {"type": "thread.started", "thread_id": "t1"}, {"type": "turn.started"},
+        self.assertEqual(self.lines({"type": "thread.started", "thread_id": "t1"}, {"type": "turn.started"},
                                     {"type": "turn.completed", "usage": usage}),
                          ["thread t1", "turn.started", "turn.completed in=10 cached=4 out=2 reasoning=1"])
 
-    def test_a_started_command_is_shown_so_a_long_one_is_not_silence(self):
-        item = {"id": "item_3", "type": "command_execution", "command": "/bin/zsh -lc 'make test'"}
-        self.assertEqual(self.lines("compact", {"type": "item.started", "item": item}), ["cmd.start[item_3] make test"])
+    def test_a_command_still_running_is_shown_and_a_finished_one_only_by_its_result(self):
+        started = {"type": "item.started", "item": {"id": "item_3", "type": "command_execution", "command": "/bin/zsh -lc 'make test'"}}
+        self.assertEqual(self.lines(started), ["cmd.running make test"])
+        self.assertEqual(self.lines(started, self.command(0, "ok\n")), ["cmd exit=0 out=3B make test"])
 
-    def test_items_that_only_higher_levels_show(self):
+    def test_a_failed_command_carries_the_head_and_tail_of_its_output(self):
+        self.assertEqual(self.lines(self.command(2, "boom\n", "failed")), ["cmd exit=2 out=5B make test", "    | boom"])
+        big = "".join(f"line {i:04d}\n" for i in range(1000))
+        lines = self.lines(self.command(1, big, "failed"))
+        self.assertIn("line 0000", lines[1])
+        self.assertIn("line 0999", lines[1])
+        self.assertIn("bytes omitted", lines[1])
+        self.assertLess(len(lines[1].encode()), 4000)
+
+    def test_todo_lists_and_reasoning_are_left_out(self):
         todo = {"type": "item.completed", "item": {"id": "i", "type": "todo_list", "items": [{"text": "a"}]}}
         reasoning = {"type": "item.completed", "item": {"id": "r", "type": "reasoning", "text": "thinking"}}
-        self.assertEqual(self.lines("compact", todo, reasoning), [])
-        self.assertEqual(len(self.lines("normal", todo, reasoning)), 1)
-        self.assertEqual(self.lines("full", todo, reasoning)[1], "reasoning thinking")
+        self.assertEqual(self.lines(todo, reasoning), [])
 
     def test_other_kinds_are_one_line_each(self):
         evs = [{"type": "item.completed", "item": {"id": "e", "type": "error", "message": "bad config"}},
@@ -103,15 +149,16 @@ class EventLines(unittest.TestCase):
                                                     "status": "completed"}},
                {"type": "_unparsed", "raw": "{ broken"},
                {"type": "something.new", "x": 1}]
-        self.assertEqual(self.lines("compact", *evs),
-                         ["error bad config", "search q", "mcp[m] s/t status=completed", "unparsed { broken",
+        self.assertEqual(self.lines(*evs),
+                         ["error bad config", "search q", "mcp s/t status=completed", "unparsed { broken",
                           'something.new {"x": 1}'])
 
     def test_a_file_change_is_paths_relative_to_the_run(self):
         ev = {"type": "item.completed", "item": {"id": "f", "type": "file_change",
                                                  "changes": [{"path": "/p/src/a.py", "kind": "update"}]}}
-        self.assertEqual(self.lines("compact", ev, project=Path("/p")), ["file update src/a.py"])
-
+        self.assertEqual(self.lines(ev, project=Path("/p")), ["file update src/a.py"])
+        empty = {"type": "item.completed", "item": {"id": "f", "type": "file_change", "changes": []}}
+        self.assertEqual(self.lines(empty), ["file (no changes listed)"])
 
 
 class ItemsAndPaths(unittest.TestCase):

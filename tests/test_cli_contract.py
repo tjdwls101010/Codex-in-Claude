@@ -46,13 +46,13 @@ class OutputFrame(BridgeCase):
                     os.close(w)
                 self.assertEqual(p.stderr, "")
 
-    def test_log_streams_text_and_ends_with_a_cursor_naming_the_run(self):
+    def test_log_prints_text_and_ends_on_one_line_naming_the_run_and_its_state(self):
         out = self.bridge("start", "x")
         self.wait_state(out["run_id"])
         p = self.bridge_raw("log", "--run", out["run_id"])
         lines = p.stdout.splitlines()
-        self.assertRegex(lines[-1], rf"^# cursor=\d+ run={re.escape(out['run_id'])}$")
-        self.assertEqual([ln for ln in lines if ln.startswith("# cursor=")], [lines[-1]])
+        self.assertEqual(lines[-1], f"run={out['run_id']} state=completed")
+        self.assertEqual([ln for ln in lines if ln.startswith("run=")], [lines[-1]])
 
 class ExitCodes(BridgeCase):
     """0 success; 2 the command line itself must change, answered as JSON with the `--help` to read; 1 the registry's state refused or the run failed; 3 `doctor` found a blocker."""

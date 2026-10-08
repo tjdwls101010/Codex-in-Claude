@@ -190,16 +190,11 @@ class BridgeCase(unittest.TestCase):
         return header, members
 
     def log(self, *args, **kw):
-        """`log` output split into (event lines, cursor)."""
+        """`log` output split into (event lines, its closing line)."""
         p = self.bridge_raw("log", *args, **kw)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        body, cursor = [], None
-        for ln in p.stdout.splitlines():
-            if ln.startswith("# cursor="):
-                cursor = int(ln.split()[1].split("=", 1)[1])
-            else:
-                body.append(ln)
-        return body, cursor
+        lines = p.stdout.splitlines()
+        return lines[:-1], (lines[-1] if lines else None)
 
     # -- reading what happened ------------------------------------------------
 

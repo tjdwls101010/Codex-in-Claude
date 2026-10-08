@@ -12,7 +12,7 @@ Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written 
 
 ## Handing work over
 
-**The sandbox decides what a run can do, and so what it can show you.** `read-only` reads anything and runs tests and builds — only temporary files and caches are writable — so a review or an investigation can bring back what it ran, not only what it read; `workspace-write` when the run must change files or leave output in the tree; `danger-full-access` only when it needs the network or to write outside its directory.
+**The sandbox decides what a run can do, and so what it can show you.** `read-only` reads anything and, where its reply says `read_only: scratch`, runs tests and builds — only temporary files and caches are writable — so a review or an investigation can bring back what it ran, not only what it read; when the run must execute and the reply says `read_only: strict`, its note says why and what changes it; `workspace-write` when the run must change files or leave output in the tree; `danger-full-access` only when it needs the network or to write outside its directory.
 
 **A project's `AGENTS.md` reaches every run**, in a worktree as committed at its base: a standing briefing, and also input you did not write into the prompt.
 
@@ -32,11 +32,9 @@ Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written 
 
 A batch is for when N runs should be one name you watch, collect and stop — a read-only fan-out included.
 
-**Decide isolation when you start.** Members share your tree by default, as your own subagents do; when two can edit the same files, start them with `--worktree`. Only a fresh start gets a checkout: a resumed member continues in its thread's directory, so members that shared your tree go on sharing it.
+**Decide isolation when you start.** Members share your tree by default, as your own subagents do; when two can edit the same files, start them with `--worktree`. Only a fresh start gets a checkout: a resumed member stays in its thread's directory unless its task names another, so resuming never isolates writers that shared your tree.
 
 **A worktree is a committed snapshot.** It has none of your uncommitted changes and none of what git ignores — interpreters, fixtures, caches. Check that a task has what its verification needs; the reply's `missing_ignored` names what is absent.
-
-**Rounds:** a next round resumes each member's thread — a `--tasks-file` line per member with kind `resume` and its run id — with prompts written in advance or computed from the last results; choose it over a batch of fresh starts by the same test as `resume` over `start`.
 
 **A group outlives the session.** Its name is the one thing nobody can re-derive, and `status` lists the project's groups. Collect with `result --group`; moving changes out of worktrees into your tree is yours to do; finish with `clean`.
 

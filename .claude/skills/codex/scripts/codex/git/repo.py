@@ -33,6 +33,11 @@ def resolve_project(explicit=None) -> Path:
     return git_toplevel(base) or base
 
 
+def main_checkout(path: Path) -> Path:
+    """Stub: the main checkout of the repository `path` is in."""
+    return path
+
+
 def resolve_base(cwd: Path):
     """The full sha of HEAD, which a worktree is cut from, or None. A sha rather than a name, because the preamble states it and a name could move."""
     r = run_git(cwd, "rev-parse", "--verify", "HEAD^{commit}")

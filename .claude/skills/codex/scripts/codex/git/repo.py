@@ -13,7 +13,11 @@ WALK_CAP = 500
 
 
 def run_git(cwd, *args, timeout=60):
-    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout)
+    """git's answer, or — when git cannot be run or does not answer in time — a failed one (127), so every question about a repository degrades to "not a repository" rather than an error."""
+    try:
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return subprocess.CompletedProcess(["git", *args], 127, "", str(e))
 
 
 def git_toplevel(path: Path):
@@ -38,14 +42,11 @@ def main_checkout(path: Path) -> Path:
 
     It is the first record `git worktree list` gives — for a submodule's linked worktree that record is `.git/modules/<name>`, which `--show-toplevel` resolves to the submodule's own checkout. A worktree of a bare repository has no main working tree and answers itself, as does a directory in no repository or one git cannot answer for — a linked worktree whose main checkout was deleted, or no git at all.
     """
-    try:
-        r = run_git(path, "worktree", "list", "--porcelain")
-        first = r.stdout.split("\n\n", 1)[0].splitlines() if r.returncode == 0 else []
-        if not first or not first[0].startswith("worktree ") or "bare" in first:
-            return path
-        top = run_git(first[0][len("worktree "):], "rev-parse", "--path-format=absolute", "--show-toplevel")
-    except (OSError, subprocess.SubprocessError):
+    r = run_git(path, "worktree", "list", "--porcelain")
+    first = r.stdout.split("\n\n", 1)[0].splitlines() if r.returncode == 0 else []
+    if not first or not first[0].startswith("worktree ") or "bare" in first:
         return path
+    top = run_git(first[0][len("worktree "):], "rev-parse", "--path-format=absolute", "--show-toplevel")
     if top.returncode != 0 or not top.stdout.strip():
         return path
     return Path(nfc(top.stdout.strip())).resolve()

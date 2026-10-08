@@ -5,13 +5,16 @@ A registry per checkout splits a thread from its runs: started in a linked workt
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from support.harness import BridgeCase, engine
+from support.harness import FAKE_CODEX_DIR, BridgeCase, engine
 
 
 def git(cwd, *args):
@@ -138,13 +141,22 @@ class OneRegistryPerRepository(BridgeCase):
         self.assertTrue(out["events"].startswith(str(self.runs_dir) + "/"), out["events"])
         self.assertFalse((checkout / ".codex-runs").exists())
 
-    def test_without_git_a_directory_keeps_its_own_registry(self):
+    def test_without_git_a_directory_is_no_repository_and_every_command_still_answers(self):
+        # A PATH with Python and codex on it but no git: every question about a repository answers "not one".
         plain = self.tmp / "plain"
         plain.mkdir()
         self.extra_runs_dirs = [plain / ".codex-runs"]
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python3").symlink_to(sys.executable)
+        env = {"PATH": f"{FAKE_CODEX_DIR}{os.pathsep}{bin_dir}"}
         for args in (("status",), ("status", "--runs-dir", plain / ".codex-runs")):
             with self.subTest(args=args):
-                self.assertEqual(self.bridge(*args, cwd=plain, env={"PATH": "/nonexistent"})["runs_dir"], str(plain / ".codex-runs"))
+                self.assertEqual(self.bridge(*args, cwd=plain, env=env)["runs_dir"], str(plain / ".codex-runs"))
+        out = self.bridge("batch", "--group", "g", "--task", "x", cwd=plain, env=env)
+        header = json.loads(self.bridge_raw("result", "--group", "g", "--wait", cwd=plain, env=env).stdout.splitlines()[0])
+        self.assertEqual((header["group_state"], header["done"]), ("completed", [out["runs"][0]["run_id"]]))
+        self.assertTrue(self.bridge("doctor", cwd=plain, env=env)["ok"])
 
     def test_doctor_names_the_checkout_and_the_registry(self):
         wt = self.linked()

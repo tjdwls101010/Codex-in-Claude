@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from codex.codex_cli import check_model_effort, model_catalog, user_defaults
+from codex.codex_cli import check_model_effort, model_catalog, refuse_without_isolation, user_defaults
 from codex.errors import Refusal
 from codex.registry import find_run
 from codex.runs import settings_for
@@ -82,15 +82,18 @@ def task_args(base_args, item):
 
 
 def check_task_settings(tasks, args, runs_dir):
-    """Refuse a model or effort any task would adopt, before the group name is claimed and with one catalog lookup, rather than at the eighth member with seven already running."""
+    """Refuse what would refuse a member — a Codex too old for an isolated member, a model or effort any task would adopt — before the group name is claimed and with one lookup each, rather than at the eighth member with seven already running."""
     user = user_defaults()
-    adopted = []
+    adopted, isolated = [], False
     for n, item in enumerate(tasks, 1):
         ns = task_args(args, item)
         base = find_run(runs_dir, item["resume"])[1] if item["kind"] == "resume" else None
-        adopted.append((n, settings_for(
-            sandbox=ns.sandbox, model=ns.model, effort=ns.effort, priority=getattr(ns, "priority", None),
-            inherit_config=getattr(ns, "inherit_config", False), base=base, user=user)["adopted"]))
+        r = settings_for(sandbox=ns.sandbox, model=ns.model, effort=ns.effort, priority=getattr(ns, "priority", None),
+                         inherit_config=getattr(ns, "inherit_config", False), base=base, user=user)
+        adopted.append((n, r["adopted"]))
+        isolated = isolated or r["isolated"]
+    if isolated:
+        refuse_without_isolation()
     if not any(a["model"] or a["effort"] for _n, a in adopted):
         return
     catalog = model_catalog()

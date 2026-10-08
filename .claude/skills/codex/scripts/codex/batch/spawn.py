@@ -41,6 +41,7 @@ def spawn_members(args, tasks, *, runs_dir, epoch, isolated, base):
                      sandbox=out.get("sandbox"))
         if out.get("worktree"):
             entry["worktree"] = out["worktree"]["path"]
-        results.append({**entry, "state": out.get("state")})
+        results.append({**entry, "state": out.get("state"),
+                        **{k: out[k] for k in ("read_only", "read_only_note") if k in out}})
         record_members(runs_dir, args.group, members, epoch=epoch)
     return members, results

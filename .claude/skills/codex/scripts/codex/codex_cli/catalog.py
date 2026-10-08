@@ -1,8 +1,9 @@
-"""This install's model catalog, read from `codex debug models`, and the pre-spawn check of a model or effort against it."""
+"""This install's version and what it can run, its model catalog read from `codex debug models`, and the pre-spawn check of a model or effort against it."""
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 
@@ -13,6 +14,14 @@ CATALOG_TIMEOUT = 5.0
 
 # One lookup per process: a `batch` of N members would otherwise pay N+1 identical subprocess calls.
 _CATALOG_CACHE = []
+_SUPPORT_CACHE = []
+
+# The first release with `--ignore-user-config`, which every isolated run passes; below it a run fails after being reported started.
+ISOLATION_FLOOR = (0, 122, 0)
+# The first release the read-only permissions profile is known to reach both `exec` and `exec resume` and load there. Older releases ignore the `-c` keys or refuse a profile whose working directory is not writable, so a read-only run below it gets the legacy sandbox.
+PROFILE_FLOOR = (0, 160, 0)
+
+_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)(\S*)")
 
 
 def codex_version(strict=False):
@@ -30,9 +39,36 @@ def codex_version(strict=False):
     return (r.stdout or r.stderr).strip() or None
 
 
+def floor_text(floor) -> str:
+    return ".".join(map(str, floor))
+
+
 def support_for(version_text):
-    """Stub: what a `codex --version` line says this install can do."""
-    return {"version": None, "isolation": None, "profile": False}
+    """What a `codex --version` line says this install can run: `isolation` (None when the version cannot be read, which is no reason to refuse a run) and the read-only `profile` (False then, which is no promise it works). A pre-release sorts below its release."""
+    m = _VERSION.search(version_text or "")
+    if not m:
+        return {"version": None, "isolation": None, "profile": False}
+    release, pre = tuple(int(x) for x in m.groups()[:3]), m.group(4).startswith("-")
+
+    def meets(floor):
+        return release > floor or (release == floor and not pre)
+
+    return {"version": m.group(0), "isolation": meets(ISOLATION_FLOOR), "profile": meets(PROFILE_FLOOR)}
+
+
+def codex_support():
+    """`support_for` the codex on PATH, asked once per process."""
+    if not _SUPPORT_CACHE:
+        _SUPPORT_CACHE.append(support_for(codex_version()))
+    return _SUPPORT_CACHE[0]
+
+
+def refuse_without_isolation():
+    """Refuse an isolated run on a Codex known to lack `--ignore-user-config`, before anything is claimed."""
+    s = codex_support()
+    if s["isolation"] is False:
+        raise Refusal(f"codex {s['version']} is older than {floor_text(ISOLATION_FLOOR)}, the first release with --ignore-user-config, which every isolated run passes; upgrade Codex",
+                      codex_version=s["version"], required_version=floor_text(ISOLATION_FLOOR))
 
 
 def model_catalog():

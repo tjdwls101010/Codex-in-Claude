@@ -120,6 +120,9 @@ def event_lines(path: Path, rel_to: Path = None):
             out.append("turn.failed " + clip(json.dumps(ev.get("error") or {}, ensure_ascii=False), 400))
         elif t in ("item.started", "item.completed"):
             out.extend(_format_item(t, ev.get("item") or {}, finished, rel_to))
+        elif t == "item.updated":
+            # An item's progress between its start and its completion, which carries the final state.
+            continue
         elif t == "_unparsed":
             out.append("unparsed " + clip(ev.get("raw", ""), 200))
         else:

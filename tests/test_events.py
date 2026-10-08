@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -89,6 +91,26 @@ class WhatLogPrints(BridgeCase):
         self.assertEqual(self.end, f"run={self.rid} state=completed")
         self.assertFalse([ln for ln in self.body if ln.startswith("run=") or ln.startswith("# ")])
 
+    def test_the_state_is_read_after_the_events(self):
+        # A FIFO holds `log` inside its read of the events while the run records its end, with its supervisor still alive: the closing line has to name the state as it is once the events are printed.
+        sup = self.detached_process()
+        rid = "20990101-000000-fifo-0001"
+        self.write_meta(rid, {"run_id": rid, "state": "running", "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
+                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project)})
+        fifo = self.runs_dir / rid / "events.jsonl"
+        os.mkfifo(fifo)
+
+        def finish():
+            with open(fifo, "w") as fh:
+                self.write_meta(rid, {**self.meta(rid), "state": "completed", "exit_code": 0})
+                fh.write('{"type": "turn.completed", "usage": {}}\n')
+
+        writer = threading.Thread(target=finish)
+        writer.start()
+        body, end = self.log("--run", rid)
+        writer.join()
+        self.assertEqual(end, f"run={rid} state=completed")
+
     def test_a_live_run_shows_the_command_it_is_inside(self):
         out, _m = self.running("y", FAKE_CODEX_FIXTURE=FIXTURES / "mid-command.jsonl")
         body, end = self.log("--run", out["run_id"])
@@ -145,7 +167,9 @@ class EventLines(unittest.TestCase):
     def test_todo_lists_and_reasoning_are_left_out(self):
         todo = {"type": "item.completed", "item": {"id": "i", "type": "todo_list", "items": [{"text": "a"}]}}
         reasoning = {"type": "item.completed", "item": {"id": "r", "type": "reasoning", "text": "thinking"}}
-        self.assertEqual(self.lines(todo, reasoning), [])
+        # Codex reports a todo list's progress as `item.updated`, between its start and its completion.
+        updated = {"type": "item.updated", "item": {"id": "i", "type": "todo_list", "items": [{"text": "a", "completed": True}]}}
+        self.assertEqual(self.lines(todo, updated, reasoning), [])
 
     def test_other_kinds_are_one_line_each(self):
         evs = [{"type": "item.completed", "item": {"id": "e", "type": "error", "message": "bad config"}},

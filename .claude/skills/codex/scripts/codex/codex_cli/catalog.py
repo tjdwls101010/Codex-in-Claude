@@ -21,6 +21,9 @@ ISOLATION_FLOOR = (0, 122, 0)
 # The first release the read-only permissions profile is known to reach both `exec` and `exec resume` and load there. Older releases ignore the `-c` keys or refuse a profile whose working directory is not writable, so a read-only run below it gets the legacy sandbox.
 PROFILE_FLOOR = (0, 160, 0)
 
+# The isolation floor as `--help` names it.
+ISOLATION_FLOOR_TEXT = ".".join(map(str, ISOLATION_FLOOR))
+
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)(\S*)")
 
 
@@ -67,8 +70,8 @@ def refuse_without_isolation():
     """Refuse an isolated run on a Codex known to lack `--ignore-user-config`, before anything is claimed."""
     s = codex_support()
     if s["isolation"] is False:
-        raise Refusal(f"codex {s['version']} is older than {floor_text(ISOLATION_FLOOR)}, the first release with --ignore-user-config, which every isolated run passes; upgrade Codex",
-                      codex_version=s["version"], required_version=floor_text(ISOLATION_FLOOR))
+        raise Refusal(f"codex {s['version']} is older than {ISOLATION_FLOOR_TEXT}, the first release with --ignore-user-config, which every isolated run passes; upgrade Codex",
+                      codex_version=s["version"], required_version=ISOLATION_FLOOR_TEXT)
 
 
 def model_catalog():

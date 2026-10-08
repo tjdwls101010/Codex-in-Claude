@@ -20,7 +20,9 @@ import sys
 from pathlib import Path
 
 from codex.batch import TASK_FIELDS, batch, clean
-from codex.codex_cli import DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS, SANDBOX_MODES, pin_codex_home
+from codex.codex_cli import (
+    DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, ISOLATION_FLOOR_TEXT, LEVELS, SANDBOX_MODES, pin_codex_home,
+)
 from codex.doctor import doctor, models
 from codex.errors import Refusal
 from codex.observe import GROUP_MESSAGE_CAP, LISTING_ROWS, SHOW_MAX_BYTES, STALL_SECONDS, log, result, show, status
@@ -35,22 +37,22 @@ Every command prints one JSON line on stdout — its result, or a refusal carryi
 Exit codes: 0 success; 1 the registry's state refused the command, or what it asked for failed, and `error` says why; 2 the command line must change, and the reply's `help` names the --help to read; 3 `doctor` found a blocker. Each command's --help says what it prints and which of these it ends with when."""
 
 
-START_DESC = """\
+START_DESC = f"""\
 Start a fresh non-interactive Codex thread, detached, and answer as soon as it has a handle.
-Prints: one JSON line — `run_id`, `thread_id` (null until Codex reports one), `state`, `next` (the `result --run <id> --wait` call to run in the background), the `sandbox` and `isolated` it runs under, `concurrent_writers` when other live runs can write in its directory, then its `cwd`, `project` and `events` paths.
-Exits: 0 started; 1 refused — a model or effort taken from your config.toml that this install does not offer, no free run id — or an internal error; 2 the command line must change — an empty or unreadable prompt, a --cwd, --schema or --image that does not exist, a --model or --effort this install does not offer, or anything else the parser refuses."""
+Prints: one JSON line — `run_id`, `thread_id` (null until Codex reports one), `state`, `next` (the `result --run <id> --wait` call to run in the background), the `sandbox` it runs under, `read_only` for a read-only run (`scratch`, or `strict` with a `read_only_note` saying why it cannot write even a temporary file), `isolated`, `concurrent_writers` when other live runs can write in its directory, then its `cwd`, `project` and `events` paths.
+Exits: 0 started; 1 refused — a codex older than {ISOLATION_FLOOR_TEXT} for an isolated run, a model or effort taken from your config.toml that this install does not offer, no free run id — or an internal error; 2 the command line must change — an empty or unreadable prompt, a --cwd, --schema or --image that does not exist, a --model or --effort this install does not offer, or anything else the parser refuses."""
 
 
-RESUME_DESC = """\
+RESUME_DESC = f"""\
 Run another turn on an existing thread, detached: a new run with its own event log, under the sandbox, model, effort, service tier and isolation the thread recorded except where a flag changes them.
 Prints: one JSON line as `start` prints, with `sandbox_changed_from` when --sandbox changed the thread's sandbox and, with --last, `resolved_from_run_id` and `resolved_from` naming the run it continued.
-Exits: 0 started; 1 refused — the thread has a live turn, or a run whose meta.json will not parse may be on it (both lifted by --force); --last finds no run with a thread, or two or more live ones; the run named has no thread id yet; a thread this registry never recorded, without --sandbox; a model or effort from your config.toml this install does not offer; no free run id — or an internal error; 2 the command line must change — no REF and no --last, more than REF and PROMPT, an empty or unreadable prompt, a --schema or --image that does not exist, a --model or --effort this install does not offer, a directory the thread recorded that no longer exists, or anything else the parser refuses."""
+Exits: 0 started; 1 refused — the thread has a live turn, or a run whose meta.json will not parse may be on it (both lifted by --force); --last finds no run with a thread, or two or more live ones; the run named has no thread id yet; a thread this registry never recorded, without --sandbox; a codex older than {ISOLATION_FLOOR_TEXT} for an isolated thread; a model or effort from your config.toml this install does not offer; no free run id — or an internal error; 2 the command line must change — no REF and no --last, more than REF and PROMPT, an empty or unreadable prompt, a --schema or --image that does not exist, a --model or --effort this install does not offer, a directory the thread recorded that no longer exists, or anything else the parser refuses."""
 
 
-BATCH_DESC = """\
+BATCH_DESC = f"""\
 Start several runs as one group: each --task, then each --tasks-file line, is a member started as `start` (or `resume`) would start it, with the group's options as its defaults. The group is addressed afterwards as one name by `status`, `log`, `result` and `stop` with --group, by `clean`, and by `batch --resume-from`; it outlives the session that started it, and its name stays reserved until `clean` releases it.
-Prints: one JSON line — `group`, `spawned`, `requested`, `next` (the `result --group <name> --wait` call to run in the background, left out when no member started), `resumed_from` with --resume-from, `worktrees` when checkouts were cut or members share a tree, `runs` (per slot its `run_id`, `state`, `cwd`, `sandbox` and `worktree`, or the `error` that kept it from starting) and the `manifest` path.
-Exits: 0 every member's start was tried, even when some failed and carry `error`; 1 refused before anything started — the name is reserved; a model or effort from your config.toml this install does not offer; a --resume-from group that is not there, will not parse, has no started member, has a member without a thread id, has a different number of members than there are tasks, or is still running (lifted by --force) — or the name was released and claimed again while members started, or an internal error; 2 the command line must change — a --group that breaks the naming rule, no task, a tasks file that cannot be read or has a line that is not a valid task, --base without --worktree, or naming no commit when a member is to get a checkout, a --model or --effort a task names that this install does not offer, under --resume-from a task that names its own `resume` target without kind `resume`, or anything else the parser refuses."""
+Prints: one JSON line — `group`, `spawned`, `requested`, `next` (the `result --group <name> --wait` call to run in the background, left out when no member started), `resumed_from` with --resume-from, `worktrees` when checkouts were cut or members share a tree, `runs` (per slot its `run_id`, `state`, `cwd`, `sandbox`, `read_only` and `read_only_note` as `start` prints them, and `worktree`, or the `error` that kept it from starting) and the `manifest` path.
+Exits: 0 every member's start was tried, even when some failed and carry `error`; 1 refused before anything started — the name is reserved; a codex older than {ISOLATION_FLOOR_TEXT} for an isolated member; a model or effort from your config.toml this install does not offer; a --resume-from group that is not there, will not parse, has no started member, has a member without a thread id, has a different number of members than there are tasks, or is still running (lifted by --force) — or the name was released and claimed again while members started, or an internal error; 2 the command line must change — a --group that breaks the naming rule, no task, a tasks file that cannot be read or has a line that is not a valid task, --base without --worktree, or naming no commit when a member is to get a checkout, a --model or --effort a task names that this install does not offer, under --resume-from a task that names its own `resume` target without kind `resume`, or anything else the parser refuses."""
 
 
 BATCH_EPILOG = f"""\
@@ -62,6 +64,7 @@ Each member is told the group's name and size; a member with a checkout is also 
 
 RUN_EPILOG = f"""\
 Returns as soon as the run has a handle: once its thread id appears, or after {THREAD_ID_WAIT:.0f} s with `thread_id: null`, which `status` fills in later; a run without a thread id cannot be resumed yet. A detached supervisor runs the turn, so the run outlives this command, and nothing announces its end: the reply's `next.command`, run in the background, returns when the run does and prints its result.
+Isolated, the default for a new thread: Codex does not load your config.toml — no MCP servers, plugins, agent roles or hooks — and takes only `model`, `model_reasoning_effort` and `service_tier` from it; --inherit-config loads all of it.
 Codex receives the prompt behind a paragraph saying the turn is non-interactive — a clarifying question ends it with the work undone — and that its final message is what reaches the caller."""
 
 
@@ -122,10 +125,10 @@ Prints: one JSON line — `models`, each with its `slug`, `display_name`, `defau
 Exits: 0 read; 1 the catalog cannot be read (`doctor` says why), or an internal error; 2 an argument the parser refuses."""
 
 
-DOCTOR_DESC = """\
+DOCTOR_DESC = f"""\
 The environment a run would start in. It spawns nothing, so a failure that only appears once Codex launches shows in the run's `stderr_tail` instead.
-Prints: one JSON line — `ok`, `blockers`, `warnings`, then what they rest on: Python; codex on PATH and its version; CODEX_HOME, resolved, with `codex_home_from_env` saying whether it was set; login; config.toml's sandbox and the `effective_defaults` a run naming nothing would get; the model catalog; the skill's `entry`; the registry, overlapping live writers and leftover worktrees.
-Exits: 0 no blocker; 3 a blocker would stop a run — no codex, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.11; 1 an internal error; 2 an argument the parser refuses."""
+Prints: one JSON line — `ok`, `blockers`, `warnings`, then what they rest on: Python; codex on PATH and its version; `read_only`, which read-only a read-only run in the project gets (`scratch` or `strict`, a warning saying why); CODEX_HOME, resolved, with `codex_home_from_env` saying whether it was set; login; config.toml's sandbox and the `effective_defaults` a run naming nothing would get; the model catalog; the skill's `entry`; the registry, overlapping live writers and leftover worktrees.
+Exits: 0 no blocker; 3 a blocker would stop a run — no codex, a codex older than {ISOLATION_FLOOR_TEXT}, not logged in, a missing CODEX_HOME, an unwritable registry, Python below 3.11; 1 an internal error; 2 an argument the parser refuses."""
 
 
 TIER_DEFAULT = "a resumed thread's recorded tier while its isolation is unchanged, otherwise `service_tier` from your config.toml, as for --model"
@@ -252,9 +255,9 @@ def add_run_options(p, *, kind):
     """Options shared by `start` (kind "start"), `resume` and `batch` (kind "batch")."""
     p.add_argument("--label", help="short name shown in the run id and in `status`" + ("; a resume keeps the thread's label unless this replaces it" if kind == "resume" else ""))
     if kind == "resume":
-        p.add_argument("--sandbox", choices=SANDBOX_MODES, help="change the thread's sandbox for this and later turns (default: the sandbox the thread recorded). Required for a thread this registry never recorded. A change is reported as `sandbox_changed_from`")
+        p.add_argument("--sandbox", choices=SANDBOX_MODES, help="change the thread's sandbox for this and later turns (default: the sandbox the thread recorded); the values mean what they mean for `start`, and naming read-only moves a thread that recorded the stricter read-only to the one that can run tests. Required for a thread this registry never recorded. A change is reported as `sandbox_changed_from`")
     else:
-        p.add_argument("--sandbox", choices=SANDBOX_MODES, help="what the run may do to the filesystem (default: workspace-write" + ("; a resumed member keeps its thread's" if kind == "batch" else "") + "), recorded and re-asserted on every later turn of the thread")
+        p.add_argument("--sandbox", choices=SANDBOX_MODES, help="what the run can do (default: workspace-write" + ("; a resumed member keeps its thread's" if kind == "batch" else "") + "), recorded and re-asserted on every later turn of the thread. read-only reads anything and can run tests and builds: only TMPDIR and ~/.cache are writable, and the network is off; where that cannot hold, the reply's `read_only` is `strict` and says why. workspace-write also writes in its directory, network still off. danger-full-access has no sandbox: it writes anywhere and reaches the network")
     p.add_argument("--model", help="model slug (default: what a resumed thread recorded, as long as --inherit-config does not change its isolation; otherwise `model` from your config.toml — passed in for an isolated run, read by Codex itself under --inherit-config — and with none, the server's choice). Checked against `models` before spawning when the catalog can be read")
     p.add_argument("--effort", help="reasoning effort; which values a model accepts differs per model, and `models` lists them (default: as for --model, from `model_reasoning_effort`)")
     p.add_argument("--inherit-config", action="store_true", help="load your config.toml — MCP servers, plugins, agent roles, hooks — instead of running isolated (default: isolated for a new thread; a resume keeps the thread's choice). Auth comes from auth.json either way")

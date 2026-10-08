@@ -2,7 +2,8 @@
 
 from codex.codex_cli.argv import SANDBOX_MODES, WRITING_SANDBOXES, apply_preamble, build_argv, read_only_blocker
 from codex.codex_cli.catalog import (
-    check_model_effort, codex_support, codex_version, model_catalog, refuse_without_isolation, support_for,
+    ISOLATION_FLOOR_TEXT, check_model_effort, codex_support, codex_version, model_catalog, refuse_without_isolation,
+    support_for,
 )
 from codex.codex_cli.config import codex_home, config_summary, pin_codex_home, user_defaults
 from codex.codex_cli.events import (
@@ -18,6 +19,7 @@ __all__ = [
     "codex_home", "pin_codex_home", "user_defaults", "config_summary",
     # the version and what it can run, the model catalog
     "model_catalog", "check_model_effort", "codex_version", "support_for", "codex_support", "refuse_without_isolation",
+    "ISOLATION_FLOOR_TEXT",
     # login
     "login_status",
     # the event stream and stderr

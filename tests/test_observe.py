@@ -6,10 +6,12 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
+import sys
 import time
 import unittest
 
-from support.harness import (BridgeCase, FIXTURES, LEGACY_INHERITED, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
+from support.harness import (ENTRY, BridgeCase, FIXTURES, LEGACY_INHERITED, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
                              wait_until)
 
 
@@ -224,6 +226,48 @@ class AStateThatMovesWhileItIsRead(BridgeCase):
         self.assertEqual(out.returncode, 0, out.stdout)
         header = json.loads(out.stdout)
         self.assertEqual((header["state"], header["json"]), ("completed", {"verdict": "ok"}))
+
+    def test_status_with_the_stderr_its_end_left(self):
+        # `stderr_tail` skips an empty file, so a FIFO cannot hold this read: an audit hook in the real entry point records the failure and its stderr the first time stderr.log is opened.
+        sup = self.detached_process()
+        rid = "20990101-000000-stderr-0001"
+        self.write_meta(rid, {"run_id": rid, "state": "running", "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
+                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project)})
+        d = self.runs_dir / rid
+        (d / "events.jsonl").write_text(self.TURN)
+        (d / "stderr.log").write_text("starting\n")
+        hook = (
+            "import json, runpy, sys\n"
+            "d, entry = sys.argv[1], sys.argv[2]\n"
+            "fired = []\n"
+            "def hook(event, args):\n"
+            "    if event == 'open' and not fired and str(args[0]).endswith('stderr.log'):\n"
+            "        fired.append(1)\n"
+            "        open(d + '/stderr.log', 'w').write('fatal: codex exited\\n')\n"
+            "        m = json.load(open(d + '/meta.json'))\n"
+            "        m.update(state='failed', exit_code=1)\n"
+            "        open(d + '/meta.json', 'w').write(json.dumps(m))\n"
+            "sys.addaudithook(hook)\n"
+            # What `python cli.py` does before anything runs: the script's folder first on the path.
+            "sys.path.insert(0, entry.rsplit('/', 1)[0])\n"
+            "sys.argv = [entry, 'status', '--run', sys.argv[3]]\n"
+            "runpy.run_path(entry, run_name='__main__')\n")
+        p = subprocess.run([sys.executable, "-c", hook, str(d), str(ENTRY), rid], cwd=str(self.project), env=self.env,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        row = json.loads(p.stdout)
+        self.assertEqual((row["state"], row["exit_code"], row.get("stderr_tail")), ("failed", 1, "fatal: codex exited"))
+
+    def test_an_orphan_whose_codex_stops_writing_while_its_answer_is_read(self):
+        # Its stored state stays `orphaned` throughout; only its Codex process ending says the answer is now final.
+        codex = self.detached_process()
+        rid = self.run_moving_mid_read([lambda: (os.killpg(codex, signal.SIGKILL), wait_until(lambda: not alive(codex), timeout=10))],
+                                       ["PARTIAL"], "FINAL", path="last-message.txt", start="orphaned",
+                                       codex_pid=codex, supervisor_pid=None, pgid=codex)
+        (self.runs_dir / rid / "events.jsonl").write_text(self.WHOLE)
+        header, body = self.result_view("--run", rid)
+        self.assertEqual((header["state"], body), ("orphaned", b"FINAL"))
+        self.assertNotIn("note", header, "nothing writes any more")
 
     def test_a_group_member_read_as_it_ends(self):
         rid = self.ends_mid_answer("FINAL")

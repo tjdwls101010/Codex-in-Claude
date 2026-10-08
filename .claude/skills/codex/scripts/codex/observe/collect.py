@@ -7,7 +7,6 @@ from pathlib import Path
 from codex.codex_cli import changed_paths
 from codex.git import repo_identity
 from codex.observe.rows import progress, settled, turn_failed_excerpt
-from codex.registry import still_writing
 from codex.util import nfc
 
 # Per member, in bytes, in `result --group`; `result --run` returns the whole message.
@@ -52,7 +51,7 @@ def member_result(rd, meta):
         root = (m.get("worktree") or {}).get("path") or m.get("cwd")
         return progress(rd, m), read_final(rd), written_paths(rd / "events.jsonl", root)
 
-    meta, (info, raw, paths) = settled(rd, meta, read)
+    meta, (info, raw, paths), writing = settled(rd, meta, read)
     message = final_message(raw, info)
     raw = message.encode("utf-8")
     truncated = len(raw) > GROUP_MESSAGE_CAP
@@ -67,7 +66,7 @@ def member_result(rd, meta):
         row["unparsed_events"] = info["unparsed_events"]
     if meta.get("worktree"):
         row["worktree"] = meta["worktree"]
-    if still_writing(meta):
+    if writing:
         row["codex_still_running"] = True
     return row, info, shown, paths
 

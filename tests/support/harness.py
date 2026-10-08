@@ -236,11 +236,14 @@ class BridgeCase(unittest.TestCase):
         return sup
 
     def run_moving_mid_read(self, moves, reads, final, path="events.jsonl", start="running", **meta):
-        """A run that moves while a view reads `path`. Read i of it is a FIFO held open until the run has recorded `moves[i]` and the path has been swapped for the next read's FIFO — or, after the last move, for a regular file holding `final` — and only then gets `reads[i]`. So a view that reads again once the state moved sees the later state with the later data, and one that does not keeps data older or newer than the state it reports. The supervisor stays alive, so nothing but meta.json says the run moved. Returns the run id."""
+        """A run that moves while a view reads `path`. Read i of it is a FIFO held open until the run has made `moves[i]` — a state it records, or a callable that changes the run some other way — and the path has been swapped for the next read's FIFO — or, after the last move, for a regular file holding `final` — and only then gets `reads[i]`. So a view that reads again once the state moved sees the later state with the later data, and one that does not keeps data older or newer than the state it reports. The supervisor stays alive, so nothing but meta.json says the run moved. Returns the run id."""
         sup = self.detached_process()
         rid = "20990101-000000-moving-0001"
         self.write_meta(rid, {"run_id": rid, "state": start, "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
                               "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project), **meta})
+        return self._moving(rid, moves, reads, final, path)
+
+    def _moving(self, rid, moves, reads, final, path):
         d = self.runs_dir / rid
         target = d / path
         fifos = [d / f".read-{i}.fifo" for i in range(len(moves))]
@@ -252,7 +255,11 @@ class BridgeCase(unittest.TestCase):
             for i, (state, text) in enumerate(zip(moves, reads)):
                 # Blocks until the view opens read i; the descriptor stays on that FIFO once the path is swapped.
                 fd = os.open(target, os.O_WRONLY)
-                self.write_meta(rid, {**self.meta(rid), "state": state, **({"exit_code": 0} if state == "completed" else {})})
+                if callable(state):
+                    state()
+                else:
+                    self.write_meta(rid, {**self.meta(rid), "state": state,
+                                          **({"exit_code": 0 if state == "completed" else 1} if state in ("completed", "failed") else {})})
                 if i + 1 < len(moves):
                     os.replace(fifos[i + 1], target)
                 else:

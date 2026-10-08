@@ -14,7 +14,7 @@ def log(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     rd, meta = run(runs_dir, args.run)
-    meta, lines = settled(rd, meta, lambda _m: event_lines(rd / "events.jsonl", Path(meta.get("cwd") or project)))
+    meta, lines, _writing = settled(rd, meta, lambda _m: event_lines(rd / "events.jsonl", Path(meta.get("cwd") or project)))
     for line in lines:
         yield line + "\n"
     yield f"run={meta.get('run_id')} state={meta.get('state')}\n"

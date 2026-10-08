@@ -26,23 +26,25 @@ def turn_failed_excerpt(info):
     return clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400) if info["turn_failed"] else None
 
 
-# A run's state only moves forward — starting, running, an end — so it stops moving within this many reads.
-SETTLE_READS = 4
+# A run's liveness only moves forward — starting, running, an end, and for an orphan its Codex stopping — so it stops moving within this many reads.
+SETTLE_READS = 5
 
 
 def settled(run_dir: Path, meta: dict, read):
-    """`(meta, read(meta))` that agree with each other: `read` takes everything a view reports for the run — its events, its final message, the paths it wrote — and is repeated until the state no longer moves across it. A run records its end only once Codex has stopped writing, so a read made under an end is final. Any single order can contradict itself: the earlier state beside data that already shows the end, or the later state beside data read before the last of it landed."""
+    """`(meta, read(meta), writing)` that agree with each other. `read` takes everything a view reports for the run — its events, its final message, its stderr, the paths it wrote — and is repeated until the run's liveness, its state together with whether its Codex still writes, is the same before and after it: a stored state alone stays `orphaned` while Codex finishes. `writing` is the liveness settled on, for the view to use rather than ask again. Any single order can contradict itself: the earlier state beside data that already shows the end, or the later state beside data read before the last of it landed."""
     meta = reap(run_dir, meta)
     for _ in range(SETTLE_READS):
+        before = (meta.get("state"), still_writing(meta))
         data = read(meta)
         again = read_meta(run_dir)
         if not again:
-            return meta, data
+            return meta, data, before[1]
         again = reap(run_dir, again)
-        if again.get("state") == meta.get("state"):
-            return meta, data
+        if (again.get("state"), still_writing(again)) == before:
+            return meta, data, before[1]
         meta = again
-    return meta, read(meta)
+    writing = still_writing(meta)
+    return meta, read(meta), writing
 
 
 def progress(run_dir: Path, meta: dict):
@@ -52,8 +54,13 @@ def progress(run_dir: Path, meta: dict):
 
 def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
     """The row `status` prints for one run, reaped first so a dead supervisor is never reported live."""
-    meta, info = settled(run_dir, meta, lambda m: progress(run_dir, m))
     events_path = run_dir / "events.jsonl"
+
+    def read(m):
+        changed = events_path.stat().st_mtime if events_path.exists() and events_path.stat().st_size > 0 else None
+        return progress(run_dir, m), read_stderr_tail(run_dir / "stderr.log"), changed
+
+    meta, (info, stderr_tail, changed), writing = settled(run_dir, meta, read)
     now = time.time()
 
     def stamp(field):
@@ -68,17 +75,13 @@ def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
     codex_elapsed = None
     t1 = stamp("codex_started_at")
     if t1 is not None:
-        end = None if still_writing(meta) else stamp("ended_at")
+        end = None if writing else stamp("ended_at")
         codex_elapsed = int((end if end is not None else now) - t1)
-    idle = None
-    if events_path.exists() and events_path.stat().st_size > 0:
-        idle = int(now - events_path.stat().st_mtime)
+    idle = int(now - changed) if changed is not None else None
 
     state = meta.get("state")
     if state == "running" and idle is not None and idle >= STALL_SECONDS:
         state = "stalled"
-
-    stderr_tail = read_stderr_tail(run_dir / "stderr.log")
 
     # Optional fields appear only when they say something, so a present field is worth reading.
     extra = {key: meta[key] for key in ("error", "group", "sandbox_changed_from", "codex_started_at",
@@ -87,7 +90,7 @@ def run_row(run_dir: Path, meta: dict, project: Path, excerpt: int = 400):
         extra["worktree"] = meta["worktree"]["path"]
     if stderr_tail:
         extra["stderr_tail"] = stderr_tail
-    if still_writing(meta):
+    if writing:
         extra["codex_still_running"] = True
     if info["unparsed_events"]:
         extra["unparsed_events"] = info["unparsed_events"]

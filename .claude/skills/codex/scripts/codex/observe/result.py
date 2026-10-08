@@ -9,7 +9,7 @@ from codex.git import resolve_project
 from codex.observe.collect import final_message, member_result, overlaps, read_final
 from codex.observe.follow import GroupWatch, wait_until
 from codex.observe.rows import group_snapshot, progress, settled, turn_failed_excerpt
-from codex.registry import TERMINAL_STATES, group_view, is_live, read_meta, reap, resolve_runs_dir, run, still_writing
+from codex.registry import TERMINAL_STATES, group_view, is_live, read_meta, reap, resolve_runs_dir, run
 
 
 def result(args):
@@ -32,9 +32,10 @@ def result(args):
             return not now or not is_live(reap(rd, now))
         wait_until(ended, args.wait_timeout)
         rd, meta = run(runs_dir, rd.name)
-    meta, (info, raw) = settled(rd, meta, lambda m: (progress(rd, m), read_final(rd)))
+    meta, (info, raw), writing = settled(rd, meta, lambda m: (progress(rd, m), read_final(rd)))
+    live = meta.get("state") not in TERMINAL_STATES or writing
     # A live run has no final answer yet: what it has said so far is not the object its schema shapes.
-    answer_due = meta.get("schema_path") and not is_live(meta)
+    answer_due = meta.get("schema_path") and not live
     try:
         # A --schema answer is parsed, and a replaced byte would parse into a different object than the one written.
         message = final_message(raw, info, errors="strict" if answer_due else "replace")
@@ -44,7 +45,7 @@ def result(args):
            "thread_id": meta.get("thread_id") or info["thread_id"]}
     if meta.get("state") not in TERMINAL_STATES:
         out["note"] = f"run is still {meta.get('state')}; this is a partial result"
-    elif still_writing(meta):
+    elif writing:
         # The same call later would return a different message, so this one is not final.
         out["note"] = "codex is still writing although the run is orphaned; this is a partial result"
     turn_failed = turn_failed_excerpt(info)

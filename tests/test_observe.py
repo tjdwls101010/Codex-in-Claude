@@ -194,20 +194,45 @@ class StatusOfOneRun(BridgeCase):
 
 
 class AStateThatMovesWhileItIsRead(BridgeCase):
-    """A view reports the state and the events it read together: a run recorded completed while its events were being read is reported completed with its whole turn, never running with it, nor completed without its end."""
+    """A view reports the state together with the data it read for it — events, the final message, written paths: a run recorded completed while they were being read is reported completed with all of them, never running beside them, nor completed beside older ones."""
+
+    TURN = '{"type": "turn.started"}\n'
+    WHOLE = TURN + '{"type": "turn.completed", "usage": {"input_tokens": 7, "output_tokens": 1}}\n'
+
+    def ends_mid_events(self):
+        return self.run_moving_mid_read(["completed"], [self.TURN], self.WHOLE)
+
+    def ends_mid_answer(self, answer, **meta):
+        rid = self.run_moving_mid_read(["completed"], [answer], answer, path="last-message.txt", **meta)
+        (self.runs_dir / rid / "events.jsonl").write_text(self.WHOLE)
+        return rid
 
     def test_status_of_one_run(self):
-        rid, writer = self.run_ending_mid_read()
-        row = self.row(rid)
-        writer.join(timeout=15)
+        row = self.row(self.ends_mid_events())
         self.assertEqual((row["state"], row["turns_completed"]), ("completed", 1))
 
     def test_result_of_one_run(self):
-        rid, writer = self.run_ending_mid_read()
-        header, _body = self.result_view("--run", rid)
-        writer.join(timeout=15)
+        header, _body = self.result_view("--run", self.ends_mid_events())
         self.assertEqual((header["state"], header["usage"]), ("completed", {"input_tokens": 7, "output_tokens": 1}))
         self.assertNotIn("note", header)
+
+    def test_a_schema_answer_read_as_the_run_ends(self):
+        schema = self.tmp / "s.json"
+        schema.write_text("{}")
+        rid = self.ends_mid_answer('{"verdict": "ok"}', schema_path=str(schema))
+        out = self.bridge_raw("result", "--run", rid)
+        self.assertEqual(out.returncode, 0, out.stdout)
+        header = json.loads(out.stdout)
+        self.assertEqual((header["state"], header["json"]), ("completed", {"verdict": "ok"}))
+
+    def test_a_group_member_read_as_it_ends(self):
+        rid = self.ends_mid_answer("FINAL")
+        (self.runs_dir / ".groups").mkdir()
+        (self.runs_dir / ".groups" / "g.json").write_text(json.dumps(
+            {"group": "g", "created_at": "2099-01-01T00:00:00.000Z", "epoch": "e", "requested": 1,
+             "members": [{"index": 0, "kind": "start", "run_id": rid}]}))
+        header, members = self.result_view("--group", "g")
+        self.assertEqual((header["group_state"], members[0]), ("completed", (f"--- [0] run={rid} state=completed bytes=5", b"FINAL")))
 
 
 class Listing(BridgeCase):

@@ -26,16 +26,23 @@ def turn_failed_excerpt(info):
     return clip(json.dumps(info["turn_failed"], ensure_ascii=False), 400) if info["turn_failed"] else None
 
 
+# A run's state only moves forward — starting, running, an end — so it stops moving within this many reads.
+SETTLE_READS = 4
+
+
 def settled(run_dir: Path, meta: dict, read):
-    """`(meta, read(meta))` that agree with each other. The run's state is read before and after its events, and the events again if the state moved meanwhile: a run records its end only once Codex has stopped writing, so the second read is final. Either single order can contradict itself — the earlier state beside events that already show the end, or the later state beside events read before the last line landed."""
+    """`(meta, read(meta))` that agree with each other: `read` takes everything a view reports for the run — its events, its final message, the paths it wrote — and is repeated until the state no longer moves across it. A run records its end only once Codex has stopped writing, so a read made under an end is final. Any single order can contradict itself: the earlier state beside data that already shows the end, or the later state beside data read before the last of it landed."""
     meta = reap(run_dir, meta)
-    data = read(meta)
-    again = read_meta(run_dir)
-    if again:
+    for _ in range(SETTLE_READS):
+        data = read(meta)
+        again = read_meta(run_dir)
+        if not again:
+            return meta, data
         again = reap(run_dir, again)
-        if again.get("state") != meta.get("state"):
-            return again, read(again)
-    return meta, data
+        if again.get("state") == meta.get("state"):
+            return meta, data
+        meta = again
+    return meta, read(meta)
 
 
 def progress(run_dir: Path, meta: dict):

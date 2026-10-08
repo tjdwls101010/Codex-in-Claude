@@ -33,18 +33,27 @@ def written_paths(events_path: Path, root=None):
     return paths
 
 
-def final_message(run_dir, info, errors="replace"):
-    """What a run concluded: its `-o` file decoded as UTF-8 (a byte that is not, handled by `errors`), else the last agent message in its event stream (a live run's answer so far), else nothing."""
+def read_final(run_dir):
+    """A run's `-o` file as written, or None when there is none yet."""
     msg_path = run_dir / "last-message.txt"
-    if msg_path.exists():
-        return msg_path.read_bytes().decode("utf-8", errors)
+    return msg_path.read_bytes() if msg_path.exists() else None
+
+
+def final_message(raw, info, errors="replace"):
+    """What a run concluded: its `-o` file (`raw`, from `read_final`) decoded as UTF-8 (a byte that is not, handled by `errors`), else the last agent message in its event stream (a live run's answer so far), else nothing."""
+    if raw is not None:
+        return raw.decode("utf-8", errors)
     return info["last_agent_message"] or ""
 
 
 def member_result(rd, meta):
-    """One member of `result --group`: its row and the part of its message that is shown, capped in bytes (cut and counted in the same unit). Returns `(row, info, shown)`."""
-    meta, info = settled(rd, meta, lambda m: progress(rd, m))
-    message = final_message(rd, info)
+    """One member of `result --group`: its row, the part of its message that is shown, capped in bytes (cut and counted in the same unit), and the paths it wrote — all read together with its state. Returns `(row, info, shown, paths)`."""
+    def read(m):
+        root = (m.get("worktree") or {}).get("path") or m.get("cwd")
+        return progress(rd, m), read_final(rd), written_paths(rd / "events.jsonl", root)
+
+    meta, (info, raw, paths) = settled(rd, meta, read)
+    message = final_message(raw, info)
     raw = message.encode("utf-8")
     truncated = len(raw) > GROUP_MESSAGE_CAP
     # "ignore": a byte cut mid-character would otherwise add U+FFFD, which is larger and reads as corruption.
@@ -60,7 +69,7 @@ def member_result(rd, meta):
         row["worktree"] = meta["worktree"]
     if still_writing(meta):
         row["codex_still_running"] = True
-    return row, info, shown
+    return row, info, shown, paths
 
 
 def overlaps(per_run_paths):

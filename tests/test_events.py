@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -90,10 +91,15 @@ class WhatLogPrints(BridgeCase):
         self.assertFalse([ln for ln in self.body if ln.startswith("run=") or ln.startswith("# ")])
 
     def test_the_state_and_the_events_agree_when_the_run_ends_mid_read(self):
-        rid, writer = self.run_ending_mid_read()
-        body, end = self.log("--run", rid)
-        writer.join(timeout=15)
-        self.assertEqual((body[-1], end), ("turn.completed in=7 cached=? out=1 reasoning=?", f"run={rid} state=completed"))
+        thread, started, done = ('{"type": "thread.started", "thread_id": "t"}\n', '{"type": "turn.started"}\n',
+                                 '{"type": "turn.completed", "usage": {"input_tokens": 7, "output_tokens": 1}}\n')
+        for start, moves, reads in (("running", ["completed"], [thread + started]),
+                                    ("starting", ["running", "completed"], [thread, thread + started])):
+            with self.subTest(moves=moves):
+                shutil.rmtree(self.runs_dir, ignore_errors=True)
+                rid = self.run_moving_mid_read(moves, reads, thread + started + done, start=start)
+                body, end = self.log("--run", rid)
+                self.assertEqual((body[-1], end), ("turn.completed in=7 cached=? out=1 reasoning=?", f"run={rid} state=completed"))
 
     def test_a_live_run_shows_the_command_it_is_inside(self):
         out, _m = self.running("y", FAKE_CODEX_FIXTURE=FIXTURES / "mid-command.jsonl")

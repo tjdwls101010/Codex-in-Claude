@@ -235,40 +235,35 @@ class BridgeCase(unittest.TestCase):
         self.write_meta(LEGACY_WAITER, {**self.meta(LEGACY_WAITER), "supervisor_pid": sup, "pgid": sup})
         return sup
 
-    def run_ending_mid_read(self):
-        """A run whose events are a FIFO and whose end is recorded while a view reads them: the first read gets a turn without its end, the run is then recorded completed, and a second read, if the view makes one, gets the whole turn. Its supervisor stays alive, so nothing but meta.json says it ended. Returns `(run_id, writer thread)`."""
+    def run_moving_mid_read(self, moves, reads, final, path="events.jsonl", start="running", **meta):
+        """A run that moves while a view reads `path`. Read i of it is a FIFO held open until the run has recorded `moves[i]` and the path has been swapped for the next read's FIFO — or, after the last move, for a regular file holding `final` — and only then gets `reads[i]`. So a view that reads again once the state moved sees the later state with the later data, and one that does not keeps data older or newer than the state it reports. The supervisor stays alive, so nothing but meta.json says the run moved. Returns the run id."""
         sup = self.detached_process()
-        rid = "20990101-000000-fifo-0001"
-        self.write_meta(rid, {"run_id": rid, "state": "running", "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
-                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project)})
-        fifo = self.runs_dir / rid / "events.jsonl"
-        os.mkfifo(fifo)
-        first = '{"type": "turn.started"}\n'
-        whole = first + '{"type": "turn.completed", "usage": {"input_tokens": 7, "output_tokens": 1}}\n'
-
-        def serve(text, then=None):
-            # Opened without blocking, so a view that never reads a second time leaves this to give up rather than hang the suite.
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                try:
-                    fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
-                    break
-                except OSError:
-                    time.sleep(0.02)
-            else:
-                return
-            if then:
-                then()
-            with os.fdopen(fd, "w") as fh:
-                fh.write(text)
+        rid = "20990101-000000-moving-0001"
+        self.write_meta(rid, {"run_id": rid, "state": start, "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
+                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project), **meta})
+        d = self.runs_dir / rid
+        target = d / path
+        fifos = [d / f".read-{i}.fifo" for i in range(len(moves))]
+        for f in fifos:
+            os.mkfifo(f)
+        os.replace(fifos[0], target)
 
         def writer():
-            serve(first, then=lambda: self.write_meta(rid, {**self.meta(rid), "state": "completed", "exit_code": 0}))
-            serve(whole)
+            for i, (state, text) in enumerate(zip(moves, reads)):
+                # Blocks until the view opens read i; the descriptor stays on that FIFO once the path is swapped.
+                fd = os.open(target, os.O_WRONLY)
+                self.write_meta(rid, {**self.meta(rid), "state": state, **({"exit_code": 0} if state == "completed" else {})})
+                if i + 1 < len(moves):
+                    os.replace(fifos[i + 1], target)
+                else:
+                    (d / ".final").write_text(final)
+                    os.replace(d / ".final", target)
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(text)
 
-        t = threading.Thread(target=writer, daemon=True)
-        t.start()
-        return rid, t
+        # A daemon: a view that never reads again leaves it waiting on a FIFO nobody opens, and the test fails on what the view printed.
+        threading.Thread(target=writer, daemon=True).start()
+        return rid
 
     def run_dirs(self):
         return sorted(p.name for p in self.runs_dir.iterdir()

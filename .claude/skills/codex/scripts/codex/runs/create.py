@@ -13,7 +13,7 @@ from pathlib import Path
 
 from codex.codex_cli import (
     SANDBOX_MODES, WRITING_SANDBOXES, apply_preamble, build_argv, check_model_effort, first_thread_id, model_catalog,
-    user_defaults,
+    read_only_blocker, refuse_without_isolation, user_defaults,
 )
 from codex.errors import Refusal
 from codex.git import git_toplevel, resolve_project, uncommitted_count as worktree_uncommitted, worktree_add
@@ -119,7 +119,9 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     r = settings_for(sandbox=args.sandbox, model=args.model, effort=args.effort,
                      priority=getattr(args, "priority", None),
                      inherit_config=getattr(args, "inherit_config", False),
-                     base=base, user=user_defaults())
+                     base=base, user=user_defaults(), read_only_blocker=read_only_blocker(cwd))
+    if r["isolated"]:
+        refuse_without_isolation()
     adopted = r["adopted"]
     # Guarded because the catalog lookup is a subprocess on the path of every run.
     if adopted["model"] or adopted["effort"]:
@@ -127,7 +129,8 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
                            model_source=adopted["model_source"], effort_source=adopted["effort_source"])
 
     return {"cwd": cwd, "prompt": prompt, "isolated": r["isolated"],
-            "sandbox": r["sandbox"], "model": r["model"], "effort": r["effort"],
+            "sandbox": r["sandbox"], "read_only": r["read_only"], "read_only_note": r["read_only_note"],
+            "model": r["model"], "effort": r["effort"],
             "service_tier": r["service_tier"], "schema_path": schema_path, "images": images}
 
 
@@ -153,6 +156,8 @@ def publish(args, s, *, kind, base, project, runs_dir, thread_ref, group):
             "cwd": str(s["cwd"]),
             "project": str(project),
             "sandbox": s["sandbox"],
+            # Which read-only a read-only run got, re-asserted on every later turn; None for a writing run.
+            "read_only": s["read_only"],
             "model": s["model"],
             "effort": s["effort"],
             "isolated": s["isolated"],
@@ -228,8 +233,12 @@ def create_run(args, *, kind: str, base=None, thread_ref=None, group=None, batch
         time.sleep(0.05)
     m = read_meta(run_dir) or {}
     # The handle and what the run may do first, warnings next, paths last.
-    out = {"run_id": run_id, "thread_id": thread_id, "state": m.get("state", "starting"),
-           "sandbox": s["sandbox"], "isolated": s["isolated"]}
+    out = {"run_id": run_id, "thread_id": thread_id, "state": m.get("state", "starting"), "sandbox": s["sandbox"]}
+    if s["read_only"]:
+        out["read_only"] = s["read_only"]
+    out["isolated"] = s["isolated"]
+    if s["read_only_note"]:
+        out["read_only_note"] = s["read_only_note"]
     if "sandbox_changed_from" in meta:
         out["sandbox_changed_from"] = meta["sandbox_changed_from"]
     if s["sandbox"] in WRITING_SANDBOXES and not wt_info:

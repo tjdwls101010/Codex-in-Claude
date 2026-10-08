@@ -11,7 +11,7 @@ through the environment so the bridge cannot tell it from the real CLI:
   FAKE_CODEX_HANG       seconds to sleep after replaying, before exiting
   FAKE_CODEX_EXIT       exit code (default 0)
   FAKE_CODEX_STDERR     extra text for stderr
-  FAKE_CODEX_VERSION    what `--version` prints
+  FAKE_CODEX_VERSION    what `--version` prints (default: `codex-cli 0.160.0`, a version every feature of the skill runs on; "" prints nothing)
   FAKE_CODEX_MODELS     what `debug models` prints: unset gives a two-model catalog, "" empty stdout, "!fail" a non-zero exit, "!garbage" unparseable output
   FAKE_CODEX_LOGIN_RC   exit code for `login status`
   FAKE_CODEX_LOGIN_OUT  what `login status` prints
@@ -123,7 +123,7 @@ def main():
                                  "stdin_is_tty": sys.stdin.isatty()}, ensure_ascii=False) + "\n")
 
     if "--version" in argv:
-        print(os.environ.get("FAKE_CODEX_VERSION", "codex-cli 0.0.0-fake"))
+        print(os.environ.get("FAKE_CODEX_VERSION", "codex-cli 0.160.0"))
         return 0
     if argv[:2] == ["login", "status"]:
         rc = int(os.environ.get("FAKE_CODEX_LOGIN_RC", "0"))

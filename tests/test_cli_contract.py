@@ -14,7 +14,7 @@ import subprocess
 import sys
 import unittest
 
-from support.harness import ENTRY, BridgeCase, FIXTURES, engine
+from support.harness import ENTRY, BridgeCase, FIXTURES, engine, read_only_profile
 
 
 class OutputFrame(BridgeCase):
@@ -275,10 +275,13 @@ class WhatReachesCodex(BridgeCase):
         self.assertEqual(rec["codex_home"], str(self.codex_home))
 
     def test_every_sandbox_mode_is_a_config_entry(self):
-        for mode in ("read-only", "workspace-write", "danger-full-access"):
+        for mode in ("workspace-write", "danger-full-access"):
             with self.subTest(mode=mode):
                 _out, rec = self.started("--sandbox", mode, "x")
                 self.assertEqual(self.config_values(rec["argv"])["sandbox_mode"], f'"{mode}"')
+        _out, rec = self.started("--sandbox", "read-only", "x")
+        self.assertEqual(self.config_values(rec["argv"]), read_only_profile(self.project),
+                         "read-only travels as a permissions profile, never alongside sandbox_mode")
 
     def test_named_settings_are_passed_through(self):
         schema = self.tmp / "s.json"

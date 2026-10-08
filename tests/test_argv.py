@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tomllib
 import unittest
 
 from support.harness import engine
@@ -45,6 +46,46 @@ class BuildArgv(unittest.TestCase):
 
     def test_no_prompt_means_no_terminator(self):
         self.assertNotIn("--", build(prompt=None))
+
+
+# The profile a read-only run that can write scratch is handed, from the measured form: everything readable, TMPDIR and ~/.cache writable, the run's own directory named read-only so it stays so even inside TMPDIR, network off, selected by name — with no `sandbox_mode`, which would pick the legacy sandbox instead.
+SCRATCH = ["-c", 'permissions.codex_skill_read_only.filesystem={":root"="read", ":tmpdir"="write", "~/.cache"="write", "/work/proj"="read"}',
+           "-c", "permissions.codex_skill_read_only.network.enabled=false",
+           "-c", 'default_permissions="codex_skill_read_only"']
+
+
+class ReadOnlyProfile(unittest.TestCase):
+
+    def test_a_scratch_read_only_run_gets_the_profile_in_place_of_the_sandbox(self):
+        self.assertEqual(build(read_only="scratch", cwd="/work/proj", effort="high"),
+                         ["codex", "exec", "--json", "--ignore-user-config", *SCRATCH,
+                          "-c", 'model_reasoning_effort="high"', "-o", "/r/run-1/last-message.txt", "--", "do it"])
+
+    def test_a_resume_reasserts_it_for_the_directory_the_thread_recorded(self):
+        argv = build(kind="resume", thread_ref="thread-9", read_only="scratch", cwd="/work/proj")
+        self.assertEqual(argv[:6], ["codex", "exec", "resume", "thread-9", "--json", "--ignore-user-config"])
+        self.assertEqual(argv[6:12], SCRATCH)
+
+    def test_strict_or_unmarked_read_only_is_the_legacy_sandbox(self):
+        for marker in (None, "strict"):
+            with self.subTest(marker=marker):
+                argv = build(read_only=marker, cwd="/work/proj")
+                self.assertEqual(argv[argv.index("-c"):argv.index("-c") + 2], ["-c", 'sandbox_mode="read-only"'])
+                self.assertFalse([a for a in argv if "permissions" in a])
+
+    def test_a_writing_sandbox_never_gets_the_profile(self):
+        for mode in ("workspace-write", "danger-full-access"):
+            with self.subTest(mode=mode):
+                argv = build(sandbox=mode, read_only="scratch", cwd="/work/proj")
+                self.assertIn(f'sandbox_mode="{mode}"', argv)
+                self.assertFalse([a for a in argv if "permissions" in a])
+
+    def test_a_directory_toml_has_to_escape_stays_one_key(self):
+        cwd = '/we"ird\\dir/한글 공백'
+        argv = build(read_only="scratch", cwd=cwd)
+        entry = next(a for a in argv if a.startswith("permissions.codex_skill_read_only.filesystem="))
+        table = tomllib.loads("t = " + entry.split("=", 1)[1])["t"]
+        self.assertEqual(table, {":root": "read", ":tmpdir": "write", "~/.cache": "write", cwd: "read"})
 
 
 class Preamble(unittest.TestCase):

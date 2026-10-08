@@ -10,7 +10,8 @@ import os
 import signal
 import unittest
 
-from support.harness import BridgeCase, LEGACY_PREDECESSOR, LEGACY_REVIEW, alive, wait_until
+from support.harness import (BridgeCase, LEGACY_INHERITED, LEGACY_PREDECESSOR, LEGACY_REVIEW, alive, read_only_profile,
+                             wait_until)
 
 
 class ResumeCase(BridgeCase):
@@ -31,7 +32,7 @@ class SettingsAreReasserted(ResumeCase):
         argv = rec["argv"]
         self.assertEqual(argv[:3], ["exec", "resume", first["thread_id"]])
         self.assertEqual(self.config_values(argv),
-                         {"sandbox_mode": '"read-only"', "model_reasoning_effort": '"low"'})
+                         {**read_only_profile(self.project), "model_reasoning_effort": '"low"'})
         self.assertEqual(argv[argv.index("-m") + 1], "fake-big")
         self.assertIn("--ignore-user-config", argv)
         for flag in ("-s", "--sandbox", "-C", "--cd", "--add-dir"):
@@ -90,8 +91,7 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
 
     def test_the_sandbox_is_never_taken_from_the_config(self):
         self.config('sandbox_mode = "danger-full-access"\n')
-        self.assertEqual(self.config_values(self.started_argv("--sandbox", "read-only"))["sandbox_mode"],
-                         '"read-only"')
+        self.assertEqual(self.config_values(self.started_argv("--sandbox", "read-only")), read_only_profile(self.project))
         self.assertEqual(self.config_values(self.started_argv())["sandbox_mode"], '"workspace-write"')
 
     def test_a_table_below_the_top_level_is_not_the_top_level(self):
@@ -137,6 +137,85 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
                 self.assertEqual(self.config_values(argv)["service_tier"], '"priority"')
                 self.assertEqual(argv[argv.index("-m") + 1], "gpt-5.6-sol",
                                  "a recorded model is not re-checked against today's catalog")
+
+
+class ReadOnlyWritesScratch(ResumeCase):
+    """A read-only run can run tests and builds: it reads anything and writes only TMPDIR and ~/.cache, with the network off. Where that cannot hold, the run gets the legacy read-only and its reply says so in `read_only_note`; a thread recorded before this keeps the legacy sandbox unless --sandbox read-only asks."""
+
+    def started(self, *args, env=None):
+        out = self.bridge("start", "--sandbox", "read-only", *args, "look", env=env)
+        self.wait_state(out["run_id"])
+        return out, self.last_argv()
+
+    def assert_strict(self, out, argv):
+        self.assertEqual(out["read_only"], "strict")
+        self.assertTrue(out["read_only_note"])
+        self.assertEqual(self.meta(out["run_id"])["read_only"], "strict")
+        self.assertEqual(self.config_values(argv)["sandbox_mode"], '"read-only"')
+        self.assertNotIn("default_permissions", self.config_values(argv))
+
+    def test_a_read_only_run_and_its_resume_get_the_profile(self):
+        out, argv = self.started()
+        self.assertEqual(self.config_values(argv), read_only_profile(self.project))
+        self.assertEqual((out["sandbox"], out["read_only"]), ("read-only", "scratch"))
+        self.assertNotIn("read_only_note", out)
+        self.assertEqual(self.meta(out["run_id"])["read_only"], "scratch")
+        again = self.bridge("resume", out["run_id"], "again")
+        self.wait_state(again["run_id"])
+        self.assertEqual(self.config_values(self.last_argv()), read_only_profile(self.project))
+        self.assertEqual((again["read_only"], self.meta(again["run_id"])["read_only"]), ("scratch", "scratch"))
+
+    def test_a_writing_run_has_no_marker(self):
+        out = self.bridge("start", "x")
+        self.wait_state(out["run_id"])
+        self.assertNotIn("read_only", out)
+        self.assertEqual(self.config_values(self.last_argv()), {"sandbox_mode": '"workspace-write"'})
+
+    def test_a_thread_from_before_keeps_the_legacy_sandbox_until_asked(self):
+        self.install_legacy_registry()
+        kept = self.bridge("resume", LEGACY_REVIEW, "again")
+        self.wait_state(kept["run_id"])
+        self.assert_strict(kept, self.last_argv())
+        moved = self.bridge("resume", LEGACY_REVIEW, "--sandbox", "read-only", "again")
+        self.wait_state(moved["run_id"])
+        self.assertEqual(self.config_values(self.last_argv())["default_permissions"], '"codex_skill_read_only"')
+        self.assertEqual((moved["read_only"], self.meta(moved["run_id"])["read_only"]), ("scratch", "scratch"))
+
+    def test_a_thread_that_loads_the_users_config_stays_legacy_even_when_asked(self):
+        self.install_legacy_registry()
+        out = self.bridge("resume", LEGACY_INHERITED, "--sandbox", "read-only", "again")
+        self.wait_state(out["run_id"])
+        self.assert_strict(out, self.last_argv())
+
+    def test_a_codex_below_the_profile_floor_or_of_unknown_version_gets_the_legacy_sandbox(self):
+        first, _argv = self.started()
+        for version in ("codex-cli 0.159.0", ""):
+            with self.subTest(version=version):
+                env = {"FAKE_CODEX_VERSION": version}
+                self.assert_strict(*self.started(env=env))
+                again = self.bridge("resume", first["run_id"], "again", env=env)
+                self.wait_state(again["run_id"])
+                self.assert_strict(again, self.last_argv())
+
+    def test_a_directory_that_is_itself_tmpdir_or_the_cache_gets_the_legacy_sandbox(self):
+        tmpdir, home = self.tmp / "scratch-tmp", self.tmp / "home"
+        (home / ".cache").mkdir(parents=True)
+        (tmpdir / "inside").mkdir(parents=True)
+        env = {"TMPDIR": tmpdir, "HOME": home}
+        for cwd in (tmpdir, home / ".cache"):
+            with self.subTest(cwd=cwd):
+                self.assert_strict(*self.started("--cwd", cwd, env=env))
+        out, argv = self.started("--cwd", tmpdir / "inside", env=env)
+        self.assertEqual(out["read_only"], "scratch", "a directory inside TMPDIR stays read-only: its own entry is the more specific")
+        self.assertEqual(self.config_values(argv), read_only_profile(tmpdir / "inside"))
+
+    def test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written(self):
+        # A checker that probes for a writable temporary directory falls back to another one here, and in a sandbox where none is writable it fails outright.
+        tmpdir = self.tmp / "locked-tmp"
+        tmpdir.mkdir()
+        os.chmod(tmpdir, 0o500)
+        self.addCleanup(os.chmod, tmpdir, 0o700)
+        self.assert_strict(*self.started("--cwd", tmpdir, env={"TMPDIR": tmpdir}))
 
 
 class FindingTheThread(ResumeCase):
@@ -188,7 +267,7 @@ class ThreadsTheRegistryNeverSaw(ResumeCase):
         self.wait_state(out["run_id"])
         argv = self.last_argv()
         self.assertEqual(argv[:3], ["exec", "resume", "some-thread"])
-        self.assertEqual(self.config_values(argv)["sandbox_mode"], '"read-only"')
+        self.assertEqual(self.config_values(argv), read_only_profile(self.project))
         self.assertEqual(self.meta(out["run_id"])["resume_ref"], "some-thread")
 
     def test_without_a_sandbox_it_is_refused_before_anything_is_claimed(self):

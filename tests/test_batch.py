@@ -9,7 +9,7 @@ import shutil
 import signal
 import unittest
 
-from support.harness import BridgeCase, alive, wait_until
+from support.harness import BridgeCase, alive, read_only_profile, wait_until
 
 
 class BatchCase(BridgeCase):
@@ -51,8 +51,9 @@ class Starting(BatchCase):
         self.assertEqual([r["label"] for r in out["runs"]], ["flag", "A", "B"])
         self.assertEqual([r["sandbox"] for r in out["runs"]], ["danger-full-access"] * 2 + ["read-only"])
         self.wait_all(out)
-        self.assertEqual([self.config_values(r["argv"])["sandbox_mode"] for r in self.runs_invoked()],
-                         ['"danger-full-access"'] * 2 + ['"read-only"'])
+        self.assertEqual([self.config_values(r["argv"]).get("sandbox_mode") for r in self.runs_invoked()],
+                         ['"danger-full-access"'] * 2 + [None])
+        self.assertEqual(self.config_values(self.runs_invoked()[-1]["argv"]), read_only_profile(self.project))
 
     def test_a_name_is_single_use_and_a_refusal_costs_nothing(self):
         self.wait_all(self.batch("p1", "x"))
@@ -122,6 +123,30 @@ class TasksAreValidatedBeforeAnythingStarts(BatchCase):
         out = self.bridge("batch", "--group", "p1", "--tasks-file", tf)
         self.assertEqual(out["spawned"], 1)
         self.wait_all(out)
+
+
+class ReadOnlyMembers(BatchCase):
+    """A read-only member is a read-only run: it gets the profile that writes scratch, and its row says which read-only it got."""
+
+    def test_read_only_members_get_the_profile_and_say_so(self):
+        out = self.batch("p1", "a", "b", extra=("--sandbox", "read-only"))
+        self.wait_all(out)
+        self.assertEqual([r["read_only"] for r in out["runs"]], ["scratch", "scratch"])
+        self.assertFalse([r for r in out["runs"] if "read_only_note" in r])
+        for rec in self.runs_invoked():
+            self.assertEqual(self.config_values(rec["argv"]), read_only_profile(self.project))
+
+    def test_a_new_member_and_a_resumed_one_each_say_when_they_got_the_legacy_sandbox(self):
+        seed = self.bridge("start", "--sandbox", "read-only", "seed")
+        self.wait_state(seed["run_id"])
+        tf = self.tasks_file("fresh", {"prompt": "again", "kind": "resume", "resume": seed["run_id"]})
+        out = self.bridge("batch", "--group", "p1", "--sandbox", "read-only", "--tasks-file", tf,
+                          env={"FAKE_CODEX_VERSION": "codex-cli 0.159.0"})
+        self.wait_all(out)
+        self.assertEqual([r["read_only"] for r in out["runs"]], ["strict", "strict"])
+        self.assertTrue(all(r["read_only_note"] for r in out["runs"]))
+        for rec in self.runs_invoked()[1:]:
+            self.assertEqual(self.config_values(rec["argv"])["sandbox_mode"], '"read-only"')
 
 
 class OneMemberFailingDoesNotTakeTheOthers(BatchCase):

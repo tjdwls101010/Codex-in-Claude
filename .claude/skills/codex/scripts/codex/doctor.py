@@ -7,7 +7,8 @@ import shutil
 import sys
 
 from codex.codex_cli import (
-    WRITING_SANDBOXES, codex_home, codex_version, config_summary, login_status, model_catalog, user_defaults,
+    WRITING_SANDBOXES, codex_home, codex_version, config_summary, login_status, model_catalog, read_only_blocker,
+    refuse_without_isolation, user_defaults,
 )
 from codex.git import git_toplevel, resolve_project, worktrees_registered
 from codex.errors import Refusal
@@ -38,6 +39,8 @@ def doctor(args):
     report["plugin_root_env"] = os.environ.get("CLAUDE_PLUGIN_ROOT")
     report["project"] = str(project)
     report["project_is_git_repo"] = git_toplevel(project) is not None
+    if report["codex_path"]:
+        _check_runs_it_can_start(report, blockers, warnings, project)
     agents = project / "AGENTS.md"
     report["project_agents_md"] = str(agents) if agents.exists() else None
     if agents.exists():
@@ -80,6 +83,18 @@ def _check_codex(report, blockers, warnings):
                         f"`codex login` will fail the same way: {clip(login['detail'], 200)}")
     elif login["cause"] == "unauthenticated":
         blockers.append("`codex login status` exited non-zero — not authenticated")
+
+
+def _check_runs_it_can_start(report, blockers, warnings, project):
+    """Whether this Codex can start an isolated run at all, and which read-only a read-only run in the project would get."""
+    try:
+        refuse_without_isolation()
+    except Refusal as e:
+        blockers.append(e.error)
+    note = read_only_blocker(project)
+    report["read_only"] = "strict" if note else "scratch"
+    if note:
+        warnings.append(f"read-only runs here: {note}")
 
 
 def _check_config(report, warnings):

@@ -1,9 +1,8 @@
-"""`status`: whether runs are live, how far along, and what they last said — the default listing, one run, a group, and a group followed to its end."""
+"""`status`: whether runs are live, how far along, and what they last said — the default listing, one run, and a group."""
 
 from __future__ import annotations
 
 from codex.git import resolve_project
-from codex.observe.follow import GroupWatch, closing_line, follow, tail
 from codex.observe.rows import group_snapshot, note_unreadable, row_is_live, run_row, summary_row
 from codex.registry import group_view, iter_runs, list_groups, resolve_runs_dir, run
 
@@ -15,7 +14,7 @@ def status(args):
     project = resolve_project(args.project)
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
-        return follow_group(args, project, runs_dir) if args.follow else status_group(args, project, runs_dir)
+        return status_group(args, project, runs_dir)
 
     if args.run:
         # One run is answered by its row itself, so its state is the first thing read.
@@ -24,7 +23,7 @@ def status(args):
     # Summaries come from every row before the display cap, so no live run falls off `running`.
     running, done, failed, _ = group_snapshot(rows)
     shown = rows
-    if not args.all and len(rows) > LISTING_ROWS:
+    if len(rows) > LISTING_ROWS:
         shown = [r for r in rows[:-LISTING_ROWS] if row_is_live(r)] + rows[-LISTING_ROWS:]
     # The listing counts finished runs rather than naming them: their ids grow with the registry and say nothing the caller acts on. Groups are listed even when none of their members is shown: this is how a later session finds a batch.
     out = {"running": running, "counts": {"live": len(running), "completed": len(done), "failed": len(failed)},
@@ -43,30 +42,3 @@ def status_group(args, project, runs_dir):
         out["unstarted"] = never
     out.update(runs=rows, project=str(project))
     return note_unreadable(out, runs_dir)
-
-
-def follow_group(args, project, runs_dir):
-    """One line per member state change, then one terminal line."""
-    watch = GroupWatch(runs_dir, args.group, project)
-    if not watch.members:
-        yield f"group.empty group={args.group}" + tail(runs_dir, watch.gaps) + "\n"
-        return
-    seen = {}
-
-    def step():
-        rows, gaps = watch.now()
-        for row in rows:
-            prev = seen.get(row["run_id"])
-            if prev != row["state"]:
-                line = f"run {row['run_id']} {prev or '-'} -> {row['state']}"
-                if row.get("exit_code") is not None and row["state"] != "completed":
-                    line += f" exit={row['exit_code']}"
-                yield line + "\n"
-                seen[row["run_id"]] = row["state"]
-        running, done, failed, _ = group_snapshot(rows)
-        if not running:
-            yield closing_line(runs_dir, args.group, rows, gaps)
-            return None
-        return [f"group.still-running group={args.group} running={len(running)} done={len(done)} failed={len(failed)}"]
-
-    yield from follow(step, timeout=args.follow_timeout)

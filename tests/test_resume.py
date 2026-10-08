@@ -232,30 +232,6 @@ class FindingTheThread(ResumeCase):
         self.assertEqual(rec["argv"][2], first["thread_id"])
         self.assertEqual(self.row(second["run_id"])["parent_run_id"], first["run_id"])
 
-    def test_last_picks_the_one_live_run(self):
-        done = self.bridge("start", "done")
-        self.wait_state(done["run_id"])
-        live, _m = self.running("live")
-        out = self.bridge("resume", "--last", "--force", "go on")
-        self.assertEqual(out["resolved_from_run_id"], live["run_id"])
-        self.bridge("stop", "--all")
-
-    def test_last_with_nothing_live_takes_the_newest_and_says_so(self):
-        for p in ("a", "b"):
-            self.wait_state(self.bridge("start", "--label", p, p)["run_id"])
-        newest = self.bridge("status", "--all")["runs"][-1]
-        out = self.bridge("resume", "--last", "go on")
-        self.wait_state(out["run_id"])
-        self.assertEqual(out["resolved_from_run_id"], newest["run_id"])
-        self.assertIn("newest", out["resolved_from"])
-        self.assertEqual(out["label"], newest["label"])
-
-    def test_last_with_two_live_runs_is_refused_with_the_candidates(self):
-        a, _ = self.running("a")
-        b, _ = self.running("b")
-        refused = self.bridge("resume", "--last", "go on", rc=1)
-        self.assertEqual({c["run_id"] for c in refused["candidates"]}, {a["run_id"], b["run_id"]})
-
     def test_a_run_that_never_recorded_a_thread_cannot_be_resumed(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": os.devnull, "FAKE_CODEX_EXIT": 1})
         self.wait_state(out["run_id"])

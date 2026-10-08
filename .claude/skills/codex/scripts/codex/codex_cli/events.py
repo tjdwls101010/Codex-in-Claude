@@ -266,34 +266,6 @@ def scan_progress(events_path: Path, terminal: bool = False):
     return info
 
 
-def find_item(events_path: Path, item_id: str):
-    """`(item, available)`: one item by id, or None, beside every completed item as `<id>:<type>` in the order the run finished them, both from one read so they agree while the run appends. Item ids restart at `item_0` in every run, so this is only meaningful within one run.
-
-    `kind` is how the skill tells items apart and `type` the type as recorded. A `command` carries `command` (without the shell wrapper), `exit_code` and its whole `output`; a `file_change` its `changes`; anything else, kind `other`, carries the `item` as recorded."""
-    found, available = None, []
-    for ev in read_events(events_path, 0)[0]:
-        if ev.get("type") in ("item.started", "item.completed"):
-            it = ev.get("item") or {}
-            if it.get("id") == item_id:
-                found = it  # completed supersedes started
-            if ev.get("type") == "item.completed":
-                available.append(f"{it.get('id')}:{it.get('type')}")
-    return _item(found), available
-
-
-def _item(found):
-    """An item as recorded, in the skill's terms."""
-    if found is None:
-        return None
-    itype = found.get("type")
-    if itype == "command_execution":
-        return {"kind": "command", "type": itype, "command": strip_wrapper(found.get("command") or ""),
-                "exit_code": found.get("exit_code"), "output": found.get("aggregated_output") or ""}
-    if itype == "file_change":
-        return {"kind": "file_change", "type": itype, "changes": found.get("changes") or []}
-    return {"kind": "other", "type": itype, "item": found}
-
-
 def changed_paths(events_path: Path):
     """The paths a run's file changes name, as Codex recorded them — absolute in practice — in NFC."""
     paths = set()

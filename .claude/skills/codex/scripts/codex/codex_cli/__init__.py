@@ -7,7 +7,7 @@ from codex.codex_cli.catalog import (
 )
 from codex.codex_cli.config import codex_home, config_summary, pin_codex_home, user_defaults
 from codex.codex_cli.events import (
-    DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS, CursorOutOfRange, changed_paths, event_lines, find_item,
+    DEFAULT_LEVEL, FAIL_HEAD_BYTES, FULL_ITEM_BYTES, LEVELS, CursorOutOfRange, changed_paths, event_lines,
     first_thread_id, scan_progress, stderr_tail,
 )
 from codex.codex_cli.login import login_status
@@ -24,5 +24,5 @@ __all__ = [
     "login_status",
     # the event stream and stderr
     "LEVELS", "DEFAULT_LEVEL", "FAIL_HEAD_BYTES", "FULL_ITEM_BYTES", "CursorOutOfRange", "event_lines",
-    "first_thread_id", "scan_progress", "find_item", "changed_paths", "stderr_tail",
+    "first_thread_id", "scan_progress", "changed_paths", "stderr_tail",
 ]

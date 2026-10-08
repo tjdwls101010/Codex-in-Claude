@@ -116,12 +116,6 @@ class WhoGetsACheckout(WorktreeCase):
         self.assertIn("not a git repository", out["worktrees"]["note"])
         self.assertTrue(all(r["cwd"] == str(plain) for r in out["runs"]))
 
-    def test_an_unresolvable_base_is_refused_before_anything_is_claimed(self):
-        refused = self.group("--worktree", "--base", "no-such-ref", rc=2)
-        self.assertIn("no-such-ref", refused["error"])
-        self.assertEqual(self.run_dirs(), [])
-
-
 class WhatACheckoutHolds(WorktreeCase):
     """A checkout is `git worktree add` output: tracked files at the base commit and nothing else."""
 

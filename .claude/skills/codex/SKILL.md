@@ -12,7 +12,7 @@ Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written 
 
 ## Handing work over
 
-**Pick the sandbox by what you hand over:** `read-only` to review, investigate or answer; `workspace-write` when the run should change files. Loading your own Codex config is a separate decision (see Gotchas).
+**Pick the sandbox by what you hand over:** `read-only` to review, investigate or answer; `workspace-write` when the run should change files.
 
 **`resume` or a fresh `start`.** A resumed thread brings what it already worked out and replays a transcript that grows every turn; a fresh start knows nothing. Continue when the new work builds on the old understanding; start fresh when it doesn't, because an unrelated task then pays to read past context it has no use for.
 
@@ -24,7 +24,7 @@ Call it as `uv run "${CLAUDE_SKILL_DIR}/scripts/cli.py" <command> …`, written 
 |---|---|---|
 | `Agent` | `start`, then its reply's `next.command` in the background, which prints the result when the run ends | — |
 | `Workflow` `parallel()` | `batch` with several `--task` | runs calling or messaging each other |
-| a next stage | `batch --resume-from <group>` once every member has finished | a stage that starts itself: each round is computed and started from your context |
+| a next stage | `batch` with a `--tasks-file` of one `kind: resume` line per member, once every member has finished | a stage that starts itself: each round is computed and started from your context |
 
 ## Several runs at once
 
@@ -34,7 +34,7 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 
 **A worktree is a committed snapshot.** It has none of your uncommitted changes and none of what git ignores — interpreters, fixtures, caches. Check that a task has what its verification needs; the reply's `missing_ignored` names what is absent.
 
-**Rounds:** `--resume-from` continues each member's thread with the next round's prompts, written in advance or computed from the last results; choose it over a new batch by the same test as `resume` over `start`.
+**Rounds:** a next round resumes each member's thread — a `--tasks-file` line per member with kind `resume` and its run id — with prompts written in advance or computed from the last results; choose it over a batch of fresh starts by the same test as `resume` over `start`.
 
 **A group outlives the session.** Its name is the one thing nobody can re-derive, and `status` lists the project's groups. Collect with `result --group`; moving changes out of worktrees into your tree is yours to do; finish with `clean`.
 
@@ -46,18 +46,11 @@ A batch is for when N runs should be one name you watch, collect and stop — a 
 
 **If this is your only turn** — nothing will wake you later — run `next.command` in the foreground instead, with `--wait-timeout` added and the Bash call's own timeout set above it. If the budget runs out first, hand back the run id and say the work is unfinished.
 
-**Per-event notifications**, worth it only when you would act mid-run, come from Monitor running a follower: `log --follow` to stop a run going wrong, since only the log shows what it is doing; a group's `status --follow` to move members on as each lands. Monitor ends at its own deadline and that end reads like the run's; set it longer than the run and re-arm it when it expires.
-
-`status` answers whether a run is live and how far along, `log` what it is doing (incrementally with `--since`), `result` what it concluded.
-
-## Context discipline
-
-`log`'s default level replaces each command's output with its size and item id, because the agent's own messages, never filtered, usually say what the output showed. Raise `--level` when a command failed and the agent's account is not enough to act on; use `show --run <id> --item <item>` to check a summary against the output it summarises.
+`status` answers whether a run is live and how far along, `log` what it did, `result` what it concluded.
 
 ## Gotchas
 
 - A project's `AGENTS.md` reaches every run, isolated or not — in a worktree, as committed at its base: a standing briefing, and also input you did not write into the prompt.
-- `--inherit-config` loads your config's MCP servers, plugins and agent roles. Use it when the run needs one of them, not as a precaution.
 
 ## When something goes wrong
 

@@ -187,24 +187,6 @@ def live_runs(runs_dir: Path, among=None):
     return [(rd, m) for rd, m in ((rd, reap(rd, m)) for rd, m in pool) if is_live(m)]
 
 
-def implicit_run(candidates):
-    """Pick a run nobody named, from `candidates` in `iter_runs` order: the one live run, else the newest with a note saying so. Two or more live runs are refused with the candidates listed, because guessing would hand the caller another run's label and sandbox."""
-    reaped = [(rd, reap(rd, m)) for rd, m in candidates]
-    live = [(rd, m) for rd, m in reaped if is_live(m)]
-    if len(live) == 1:
-        rd, m = live[0]
-        return rd, m, "the only non-terminal run"
-    if len(live) >= 2:
-        raise Refusal("two or more runs are live, so the target is ambiguous; name a run id, thread id or thread name",
-                      candidates=[{"run_id": m.get("run_id"), "label": m.get("label"),
-                                   "state": m.get("state"), "sandbox": m.get("sandbox"),
-                                   "thread_id": m.get("thread_id")} for rd, m in live])
-    if not reaped:
-        return None, None, None
-    rd, m = reaped[-1]
-    return rd, m, "the newest run (no non-terminal runs)"
-
-
 def run(runs_dir: Path, ref: str):
     """The run `ref` names, as `find_run` resolves it, with a readable meta.json; refused otherwise. "Cannot read that run" and "no such run" are different refusals: the first still has an event stream on disk."""
     run_dir, meta = find_run(runs_dir, ref)

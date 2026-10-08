@@ -1,35 +1,15 @@
-"""The loop every `--follow` runs, the closing line a group's follow ends on, and the silent wait `result --wait` makes.
-
-A follower holds no state `status --group` could not re-derive, so one that dies loses nothing, and every follow ends on a terminal line — including on `--follow-timeout` — so silence never stands in for an outcome. A wait is the opposite contract: it prints nothing at all, so the result printed after it is the whole output.
-"""
+"""The silent wait `result --wait` makes, and a group as that wait sees it look by look. It prints nothing at all, so the result printed after it is the whole output, and it holds no state `status --group` could not re-derive, so one that dies loses nothing."""
 
 from __future__ import annotations
 
 import time
 
 from codex.errors import Refusal
-from codex.observe.rows import group_snapshot, run_row
-from codex.registry import group_view, read_meta, unreadable_runs
+from codex.observe.rows import run_row
+from codex.registry import group_view, read_meta
 
-# How often a follower asks whether anything changed. A tick reads forward from a byte offset, so it is cheap.
+# How often a wait asks whether the run or group has ended.
 FOLLOW_INTERVAL = 1.0
-
-
-def follow(step, *, timeout):
-    """Run `step()` every FOLLOW_INTERVAL until it is done or `timeout` passes, passing each line on as soon as it is produced.
-
-    `step()` is a generator that yields this tick's lines, newline included, as it produces them — so a failure later in the tick does not take earlier lines with it — and returns None once it has yielded the terminal line, else the lines to print if the deadline has passed.
-    """
-    started = time.time()
-    while True:
-        deadline_lines = yield from step()
-        if deadline_lines is None:
-            return
-        if timeout and time.time() - started >= timeout:
-            for line in deadline_lines:
-                yield line + "\n"
-            return
-        time.sleep(FOLLOW_INTERVAL)
 
 
 def wait_until(ended, timeout):
@@ -42,11 +22,11 @@ def wait_until(ended, timeout):
 
 
 class GroupWatch:
-    """A group as a follower or a wait sees it, tick by tick: its members' rows and the slots no row stands for, both from one read of the manifest, so a member counts once and one a still-starting batch adds is seen. Once `clean` has released the name, another batch has claimed it again, or the manifest stops parsing, what was last read stands, its members re-read: a slot that never started is not forgotten, and nothing of a group that only shares the name is taken in."""
+    """A group as a wait sees it, look by look: its members' rows and the slots no row stands for, both from one read of the manifest, so a member counts once and one a still-starting batch adds is seen. Once `clean` has released the name, another batch has claimed it again, or the manifest stops parsing, what was last read stands, its members re-read: a slot that never started is not forgotten, and nothing of a group that only shares the name is taken in."""
 
     def __init__(self, runs_dir, name, project):
         self.runs_dir, self.name, self.project = runs_dir, name, project
-        # Refuses an unknown or unreadable group before anything is followed.
+        # Refuses an unknown or unreadable group before anything is waited for.
         self.members, self.gaps, self.epoch = group_view(runs_dir, name)
 
     def view(self):
@@ -70,15 +50,3 @@ class GroupWatch:
         """`(rows, gaps)` as they stand, each row reaped."""
         members, gaps = self.view()
         return [run_row(rd, m, self.project) for rd, m in members], gaps
-
-
-def tail(runs_dir, gaps):
-    """The counts a group's closing line appends when non-zero."""
-    bad = len(unreadable_runs(runs_dir))
-    return (f" unstarted={len(gaps)}" if gaps else "") + (f" unreadable={bad}" if bad else "")
-
-
-def closing_line(runs_dir, name, rows, gaps):
-    """The line a group's follow ends on."""
-    _running, done, failed, gstate = group_snapshot(rows, len(gaps))
-    return f"group.{gstate} group={name} done={len(done)} failed={len(failed)}" + tail(runs_dir, gaps) + "\n"

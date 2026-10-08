@@ -38,7 +38,7 @@ CLI_SEAM = {"build_parser"}
 IMPORTERS = {"engine", "import_module", "__import__"}
 MODULE_KEYWORDS = {"name", "module"}
 
-# `mock.patch` splits its target at the last dot: what comes before is imported as a module path, the last name is an attribute of it. So `codex.observe.show` patches the interface function on the package, while `codex.observe.show.find_item` patches a global inside the module file of that name.
+# `mock.patch` splits its target at the last dot: what comes before is imported as a module path, the last name is an attribute of it. So `codex.observe.log` patches the interface function on the package, while `codex.observe.log.event_lines` patches a global inside the module file of that name.
 PATCHERS = {"patch"}
 
 
@@ -414,7 +414,7 @@ class Structure(unittest.TestCase):
 class TheInterfaceChecksCatchWhatTheyAreFor(unittest.TestCase):
     """Each interface check run against a small tree that keeps the rules, then against the same tree with one rule broken: a check that stays quiet on the broken one would pass the real tree for nothing."""
 
-    # `put` is both an interface function and a module file, as `codex.observe.show` is: the package attribute is the function.
+    # `put` is both an interface function and a module file, as `codex.observe.log` is: the package attribute is the function.
     STORE_INIT = '__all__ = ["put"]\nfrom codex.store.put import put\n'
 
     def tree(self, *, store_init=STORE_INIT, feature="from codex.store import put\n", test="x = 1\n"):

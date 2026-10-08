@@ -17,7 +17,7 @@ def result(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
         if args.wait:
-            # Ended as `status --group --follow` closes, through the same watch: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
+            # Ended once no readable member is live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
             watch = GroupWatch(runs_dir, args.group, project)
             wait_until(lambda: not group_snapshot(watch.now()[0])[0], args.wait_timeout)
             # Collected from the watch too: the name may have been released, or taken by another batch, while it waited.

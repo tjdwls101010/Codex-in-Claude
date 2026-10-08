@@ -111,13 +111,8 @@ def build_argv(meta: dict, *, kind: str, prompt=None, thread_ref=None):
     if meta.get("schema_path"):
         argv += ["--output-schema", meta["schema_path"]]
     argv += ["-o", str(Path(meta["run_dir"]) / "last-message.txt")]
-    if kind == "start":
-        for d in meta.get("add_dirs") or []:
-            argv += ["--add-dir", d]
-    for img in meta.get("images") or []:
-        argv += ["-i", img]
     if prompt is not None:
-        # Required: `-i <FILE>...` takes several values and would swallow the prompt, and a prompt starting with `-` is rejected as a flag.
+        # Required: a prompt starting with `-` is otherwise rejected as a flag.
         argv += ["--", prompt]
     return argv
 

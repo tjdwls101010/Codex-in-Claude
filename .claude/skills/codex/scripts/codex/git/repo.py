@@ -33,9 +33,9 @@ def resolve_project(explicit=None) -> Path:
     return git_toplevel(base) or base
 
 
-def resolve_base(cwd: Path, ref=None):
-    """The full sha a worktree will be cut from (`ref`, else HEAD), or None. A sha rather than a name, because the preamble states it and a name could move."""
-    r = run_git(cwd, "rev-parse", "--verify", f"{ref or 'HEAD'}^{{commit}}")
+def resolve_base(cwd: Path):
+    """The full sha of HEAD, which a worktree is cut from, or None. A sha rather than a name, because the preamble states it and a name could move."""
+    r = run_git(cwd, "rev-parse", "--verify", "HEAD^{commit}")
     return r.stdout.strip() if r.returncode == 0 else None
 
 

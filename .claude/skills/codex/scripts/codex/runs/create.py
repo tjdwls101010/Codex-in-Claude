@@ -106,10 +106,6 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
                    else (base.get("schema_path") if base else None))
     if schema_path and not Path(schema_path).exists():
         raise Refusal(f"schema file not found: {schema_path}", arguments=True)
-    images = [str(Path(i).expanduser().resolve()) for i in (getattr(args, "image", None) or [])]
-    for img in images:
-        if not Path(img).exists():
-            raise Refusal(f"image not found: {img}", arguments=True)
 
     if kind == "resume" and not thread_ref:
         # A bare `codex exec resume` would fail after this command already reported a run started.
@@ -118,7 +114,6 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
 
     r = settings_for(sandbox=args.sandbox, model=args.model, effort=args.effort,
                      priority=getattr(args, "priority", None),
-                     inherit_config=getattr(args, "inherit_config", False),
                      base=base, user=user_defaults(), read_only_blocker=read_only_blocker(cwd))
     if r["isolated"]:
         refuse_without_isolation()
@@ -131,7 +126,7 @@ def resolve_settings(args, *, kind, base, project, thread_ref):
     return {"cwd": cwd, "prompt": prompt, "isolated": r["isolated"],
             "sandbox": r["sandbox"], "read_only": r["read_only"], "read_only_note": r["read_only_note"],
             "model": r["model"], "effort": r["effort"],
-            "service_tier": r["service_tier"], "schema_path": schema_path, "images": images}
+            "service_tier": r["service_tier"], "schema_path": schema_path}
 
 
 def publish(args, s, *, kind, base, project, runs_dir, thread_ref, group):
@@ -163,8 +158,6 @@ def publish(args, s, *, kind, base, project, runs_dir, thread_ref, group):
             "isolated": s["isolated"],
             "service_tier": s["service_tier"],
             "schema_path": s["schema_path"],
-            "images": s["images"],
-            "add_dirs": [str(Path(d).expanduser().resolve()) for d in (getattr(args, "add_dir", None) or [])],
             # Only where Codex's own guard does not apply.
             "skip_git_repo_check": git_toplevel(s["cwd"]) is None,
             "claude_session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),

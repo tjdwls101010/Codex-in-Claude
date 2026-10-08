@@ -246,8 +246,8 @@ def doctor_reply(args):
 # -- the parser -------------------------------------------------------------------
 
 def add_common(p):
-    p.add_argument("--runs-dir", help="registry directory (default: <project>/.codex-runs)")
-    p.add_argument("--project", help="project whose registry to use (default: the git top level of the current directory, or the directory itself)")
+    p.add_argument("--runs-dir", help="registry directory (default: .codex-runs in the main checkout of the project's repository, one for every checkout of it, linked worktrees included)")
+    p.add_argument("--project", help="act as if run from this directory: its repository's registry, and its git top level as the directory runs work in by default (default: the current directory)")
 
 
 def add_run_options(p, *, kind):

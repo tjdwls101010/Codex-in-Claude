@@ -6,7 +6,7 @@
     doctor.py    feature: doctor and models
     codex_cli/   system: the formats the Codex CLI owns — argv, CODEX_HOME and config.toml, the model catalog, login, the event stream and stderr
     git/         system: repository questions and worktrees, asked of the git CLI
-    registry/    store: <project>/.codex-runs — run records, group manifests, locks
+    registry/    store: <main checkout>/.codex-runs — run records, group manifests, locks
     errors.py    shared: Refusal, the one way a command says no
     util.py      shared: time, text, paths, process liveness, the entrypoint's path and how this CLI is called again
 

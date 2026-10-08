@@ -175,6 +175,22 @@ class CleaningAfterTheCheckoutIsGone(BridgeCase):
         self.assertTrue(res["kept"][0]["reason"])
         self.assertTrue(Path(out["runs"][0]["worktree"]).exists())
 
+    def test_nor_deletes_a_half_built_checkout_another_repository_never_owned(self):
+        # A checkout without its .git file looks like one `git worktree add` never finished, which --force deletes by hand — but only on the word of the repository that cut it.
+        wt = self.tmp / "linked"
+        self.git("worktree", "add", "-q", wt, "-b", "side")
+        out = self.bridge("batch", "--group", "g", "--worktree", "--task", "a", cwd=wt)
+        self.wait_all(out)
+        checkout = Path(out["runs"][0]["worktree"])
+        (checkout / ".git").unlink()
+        self.git("worktree", "remove", "--force", wt)
+        other = self.tmp / "other"
+        other.mkdir()
+        subprocess.run(["git", "-C", str(other), "init", "-q"], check=True)
+        res = self.bridge("clean", "--group", "g", "--force", "--runs-dir", self.runs_dir, cwd=other)
+        self.assertEqual((res["removed"], [k["path"] for k in res["kept"]]), ([], [str(checkout)]))
+        self.assertTrue(checkout.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

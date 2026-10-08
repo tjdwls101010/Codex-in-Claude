@@ -186,9 +186,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/__init__.py": {
-    "mtime": 1791488679.680047,
-    "seen": 1791488681.398017,
-    "ast_hash": "15e74c39f4c29e5c7fb9ce521f3db4cb",
+    "mtime": 1791492585.133267,
+    "seen": 1791492586.787903,
+    "ast_hash": "b47ae9fa2b9fe6c0822e4d2413d6311f",
     "semantic_hash": ""
   },
   "tests/test_argv.py": {
@@ -222,9 +222,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/cli.py": {
-    "mtime": 1791488679.67952,
-    "seen": 1791488681.398016,
-    "ast_hash": "a3638b7d8f137297c6131174b770d55f",
+    "mtime": 1791492585.1327705,
+    "seen": 1791492586.7879019,
+    "ast_hash": "40b07c7e23867a433110bf3f5bc7f33b",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/__init__.py": {
@@ -234,15 +234,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/clean.py": {
-    "mtime": 1791488679.6806774,
-    "seen": 1791488681.3980181,
-    "ast_hash": "de9c09251b96f636634aa86250cb635e",
+    "mtime": 1791492585.1336594,
+    "seen": 1791492586.787905,
+    "ast_hash": "f4e5fb769ea520a071a7f3b00e6adddc",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/commands.py": {
-    "mtime": 1791488679.6824498,
-    "seen": 1791488681.398019,
-    "ast_hash": "eca87a7d106e50489fddb0d734ae45d7",
+    "mtime": 1791492585.1340032,
+    "seen": 1791492586.787905,
+    "ast_hash": "c7cafdb2ffe1073ceac67d1187d2b809",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/batch/spawn.py": {
@@ -294,9 +294,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/doctor.py": {
-    "mtime": 1791483731.940344,
-    "seen": 1791483746.432588,
-    "ast_hash": "b2eef7e82e816fdea58178926b128c5a",
+    "mtime": 1791492585.1346605,
+    "seen": 1791492586.787911,
+    "ast_hash": "d2d46ddb63ac4dc2d068ce39763b90b6",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/errors.py": {
@@ -306,21 +306,21 @@
     "semantic_hash": "d9fe761084b654edc1715b6ee2e046bb"
   },
   ".claude/skills/codex/scripts/codex/git/__init__.py": {
-    "mtime": 1790870621.9986563,
-    "seen": 1790870626.9870908,
-    "ast_hash": "dbedd16ef0ec7635abecb0a363404281",
+    "mtime": 1791492585.135781,
+    "seen": 1791492586.787912,
+    "ast_hash": "8009bf99a819129cbaa01fdc6befa023",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/git/repo.py": {
-    "mtime": 1791488679.6865437,
-    "seen": 1791488681.398025,
-    "ast_hash": "0cff0eb451cbcfc49138fdc47bcb2f35",
+    "mtime": 1791492585.1363802,
+    "seen": 1791492586.787912,
+    "ast_hash": "662787abb59e92503fbab572fdba2492",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/git/worktree.py": {
-    "mtime": 1790871709.1268032,
-    "seen": 1790871710.469339,
-    "ast_hash": "fdfee7c34af28fd2525f34267ac4d68b",
+    "mtime": 1791492585.1386182,
+    "seen": 1791492586.7879128,
+    "ast_hash": "fd6f77ca522acc6d3feab8735b7dce4d",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/__init__.py": {
@@ -342,15 +342,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/log.py": {
-    "mtime": 1791488679.6885188,
-    "seen": 1791488681.3980281,
-    "ast_hash": "2efb777c3691c0fccc5c73d7c44a96ac",
+    "mtime": 1791492585.1389627,
+    "seen": 1791492586.787915,
+    "ast_hash": "ad2bf232e69bb5564b1a19914f332ceb",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/result.py": {
-    "mtime": 1791488679.688925,
-    "seen": 1791488681.3980281,
-    "ast_hash": "702f583204c71b67dc143d913cb475b7",
+    "mtime": 1791492585.139335,
+    "seen": 1791492586.787915,
+    "ast_hash": "72f851efa71d2ceda5d701081041dca7",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/rows.py": {
@@ -360,15 +360,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/observe/status.py": {
-    "mtime": 1791488679.6902254,
-    "seen": 1791488681.398029,
-    "ast_hash": "2f563209e87e3e9a4a7980649f4f00ef",
+    "mtime": 1791492585.1396463,
+    "seen": 1791492586.7879171,
+    "ast_hash": "3bf6a723506bbec999b9b40132894270",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/registry/__init__.py": {
-    "mtime": 1791488679.6907022,
-    "seen": 1791488681.398029,
-    "ast_hash": "b31fd43f3ab79167b259145ae8e15033",
+    "mtime": 1791492585.1400702,
+    "seen": 1791492586.7879171,
+    "ast_hash": "ba9ba538f8ffe6028a9c9d135017d04b",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/registry/groups.py": {
@@ -384,9 +384,9 @@
     "semantic_hash": "1146764eea0b4d9bac52e49cb67b337f"
   },
   ".claude/skills/codex/scripts/codex/registry/runs.py": {
-    "mtime": 1791488679.6919208,
-    "seen": 1791488681.398031,
-    "ast_hash": "0b1e244757105ebafdf664776883b3ee",
+    "mtime": 1791492585.1404855,
+    "seen": 1791492586.787919,
+    "ast_hash": "fb5423193c104db68fa3fafd160decec",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/__init__.py": {
@@ -396,15 +396,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/commands.py": {
-    "mtime": 1791488679.6923497,
-    "seen": 1791488681.398031,
-    "ast_hash": "f0556ba1ab9bb35843d1d10258309c2e",
+    "mtime": 1791492585.140961,
+    "seen": 1791492586.7879198,
+    "ast_hash": "ddd255bf6fb6b25c135f6668f7d60ea1",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/create.py": {
-    "mtime": 1791488679.6929007,
-    "seen": 1791488681.398032,
-    "ast_hash": "3b847ffe4c424935211e0c141e71c2a2",
+    "mtime": 1791492585.1415308,
+    "seen": 1791492586.7879198,
+    "ast_hash": "4d23c34642aafc1d2f0755c01ed1ed8e",
     "semantic_hash": ""
   },
   ".claude/skills/codex/scripts/codex/runs/settings.py": {
@@ -477,6 +477,12 @@
     "mtime": 1791483731.9445448,
     "seen": 1791483746.43262,
     "ast_hash": "971d7df490fa532d59cfec5c7b8d6802",
+    "semantic_hash": ""
+  },
+  "tests/test_registry_location.py": {
+    "mtime": 1791492585.142079,
+    "seen": 1791492586.787932,
+    "ast_hash": "5bb09bbaf32e9f520310abeea66d2e1d",
     "semantic_hash": ""
   }
 }

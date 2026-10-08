@@ -33,12 +33,12 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 - **Detached runs** — `start` returns a `run_id`/`thread_id` immediately instead of blocking, with `next`: `result --wait`, to run in a background call, which waits for the run and prints its result when it ends — the notification Claude gets points at the answer.
 - **Sandbox stability across turns** — every `resume` re-asserts the sandbox, model, and reasoning effort its thread was created with.
 - **Your Codex defaults survive isolation** — `--ignore-user-config` drops `config.toml` whole, so an isolated run would lose the model, reasoning effort and Fast mode you configured and take the server's defaults instead. Three keys are read back out of the file and re-injected; an explicit flag still wins, and a resumed thread re-asserts what it recorded rather than what the file says now. `sandbox_mode` is deliberately not one of them.
-- **A filtered live event log** — four verbosity levels (`compact` by default, `normal`, `full`, `raw`); the default reports each command's output by size, and `show` fetches the one you need.
+- **One look at what a run did** — `log` prints each command with its exit code and output size, the head and tail of a failed command's output, and the agent's own words whole.
 - **Stop, then redirect** — interrupt a run mid-task and continue it on the same thread with new instructions. `stop` always targets a run's own process group, never a process by name, so concurrent runs never interfere with each other.
 - **Resume a thread started elsewhere** — one begun in the Codex TUI continues by its id, with `--sandbox` stating what it may do.
 - **Schema-shaped results** — pass `--schema` and Codex shapes its final message to it; `result` hands back the parsed JSON instead of a message you have to eyeball.
 - **A deadline you choose** — `--timeout` works in the background and records a state of its own, so "it ran out of the time I gave it" never reads as "Codex failed". The thread stays resumable across it.
-- **Run several as one group** — `batch` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Members share your tree by default, the way a fan-out of Claude's own subagents does; `--worktree` gives each writing member its own git checkout when they would edit the same files. Continue every member's thread in a next round with `--resume-from`, once the whole group has finished.
+- **Run several as one group** — `batch` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Members share your tree by default, the way a fan-out of Claude's own subagents does; `--worktree` gives each writing member its own git checkout when they would edit the same files. Continue every member's thread in a next round with a `--tasks-file` of `kind: resume` lines, once the whole group has finished.
 - **Built-in diagnostics** — `doctor` checks your PATH, Codex auth, config, and the run registry in a single call.
 
 ## 3. Quick Start
@@ -114,8 +114,8 @@ $CODEX start --label refactor "Refactor the auth module to use the new session s
 $CODEX result --run <run_id> --wait
 # → prints nothing until the run ends, then a one-line JSON header (state, usage, files changed, message_bytes) and the final message as text
 
-$CODEX log --run <run_id> --follow
-# → the run's events as they happen, when you want to watch it work
+$CODEX log --run <run_id>
+# → what the run did so far: each command with its exit code and output size, then `run=<run_id> state=<state>`
 ```
 
 `$CODEX --help` maps the commands and the exit codes they share, and `$CODEX <command> --help` says, before its options, what the command prints and which exit codes it can end with, then every flag, default and refusal. A command line that has to change exits `2` with the `--help` to read in `help`.
@@ -127,8 +127,7 @@ $CODEX log --run <run_id> --follow
 | `start` | New thread. Background by default; returns `{run_id, thread_id}` immediately, with `next`: the `result --wait` to run in the background |
 | `resume` | Add a turn to an existing thread; every recorded setting is re-asserted |
 | `status` | Whether a run is live, how far along, and what it last said; a summary row per run by default, the run's own row with `--run` |
-| `log` | Filtered events, followed live with `--follow` or read incrementally with `--since <cursor>` |
-| `show` | One item's full output, fetched on request |
+| `log` | What one run did: each command with its exit code and output size, a failed command's output excerpted |
 | `stop` | Interrupt by process group — never by matching a process name |
 | `result` | A JSON header with state and usage, then the final message as text; one indented JSON document with the parsed answer when `--schema` was used. `--wait` waits for the end first |
 | `batch` | N runs as one named group, sharing your tree unless `--worktree` gives each writing member a checkout |
@@ -143,10 +142,10 @@ Defaults: detached execution, `workspace-write` sandbox, isolated from your own 
 By default, a command's actual output never reaches Claude's context — only its size does:
 
 ```
-cmd[item_2] exit=0 out=8797B rg -n "" tests . --glob '*.py'
+cmd exit=0 out=8797B rg -n "" tests . --glob '*.py'
 ```
 
-Fetch that one command's full output on demand with `show --run <run_id> --item item_2`.
+A command that exits non-zero shows the head and tail of its output beneath that line.
 
 To interrupt a run that's going the wrong way and redirect it without losing its progress:
 

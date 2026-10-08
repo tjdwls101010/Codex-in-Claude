@@ -10,7 +10,7 @@ from support.harness import engine
 codex_cli = engine("codex.codex_cli")
 
 META = {"run_dir": "/r/run-1", "sandbox": "read-only", "isolated": True, "model": None, "effort": None,
-        "service_tier": None, "schema_path": None, "images": [], "add_dirs": [], "skip_git_repo_check": False}
+        "service_tier": None, "schema_path": None, "skip_git_repo_check": False}
 
 
 def build(kind="start", prompt="do it", thread_ref=None, **meta):
@@ -21,17 +21,14 @@ class BuildArgv(unittest.TestCase):
 
     def test_a_start_with_every_setting(self):
         self.assertEqual(
-            build(model="m1", effort="high", service_tier="fast", schema_path="/s.json", images=["/a.png", "/b.png"],
-                  add_dirs=["/extra"], skip_git_repo_check=True),
+            build(model="m1", effort="high", service_tier="fast", schema_path="/s.json", skip_git_repo_check=True),
             ["codex", "exec", "--json", "--ignore-user-config", "--skip-git-repo-check",
              "-c", 'sandbox_mode="read-only"', "-c", 'service_tier="fast"', "-c", 'model_reasoning_effort="high"',
-             "-m", "m1", "--output-schema", "/s.json", "-o", "/r/run-1/last-message.txt",
-             "--add-dir", "/extra", "-i", "/a.png", "-i", "/b.png", "--", "do it"])
+             "-m", "m1", "--output-schema", "/s.json", "-o", "/r/run-1/last-message.txt", "--", "do it"])
 
-    def test_a_resume_names_its_thread_and_has_no_exec_only_flags(self):
-        argv = build(kind="resume", thread_ref="thread-9", add_dirs=["/extra"], isolated=False)
+    def test_a_resume_names_its_thread_and_a_thread_that_loads_the_config_is_not_isolated(self):
+        argv = build(kind="resume", thread_ref="thread-9", isolated=False)
         self.assertEqual(argv[:5], ["codex", "exec", "resume", "thread-9", "--json"])
-        self.assertNotIn("--add-dir", argv)
         self.assertNotIn("--ignore-user-config", argv)
         self.assertEqual(argv[argv.index("-c") + 1], 'sandbox_mode="read-only"')
 

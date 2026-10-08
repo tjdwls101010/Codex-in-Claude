@@ -9,7 +9,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import unittest
@@ -47,24 +46,13 @@ class OutputFrame(BridgeCase):
                     os.close(w)
                 self.assertEqual(p.stderr, "")
 
-    def test_log_streams_text_and_ends_with_a_cursor_naming_the_run(self):
+    def test_log_prints_text_and_ends_on_one_line_naming_the_run_and_its_state(self):
         out = self.bridge("start", "x")
         self.wait_state(out["run_id"])
         p = self.bridge_raw("log", "--run", out["run_id"])
         lines = p.stdout.splitlines()
-        self.assertRegex(lines[-1], rf"^# cursor=\d+ run={re.escape(out['run_id'])}$")
-        self.assertEqual([ln for ln in lines if ln.startswith("# cursor=")], [lines[-1]])
-
-    def test_group_follow_prints_state_lines_then_one_terminal_line(self):
-        out = self.bridge("batch", "--group", "g", "--sandbox", "read-only", "--task", "a", "--task", "b")
-        self.wait_all(out)
-        p = self.bridge_raw("status", "--group", "g", "--follow")
-        lines = p.stdout.splitlines()
-        self.assertEqual(p.returncode, 0)
-        for ln in lines[:-1]:
-            self.assertRegex(ln, r"^run \S+ \S+ -> \w+( exit=-?\d+)?$")
-        self.assertRegex(lines[-1], r"^group\.completed group=g done=2 failed=0$")
-
+        self.assertEqual(lines[-1], f"run={out['run_id']} state=completed")
+        self.assertEqual([ln for ln in lines if ln.startswith("run=")], [lines[-1]])
 
 class ExitCodes(BridgeCase):
     """0 success; 2 the command line itself must change, answered as JSON with the `--help` to read; 1 the registry's state refused or the run failed; 3 `doctor` found a blocker."""
@@ -96,13 +84,10 @@ class ExitCodes(BridgeCase):
         self.assertIn("usage:", p.stdout)
 
     def test_a_command_line_that_must_change_is_2_with_its_help(self):
-        cases = [(("status", "--follow"), ("status",)),
-                 (("log", "--group", "g", "--since", "0"), ("log",)),
-                 (("start", "   "), ("start",)),
+        cases = [(("start", "   "), ("start",)),
                  (("start", "--schema", self.tmp / "nope.json", "x"), ("start",)),
                  (("resume", "--sandbox", "read-only"), ("resume",)),
-                 (("batch", "--group", "a/b", "--task", "x"), ("batch",)),
-                 (("batch", "--group", "g", "--base", "HEAD", "--task", "x"), ("batch",))]
+                 (("batch", "--group", "a/b", "--task", "x"), ("batch",))]
         for args, words in cases:
             with self.subTest(args=args):
                 self.assertEqual(self.refused(*args, rc=2)["help"], self.help_for(*words))
@@ -141,9 +126,6 @@ class TheNextStep(BridgeCase):
         self.wait_state(out["run_id"])
         again = self.bridge("resume", out["run_id"], "y")
         self.assertEqual(again["next"], self.follow("result", "--run", again["run_id"], "--wait"))
-        self.wait_state(again["run_id"])
-        last = self.bridge("resume", "--last", "z")
-        self.assertEqual(last["next"], self.follow("result", "--run", last["run_id"], "--wait"))
 
     def test_a_batch_names_the_wait_for_its_group(self):
         out = self.bridge("batch", "--group", "g", "--task", "a", "--task", "b")
@@ -215,45 +197,15 @@ class SelectorsAreExclusive(BridgeCase):
     def test_each_competing_pair_is_refused(self):
         cases = [("status", "--run", self.run_id, "--group", "g"),
                  ("result", "--run", self.run_id, "--group", "g"),
-                 ("stop", "--run", self.run_id, "--group", "g"),
-                 ("stop", "--run", self.run_id, "--all"),
-                 ("stop", "--group", "g", "--all")]
+                 ("stop", "--run", self.run_id, "--group", "g")]
         for args in cases:
             with self.subTest(args=args):
                 self.assertIn("not allowed with", self.bridge(*args, rc=2)["error"])
-
-    def test_log_run_and_group_are_refused_by_the_parser(self):
-        p = self.bridge_raw("log", "--run", self.run_id, "--group", "g")
-        self.assertEqual(p.returncode, 2)
 
     def test_stop_and_result_need_a_target(self):
         for cmd in ("stop", "result"):
             with self.subTest(cmd=cmd):
                 self.assertIn("--run", self.bridge(cmd, rc=2)["error"])
-
-    def test_status_all_is_a_cap_not_a_selector(self):
-        self.assertEqual(self.bridge("status", "--run", self.run_id, "--all")["run_id"], self.run_id)
-
-
-class FlagsThatWouldDecideNothing(BridgeCase):
-    """A flag that parses and changes nothing reads as having been obeyed, so each is refused."""
-
-    def test_each_is_refused(self):
-        out = self.bridge("start", "x")
-        self.wait_state(out["run_id"])
-        self.wait_all(self.bridge("batch", "--group", "g", "--task", "x"))
-        cases = [("status", "--follow"),
-                 ("status", "--group", "g", "--follow-timeout", "5"),
-                 ("log", "--run", out["run_id"], "--follow-timeout", "5"),
-                 ("log", "--run", out["run_id"], "--follow", "--follow-timeout", "0"),
-                 ("status", "--group", "g", "--follow", "--follow-timeout", "-1"),
-                 ("log", "--group", "g", "--since", "0"),
-                 ("batch", "--group", "h", "--base", "HEAD", "--task", "x")]
-        for args in cases:
-            with self.subTest(args=args):
-                self.assertIn("error", self.bridge(*args, rc=2))
-        self.assertEqual(self.bridge("status")["groups"], ["g"], "a refused batch must not claim its name")
-
 
 class WhatReachesCodex(BridgeCase):
     """The sandbox always travels as `-c sandbox_mode=` and the working directory is set on the child, because `exec resume` has neither `-s` nor `-C`."""
@@ -286,14 +238,10 @@ class WhatReachesCodex(BridgeCase):
     def test_named_settings_are_passed_through(self):
         schema = self.tmp / "s.json"
         schema.write_text("{}")
-        extra = self.tmp / "extra"
-        extra.mkdir()
-        _out, rec = self.started("--model", "fake-big", "--effort", "high", "--priority",
-                                 "--schema", schema, "--add-dir", extra, "x")
+        _out, rec = self.started("--model", "fake-big", "--effort", "high", "--priority", "--schema", schema, "x")
         argv = rec["argv"]
         self.assertEqual(argv[argv.index("-m") + 1], "fake-big")
         self.assertEqual(argv[argv.index("--output-schema") + 1], str(schema))
-        self.assertEqual(argv[argv.index("--add-dir") + 1], str(extra))
         cfg = self.config_values(argv)
         self.assertEqual(cfg["model_reasoning_effort"], '"high"')
         self.assertEqual(cfg["service_tier"], '"priority"')
@@ -304,20 +252,6 @@ class WhatReachesCodex(BridgeCase):
         self.assertEqual(argv[-2], "--")
         self.assertTrue(argv[-1].endswith("summarise the repo"))
         self.assertIn("non-interactive", argv[-1])
-
-    def test_images_do_not_swallow_the_prompt(self):
-        imgs = []
-        for n in ("a", "b"):
-            (self.tmp / f"{n}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-            imgs += ["--image", self.tmp / f"{n}.png"]
-        out, rec = self.started(*imgs, "compare them")
-        self.assertEqual(self.row(out["run_id"])["state"], "completed", "codex found no prompt")
-        self.assertEqual([rec["argv"][i + 1] for i, t in enumerate(rec["argv"]) if t == "-i"],
-                         [str(self.tmp / "a.png"), str(self.tmp / "b.png")])
-        self.assertTrue(rec["argv"][-1].endswith("compare them"))
-
-    def test_the_tier_flags_are_one_choice(self):
-        self.assertIn("not allowed with", self.bridge("start", "--priority", "--no-priority", "x", rc=2)["error"])
 
     def test_a_prompt_after_the_terminator_is_only_a_prompt(self):
         out, rec = self.started("--priority", "--", "--no-priority")
@@ -357,8 +291,7 @@ class WhatReachesCodex(BridgeCase):
         self.assertEqual(self.run_dirs(), [])
 
     def test_missing_inputs_are_refused_before_anything_is_claimed(self):
-        for args in (("--schema", self.tmp / "nope.json"), ("--image", self.tmp / "nope.png"),
-                     ("--cwd", self.tmp / "nowhere")):
+        for args in (("--schema", self.tmp / "nope.json"), ("--cwd", self.tmp / "nowhere")):
             with self.subTest(args=args):
                 self.bridge("start", *args, "x", rc=2)
         self.assertEqual(self.runs_invoked(), [])
@@ -371,24 +304,55 @@ class RemovedSurface(BridgeCase):
     def test_each_is_refused_by_the_parser_before_anything_is_claimed(self):
         for args in (("start", "--foreground", "x"), ("resume", "--foreground", "r", "x"),
                      ("status", "--include-external"), ("status", "--thread", "t"),
-                     ("log", "--run", "r", "--follow", "--heartbeat", "5"),
-                     ("status", "--group", "g", "--follow", "--heartbeat", "5"),
-                     ("batch", "--group", "g", "--resume-from", "p", "--as-ready", "--task", "x")):
+                     ("log", "--run", "r", "--heartbeat", "5"),
+                     ("status", "--group", "g", "--heartbeat", "5"),
+                     ("batch", "--group", "g", "--as-ready", "--task", "x")):
             with self.subTest(args=args):
                 self.assertIn("unrecognized arguments", self.bridge(*args, rc=2)["error"])
         self.assertFalse(self.runs_dir.exists())
 
-    def test_last_never_reaches_past_the_registry(self):
-        con = sqlite3.connect(self.codex_home / "state_5.sqlite")
-        con.execute("CREATE TABLE threads (id TEXT, cwd TEXT, title TEXT, updated_at INTEGER)")
-        con.execute("INSERT INTO threads VALUES ('019f0000-0000-7000-8000-0000000000aa', ?, 't', 1)",
-                    (str(self.project),))
-        con.commit()
-        con.close()
-        refused = self.bridge("resume", "--last", "--sandbox", "read-only", "go on", rc=1)
-        self.assertIn("error", refused)
-        self.assertEqual(self.runs_invoked(), [])
-        self.assertNotIn("thread_db", self.bridge("doctor"))
+class TheSurfaceRemovedIn011(BridgeCase):
+    """A command or flag 0.11 removed is refused like any command line that must change — exit 2 with the `help` to read — and, where something else now does its job, `instead` says what. A caller holding an older SKILL.md meets this rather than a bare parse error."""
+
+    def help_for(self, *words):
+        return " ".join(["uv run", f'"{ENTRY}"', *words, "--help"])
+
+    # (command line, the command whose help it names, whether a replacement exists)
+    CASES = [
+        (("show", "--run", "r", "--item", "item_0"), (), True),
+        (("start", "--image", "a.png", "x"), ("start",), True),
+        (("resume", "r", "--image", "a.png", "x"), ("resume",), True),
+        (("resume", "--last", "x"), ("resume",), True),
+        (("batch", "--group", "g", "--resume-from", "p", "--task", "x"), ("batch",), True),
+        (("batch", "--group", "g", "--worktree", "--base", "HEAD", "--task", "x"), ("batch",), True),
+        (("log", "--run", "r", "--follow"), ("log",), True),
+        (("log", "--group", "g"), ("log",), True),
+        (("log", "--run", "r", "--since", "0"), ("log",), True),
+        (("log", "--run", "r", "--level", "full"), ("log",), True),
+        (("log", "--run", "r", "--follow-timeout", "5"), ("log",), True),
+        (("status", "--group", "g", "--follow"), ("status",), True),
+        (("status", "--group", "g", "--follow-timeout", "5"), ("status",), True),
+        (("status", "--all"), ("status",), True),
+        (("stop", "--all"), ("stop",), True),
+        (("start", "--inherit-config", "x"), ("start",), False),
+        (("resume", "r", "--inherit-config", "x"), ("resume",), False),
+        (("start", "--no-priority", "x"), ("start",), False),
+        (("start", "--add-dir", "/tmp", "x"), ("start",), False),
+        (("batch", "--group", "g", "--force", "--task", "x"), ("batch",), False),
+        (("stop", "--run", "r", "--grace", "1"), ("stop",), False),
+    ]
+
+    def test_each_is_refused_with_its_help_and_what_to_do_instead(self):
+        for args, words, replaced in self.CASES:
+            with self.subTest(args=args):
+                out = self.bridge(*args, rc=2)
+                self.assertEqual(out["help"], self.help_for(*words))
+                self.assertEqual(bool(out.get("instead")), replaced, out)
+        self.assertFalse(self.runs_dir.exists(), "a removed surface claims nothing")
+
+    def test_a_prompt_that_only_mentions_a_removed_flag_is_still_a_prompt(self):
+        out = self.bridge("start", "explain what --image used to do")
+        self.wait_state(out["run_id"])
 
 
 class TheRegistryGoesWhereItIsTold(BridgeCase):
@@ -403,11 +367,11 @@ class TheRegistryGoesWhereItIsTold(BridgeCase):
         self.bridge("status", "--run", out["run_id"], rc=1)
 
 
-COMMANDS = [(), ("start",), ("resume",), ("status",), ("log",), ("show",), ("stop",), ("result",), ("batch",),
+COMMANDS = [(), ("start",), ("resume",), ("status",), ("log",), ("stop",), ("result",), ("batch",),
             ("clean",), ("models",), ("doctor",)]
 
 # The codes each command can end with, from where it can refuse: every command can be refused by the parser (2) or fail internally (1), and only `doctor` reports a blocker (3).
-EXITS = {cmd: {"0", "1", "2"} for cmd in ("start", "resume", "batch", "status", "log", "show", "result", "stop", "clean", "models")}
+EXITS = {cmd: {"0", "1", "2"} for cmd in ("start", "resume", "batch", "status", "log", "result", "stop", "clean", "models")}
 EXITS["doctor"] = {"0", "1", "2", "3"}
 
 # Provenance does not belong in help: measurements, document ids, discovery stories. This guards against it coming back; it does not pin any sentence.

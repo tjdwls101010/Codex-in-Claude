@@ -7,10 +7,11 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 import unittest
 
-from support.harness import (BridgeCase, FIXTURES, LEGACY_INHERITED, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
+from support.harness import (ENTRY, BridgeCase, FIXTURES, LEGACY_INHERITED, LEGACY_PREDECESSOR, LEGACY_REVIEW, LEGACY_WAITER, alive,
                              wait_until)
 
 
@@ -194,6 +195,90 @@ class StatusOfOneRun(BridgeCase):
         self.assertIn("no such run", self.bridge("status", "--run", "nothing-like-it", rc=1)["error"])
 
 
+class AStateThatMovesWhileItIsRead(BridgeCase):
+    """A view reports the state together with the data it read for it — events, the final message, written paths: a run recorded completed while they were being read is reported completed with all of them, never running beside them, nor completed beside older ones."""
+
+    TURN = '{"type": "turn.started"}\n'
+    WHOLE = TURN + '{"type": "turn.completed", "usage": {"input_tokens": 7, "output_tokens": 1}}\n'
+
+    def ends_mid_events(self):
+        return self.run_moving_mid_read(["completed"], [self.TURN], self.WHOLE)
+
+    def ends_mid_answer(self, answer, **meta):
+        rid = self.run_moving_mid_read(["completed"], [answer], answer, path="last-message.txt", **meta)
+        (self.runs_dir / rid / "events.jsonl").write_text(self.WHOLE)
+        return rid
+
+    def test_status_of_one_run(self):
+        row = self.row(self.ends_mid_events())
+        self.assertEqual((row["state"], row["turns_completed"]), ("completed", 1))
+
+    def test_result_of_one_run(self):
+        header, _body = self.result_view("--run", self.ends_mid_events())
+        self.assertEqual((header["state"], header["usage"]), ("completed", {"input_tokens": 7, "output_tokens": 1}))
+        self.assertNotIn("note", header)
+
+    def test_a_schema_answer_read_as_the_run_ends(self):
+        schema = self.tmp / "s.json"
+        schema.write_text("{}")
+        rid = self.ends_mid_answer('{"verdict": "ok"}', schema_path=str(schema))
+        out = self.bridge_raw("result", "--run", rid)
+        self.assertEqual(out.returncode, 0, out.stdout)
+        header = json.loads(out.stdout)
+        self.assertEqual((header["state"], header["json"]), ("completed", {"verdict": "ok"}))
+
+    def test_status_with_the_stderr_its_end_left(self):
+        # `stderr_tail` skips an empty file, so a FIFO cannot hold this read: an audit hook in the real entry point records the failure and its stderr the first time stderr.log is opened.
+        sup = self.detached_process()
+        rid = "20990101-000000-stderr-0001"
+        self.write_meta(rid, {"run_id": rid, "state": "running", "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
+                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project)})
+        d = self.runs_dir / rid
+        (d / "events.jsonl").write_text(self.TURN)
+        (d / "stderr.log").write_text("starting\n")
+        hook = (
+            "import json, runpy, sys\n"
+            "d, entry = sys.argv[1], sys.argv[2]\n"
+            "fired = []\n"
+            "def hook(event, args):\n"
+            "    if event == 'open' and not fired and str(args[0]).endswith('stderr.log'):\n"
+            "        fired.append(1)\n"
+            "        open(d + '/stderr.log', 'w').write('fatal: codex exited\\n')\n"
+            "        m = json.load(open(d + '/meta.json'))\n"
+            "        m.update(state='failed', exit_code=1)\n"
+            "        open(d + '/meta.json', 'w').write(json.dumps(m))\n"
+            "sys.addaudithook(hook)\n"
+            # What `python cli.py` does before anything runs: the script's folder first on the path.
+            "sys.path.insert(0, entry.rsplit('/', 1)[0])\n"
+            "sys.argv = [entry, 'status', '--run', sys.argv[3]]\n"
+            "runpy.run_path(entry, run_name='__main__')\n")
+        p = subprocess.run([sys.executable, "-c", hook, str(d), str(ENTRY), rid], cwd=str(self.project), env=self.env,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        row = json.loads(p.stdout)
+        self.assertEqual((row["state"], row["exit_code"], row.get("stderr_tail")), ("failed", 1, "fatal: codex exited"))
+
+    def test_an_orphan_whose_codex_stops_writing_while_its_answer_is_read(self):
+        # Its stored state stays `orphaned` throughout; only its Codex process ending says the answer is now final.
+        codex = self.detached_process()
+        rid = self.run_moving_mid_read([lambda: (os.killpg(codex, signal.SIGKILL), wait_until(lambda: not alive(codex), timeout=10))],
+                                       ["PARTIAL"], "FINAL", path="last-message.txt", start="orphaned",
+                                       codex_pid=codex, supervisor_pid=None, pgid=codex)
+        (self.runs_dir / rid / "events.jsonl").write_text(self.WHOLE)
+        header, body = self.result_view("--run", rid)
+        self.assertEqual((header["state"], body), ("orphaned", b"FINAL"))
+        self.assertNotIn("note", header, "nothing writes any more")
+
+    def test_a_group_member_read_as_it_ends(self):
+        rid = self.ends_mid_answer("FINAL")
+        (self.runs_dir / ".groups").mkdir()
+        (self.runs_dir / ".groups" / "g.json").write_text(json.dumps(
+            {"group": "g", "created_at": "2099-01-01T00:00:00.000Z", "epoch": "e", "requested": 1,
+             "members": [{"index": 0, "kind": "start", "run_id": rid}]}))
+        header, members = self.result_view("--group", "g")
+        self.assertEqual((header["group_state"], members[0]), ("completed", (f"--- [0] run={rid} state=completed bytes=5", b"FINAL")))
+
+
 class Listing(BridgeCase):
 
     def test_the_default_listing_is_one_summary_row_per_run(self):
@@ -217,12 +302,10 @@ class Listing(BridgeCase):
         self.finished(3)
         self.finished(1, start=3, state="failed")
         live, _m = self.running("live")
-        for args in ((), ("--all",)):
-            with self.subTest(args=args):
-                listing = self.bridge("status", *args)
-                self.assertEqual(listing["counts"], {"live": 1, "completed": 3, "failed": 1})
-                self.assertEqual(listing["running"], [live["run_id"]])
-                self.assertEqual([k for k in ("threads", "done", "failed") if k in listing], [])
+        listing = self.bridge("status")
+        self.assertEqual(listing["counts"], {"live": 1, "completed": 3, "failed": 1})
+        self.assertEqual(listing["running"], [live["run_id"]])
+        self.assertEqual([k for k in ("threads", "done", "failed") if k in listing], [])
 
     def test_the_default_listing_does_not_grow_with_finished_runs(self):
         self.finished(25)
@@ -254,7 +337,9 @@ class Listing(BridgeCase):
         self.assertEqual(listing["runs_truncated"], 22 - len(ids))
         self.assertGreater(listing["runs_truncated"], 0)
         self.assertEqual(listing["running"], [live["run_id"]])
-        self.assertEqual(len(self.bridge("status", "--all")["runs"]), 22)
+        oldest = "20990101-000000-filler-0000"
+        self.assertNotIn(oldest, ids)
+        self.assertEqual(self.row(oldest)["run_id"], oldest, "a run the listing leaves out is still answered by --run")
 
     def test_groups_are_listed_so_a_later_session_can_find_them(self):
         out = self.bridge("batch", "--group", "found-later", "--task", "a")
@@ -292,7 +377,8 @@ class AnOlderReleasesRegistry(BridgeCase):
         self.bridge("stop", "--group", "p2")
         self.wait_state(LEGACY_WAITER)
         self.assertTrue(self.bridge("clean", "--group", "p2")["name_released"])
-        out = self.bridge("batch", "--group", "p3", "--resume-from", "p1", "--task", "go on")
+        out = self.bridge("batch", "--group", "p3", "--tasks-file",
+                          self.tasks_file({"prompt": "go on", "kind": "resume", "resume": LEGACY_PREDECESSOR}))
         self.wait_all(out)
         argv = self.last_argv()
         self.assertEqual(argv[:3], ["exec", "resume", self.meta(LEGACY_PREDECESSOR)["thread_id"]])
@@ -467,16 +553,13 @@ class WaitingForTheResult(BridgeCase):
         pgid = self.wait_state(rid, ("running",))["pgid"]
         self.addCleanup(lambda: alive(pgid) and os.killpg(int(pgid), signal.SIGKILL))
         waiter = self.spawn("result", "--group", "g", "--wait")
-        follower = self.spawn("status", "--group", "g", "--follow")
         time.sleep(1.5)
         (self.runs_dir / rid / "meta.json").write_text("{ truncated")
         stdout, _ = waiter.communicate(timeout=30)
         self.assertEqual(waiter.returncode, 0, stdout)
-        self.assertEqual([u["run_id"] for u in json.loads(stdout.splitlines()[0])["unstarted"]], [rid])
-        followed, _ = follower.communicate(timeout=30)
-        self.assertEqual(follower.returncode, 0)
-        self.assertRegex(followed.splitlines()[-1], r"^group\.partial group=g .* unstarted=1",
-                         "the follower closes under the same condition, counting the member it can no longer read")
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual([u["run_id"] for u in header["unstarted"]], [rid])
+        self.assertEqual(header["group_state"], "partial")
 
     def test_a_member_added_while_waiting_is_waited_for_too(self):
         # A wait started while `batch` is still starting members waits for the ones that start after it.
@@ -490,66 +573,33 @@ class WaitingForTheResult(BridgeCase):
         header = json.loads(res.stdout.splitlines()[0])
         self.assertEqual((header["group_state"], len(header["done"]), header["running"]), ("completed", 2, []), header)
 
-    def test_a_follower_counts_the_slots_it_saw_never_start_even_once_the_name_is_released(self):
-        # `clean` may release the manifest between the last member's end and the follower's next look; what the follower saw at the start still stands.
+    def test_a_wait_counts_the_slots_it_saw_never_start_even_once_the_name_is_released(self):
+        # `clean` may release the manifest between the last member's end and the wait's next look; what the wait saw at the start still stands.
         tf = self.tasks_file("runs", {"prompt": "never starts", "schema": str(self.tmp / "nope.json")})
         out = self.bridge("batch", "--group", "g", "--tasks-file", tf, env={"FAKE_CODEX_HANG": 3})
         rid = out["runs"][0]["run_id"]
         self.wait_state(rid, ("running",))
-        follower = self.spawn("status", "--group", "g", "--follow")
+        waiter = self.spawn("result", "--group", "g", "--wait")
         wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.01)
         self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
-        followed, _ = follower.communicate(timeout=30)
-        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1")
+        stdout, _ = waiter.communicate(timeout=30)
+        self.assertEqual(waiter.returncode, 0, stdout)
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual((header["group_state"], header["done"], [u["index"] for u in header["unstarted"]]),
+                         ("partial", [rid], [1]))
 
-    def test_a_member_that_stops_parsing_while_followed_is_counted_once(self):
+    def test_a_member_that_stops_parsing_while_waited_for_is_counted_once(self):
         out = self.bridge("batch", "--group", "g", "--task", "quick", "--task", "slow",
                           env={"FAKE_CODEX_WHEN": json.dumps({"slow": {"FAKE_CODEX_HANG": 4}})})
         quick, slow = (r["run_id"] for r in out["runs"])
-        follower = self.spawn("status", "--group", "g", "--follow")
+        waiter = self.spawn("result", "--group", "g", "--wait")
         self.wait_state(quick)
         time.sleep(1.2)
         (self.runs_dir / quick / "meta.json").write_text("{ truncated")
-        followed, _ = follower.communicate(timeout=30)
-        self.assertEqual(followed.splitlines()[-1], "group.partial group=g done=1 failed=0 unstarted=1 unreadable=1")
-
-    def test_a_follower_started_while_a_batch_spawns_follows_the_members_it_adds(self):
-        # The second member gets its run while the first is still live, so the follow sees it start. A slot still unspawned when every run it knows has ended counts as unstarted, as the contract says: it looks the same as a slot a killed batch left.
-        for command in (("status", "--group", "g", "--follow"), ("log", "--group", "g", "--follow")):
-            with self.subTest(command=command[0]):
-                for d in self.runs_dir.glob("*"):
-                    subprocess.run(["rm", "-rf", str(d)])
-                p = self.spawn("batch", "--group", "g", "--task", "first", "--task", "second",
-                               env={"FAKE_CODEX_WHEN": json.dumps({"first": {"FAKE_CODEX_HANG": 6},
-                                                                   "second": {"FAKE_CODEX_PRE_DELAY": 2}})})
-                manifest = self.runs_dir / ".groups" / "g.json"
-                wait_until(lambda: manifest.exists() and any(m.get("run_id") for m in json.loads(manifest.read_text())["members"]),
-                           timeout=30)
-                followed = self.bridge_raw(*command, timeout=120).stdout
-                p.communicate(timeout=60)
-                self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=2 failed=0", followed)
-                if command[0] == "log":
-                    second = json.loads(manifest.read_text())["members"][1]["run_id"]
-                    lines = followed.splitlines()
-                    self.assertIn("[1] msg OK", lines, "the later member's events are shown too")
-                    self.assertIn(f"group.members group=g 1={second}", lines, "and which run [1] is")
-                    self.assertLess(lines.index(f"group.members group=g 1={second}"), lines.index("[1] msg OK"))
-
-    def test_a_follower_does_not_move_to_a_new_group_that_takes_the_name(self):
-        # `clean` can release the name and another batch claim it between two looks; what is followed is the group that was asked for.
-        first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})
-        rid = first["runs"][0]["run_id"]
-        follower = self.spawn("status", "--group", "g", "--follow")
-        time.sleep(1.5)
-        # Paused across the end, the release and the new claim, so all three land between two of its looks.
-        os.kill(follower.pid, signal.SIGSTOP)
-        wait_until(lambda: self.meta(rid).get("state") == "completed", timeout=30, interval=0.05)
-        self.assertTrue(self.bridge("clean", "--group", "g")["name_released"])
-        second = self.bridge("batch", "--group", "g", "--task", "b", env={"FAKE_CODEX_HANG": 5})
-        os.kill(follower.pid, signal.SIGCONT)
-        followed, _ = follower.communicate(timeout=60)
-        self.assertNotIn(second["runs"][0]["run_id"], followed)
-        self.assertEqual(followed.splitlines()[-1], "group.completed group=g done=1 failed=0")
+        stdout, _ = waiter.communicate(timeout=30)
+        header = json.loads(stdout.splitlines()[0])
+        self.assertEqual(([m["run_id"] for m in header["members"]], [u["run_id"] for u in header["unstarted"]]),
+                         ([slow], [quick]))
 
     def test_a_wait_collects_the_group_it_waited_for_not_a_new_one_with_its_name(self):
         first = self.bridge("batch", "--group", "g", "--task", "a", env={"FAKE_CODEX_HANG": 3})

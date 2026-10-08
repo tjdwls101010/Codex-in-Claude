@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from codex.batch.tasks import task_args
 from codex.codex_cli import WRITING_SANDBOXES
-from codex.errors import Refusal
 from codex.git import (
     git_toplevel, ignored_entries as worktree_ignored_entries, missing_at_base as worktree_missing_at_base,
     resolve_base as worktree_base_sha, uncommitted_count as worktree_uncommitted,
@@ -55,7 +54,7 @@ def sharing_note(shared, reasons):
 
 
 def plan_worktrees(tasks, args, project, runs_dir):
-    """Which members get a checkout, cut from which commit, and a note when members will share a tree. Returns `(eligible indices, base sha, note)`.
+    """Which members get a checkout, cut from HEAD, and a note when members will share a tree. Returns `(eligible indices, base sha, note)`.
 
     Isolation is opt-in: without `--worktree` members share the caller's tree as a fan-out of Claude's own subagents does, and the note says so only when two or more writers share a directory.
     """
@@ -83,11 +82,7 @@ def plan_worktrees(tasks, args, project, runs_dir):
     if git_toplevel(project) is None:
         return set(), None, (f"{project} is not a git repository, so worktrees "
                              "are unavailable; members share the caller's tree")
-    ref = getattr(args, "base", None)
-    base = worktree_base_sha(project, ref)
-    if not base and ref:
-        # A typo'd --base is the caller's mistake; degrading to a shared tree would give them the one outcome they asked to avoid.
-        raise Refusal(f"--base {ref!r} does not resolve to a commit in {project}", arguments=True)
+    base = worktree_base_sha(project)
     if not base:
         return set(), None, ("this repository has no HEAD yet (nothing is "
                              "committed), so there is no commit to cut a "

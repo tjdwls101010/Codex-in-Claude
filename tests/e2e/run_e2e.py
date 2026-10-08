@@ -53,9 +53,16 @@ def control_text(draft: str) -> str:
 
 def stop_runs(repo: Path):
     """Detached runs outlive the session that started them; stop them so none keeps writing into this repo or into its replacement on a rerun."""
-    if (repo / ".codex-runs").exists():
-        subprocess.run(["uv", "run", str(SKILL / "scripts" / "cli.py"), "stop", "--project", str(repo), "--all"],
-                       capture_output=True, text=True)
+    if not (repo / ".codex-runs").exists():
+        return
+    cli = ["uv", "run", str(SKILL / "scripts" / "cli.py")]
+    listing = subprocess.run([*cli, "status", "--project", str(repo)], capture_output=True, text=True)
+    try:
+        running = json.loads(listing.stdout)["running"]
+    except Exception:
+        return
+    for run_id in running:
+        subprocess.run([*cli, "stop", "--run", run_id, "--project", str(repo)], capture_output=True, text=True)
 
 
 def setup(out: Path, scenario: int, variant: str):

@@ -36,10 +36,10 @@ class DetachedStart(BridgeCase):
 
 class TerminalStates(BridgeCase):
 
-    def test_a_nonzero_exit_is_failed_and_the_follower_says_so(self):
+    def test_a_nonzero_exit_is_failed_and_the_result_says_so(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_EXIT": 4})
-        p = self.bridge_raw("log", "--run", out["run_id"], "--follow", "--follow-timeout", 30)
-        self.assertIn(f"run.failed run={out['run_id']} exit=4", p.stdout)
+        header, _body = self.result_view("--run", out["run_id"], "--wait", "--wait-timeout", 30)
+        self.assertEqual((header["state"], header["exit_code"]), ("failed", 4))
         self.assertEqual(self.row(out["run_id"])["exit_code"], 4)
 
     def test_turn_failed_is_surfaced_without_reading_the_log(self):
@@ -149,7 +149,7 @@ class StopLadder(BridgeCase):
 
     def test_the_ladder_escalates_when_sigint_is_ignored(self):
         out, m = self.running("x", FAKE_CODEX_IGNORE_SIGINT=1)
-        res = self.bridge("stop", "--run", out["run_id"], "--grace", 0.5)["stopped"][0]
+        res = self.bridge("stop", "--run", out["run_id"])["stopped"][0]
         self.assertEqual(res["signals_sent"], ["SIGINT", "SIGTERM"])
         self.assertFalse(alive(m["codex_pid"]))
 
@@ -162,7 +162,7 @@ class StopLadder(BridgeCase):
         self.assertEqual(self.row(b["run_id"])["state"], "running")
         self.assertTrue(alive(bm["codex_pid"]))
 
-    def test_run_is_repeatable_and_all_reaches_every_live_run(self):
+    def test_run_is_repeatable_and_the_listing_names_what_is_left_to_stop(self):
         a, _ = self.running("x")
         b, _ = self.running("x")
         c, _ = self.running("x")
@@ -170,9 +170,8 @@ class StopLadder(BridgeCase):
         self.wait_state(done["run_id"])
         two = self.bridge("stop", "--run", a["run_id"], "--run", b["run_id"])["stopped"]
         self.assertEqual({s["run_id"] for s in two}, {a["run_id"], b["run_id"]})
-        rest = self.bridge("stop", "--all")["stopped"]
-        self.assertIn(c["run_id"], {s["run_id"] for s in rest})
-        self.assertNotIn(done["run_id"], {s["run_id"] for s in rest}, "--all is the live runs only")
+        self.assertEqual(self.bridge("status")["running"], [c["run_id"]], "the live runs only")
+        self.assertEqual([s["run_id"] for s in self.bridge("stop", "--run", c["run_id"])["stopped"]], [c["run_id"]])
 
     def test_stopping_a_finished_run_does_not_rewrite_its_outcome(self):
         out = self.bridge("start", "x")
@@ -188,26 +187,15 @@ class AnOrphanThatIsStillWriting(BridgeCase):
 
     def test_status_calls_it_orphaned_but_counts_it_as_running(self):
         out, _m = self.orphan_still_writing("x")
-        listing = self.bridge("status", "--all")
+        listing = self.bridge("status")
         self.assertIn(out["run_id"], listing["running"])
         self.assertEqual(listing["counts"]["failed"], 0)
         self.assertTrue(self.row(out["run_id"])["codex_still_running"])
 
     def test_stop_reaches_its_codex_through_the_process_group(self):
-        for selector in (("--run",), ("--all",)):
-            with self.subTest(selector=selector):
-                out, m = self.orphan_still_writing("x")
-                args = ("stop", "--run", out["run_id"]) if selector == ("--run",) else ("stop", "--all")
-                self.assertIn(out["run_id"], [s["run_id"] for s in self.bridge(*args)["stopped"]])
-                self.assertTrue(wait_until(lambda: not alive(m["codex_pid"]), timeout=10))
-
-    def test_follow_does_not_announce_an_end_while_it_writes(self):
-        out, _m = self.orphan_still_writing("x")
-        t0 = time.monotonic()
-        p = self.bridge_raw("log", "--run", out["run_id"], "--follow", "--follow-timeout", 2)
-        self.assertGreaterEqual(time.monotonic() - t0, 1.5)
-        self.assertIn("run.still-running", p.stdout)
-        self.assertNotIn("run.orphaned", p.stdout)
+        out, m = self.orphan_still_writing("x")
+        self.assertIn(out["run_id"], [s["run_id"] for s in self.bridge("stop", "--run", out["run_id"])["stopped"]])
+        self.assertTrue(wait_until(lambda: not alive(m["codex_pid"]), timeout=10))
 
     def test_its_turn_time_keeps_growing(self):
         out, _m = self.orphan_still_writing("x")
@@ -215,12 +203,13 @@ class AnOrphanThatIsStillWriting(BridgeCase):
         time.sleep(2.2)
         self.assertGreater(self.row(out["run_id"])["codex_elapsed_seconds"], first)
 
-    def test_once_its_codex_is_gone_the_follower_ends_on_orphaned(self):
+    def test_once_its_codex_is_gone_the_wait_ends_on_orphaned(self):
         out, m = self.orphan_still_writing("x")
         os.kill(int(m["codex_pid"]), signal.SIGKILL)
         wait_until(lambda: not alive(m["codex_pid"]), timeout=10)
-        p = self.bridge_raw("log", "--run", out["run_id"], "--follow", "--follow-timeout", 10)
-        self.assertIn(f"run.orphaned run={out['run_id']}", p.stdout)
+        header, _body = self.result_view("--run", out["run_id"], "--wait", "--wait-timeout", 10)
+        self.assertEqual(header["state"], "orphaned")
+        self.assertNotIn("note", header, "nothing writes any more, so the result is final")
 
 
 class APidAnotherProcessNowHolds(BridgeCase):
@@ -257,17 +246,17 @@ class LegacyWaitingRun(BridgeCase):
 
     def test_it_is_live_everywhere_liveness_is_decided(self):
         self.assertEqual(self.row(LEGACY_WAITER)["state"], "waiting")
-        self.assertIn(LEGACY_WAITER, self.bridge("status", "--all")["running"])
+        self.assertIn(LEGACY_WAITER, self.bridge("status")["running"])
         refused = self.bridge("resume", LEGACY_PREDECESSOR, "another turn", rc=1)
         self.assertIn(LEGACY_WAITER, str(refused["live_runs"]))
         self.assertIn(LEGACY_WAITER, str(self.bridge("clean", "--group", "p2", rc=1)["running"]))
-        p = self.bridge_raw("status", "--group", "p2", "--follow", "--follow-timeout", 1.5)
-        self.assertRegex(p.stdout.splitlines()[-1], r"^group\.still-running group=p2 ")
-        p = self.bridge_raw("log", "--run", LEGACY_WAITER, "--follow", "--follow-timeout", 1.5)
-        self.assertIn("run.still-running", p.stdout)
+        self.assertEqual(self.result_view("--group", "p2", "--wait", "--wait-timeout", 1.5)[0]["group_state"], "running")
+        header, _body = self.result_view("--run", LEGACY_WAITER, "--wait", "--wait-timeout", 1.5)
+        self.assertEqual(header["state"], "waiting")
+        self.assertIn("partial", header["note"])
 
     def test_each_stop_selector_ends_it(self):
-        for args in (("--run", LEGACY_WAITER), ("--group", "p2"), ("--all",)):
+        for args in (("--run", LEGACY_WAITER), ("--group", "p2")):
             with self.subTest(args=args):
                 sup = self.install_legacy_registry()
                 stopped = self.bridge("stop", *args)["stopped"]

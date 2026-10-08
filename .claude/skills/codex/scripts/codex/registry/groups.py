@@ -1,6 +1,6 @@
 """Groups: `<runs_dir>/.groups/<name>.json`, the set of runs one `batch` created, addressed afterwards as one thing.
 
-The manifest is a file rather than a query over the registry: claiming it is the atomic claim on the name, it records start order (which `--resume-from` pairs against and which run ids cannot recover — same-second, same-label starts are the normal case), and reading a group does not walk the whole registry on every follower tick.
+The manifest is a file rather than a query over the registry: claiming it is the atomic claim on the name, it records start order (which run ids cannot recover — same-second, same-label starts are the normal case), and reading a group does not walk the whole registry on every look a wait takes.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def valid_group_name(name: str) -> bool:
 
 
 def group_manifest(runs_dir: Path, name: str):
-    """The group's manifest — `group`, `created_at`, `epoch`, `derived_from`, `requested` and `members` in start order — or None when it is absent or will not parse."""
+    """The group's manifest — `group`, `created_at`, `epoch`, `requested` and `members` in start order (one written before 0.11 also holds a `derived_from` nothing reads) — or None when it is absent or will not parse."""
     try:
         return json.loads(group_path(runs_dir, name).read_text(encoding="utf-8"))
     except Exception:
@@ -51,24 +51,23 @@ def list_groups(runs_dir: Path):
     return sorted(p.stem for p in d.glob("*.json")) if d.is_dir() else []
 
 
-def claim_group(runs_dir: Path, name: str, derived_from=None, requested=0) -> dict:
+def claim_group(runs_dir: Path, name: str, requested=0) -> dict:
     """Take the name before anything spawns, refused while it is reserved. Returns the manifest.
 
     `os.link` publishes a manifest that is already complete, so no reader sees the name without its content. `requested` is written now because a batch killed partway would otherwise be indistinguishable from one that asked for fewer tasks. `epoch` identifies this claim, so a writer notices if the name was released and claimed again underneath it.
     """
     try:
-        return _claim(runs_dir, name, derived_from, requested)
+        return _claim(runs_dir, name, requested)
     except FileExistsError:
         existing = group_manifest(runs_dir, name) or {}
         raise Refusal(f"group {name!r} already exists; `clean --group {name}` releases the name once nothing is left",
                       created_at=existing.get("created_at"), members=len(existing.get("members") or [])) from None
 
 
-def _claim(runs_dir: Path, name: str, derived_from, requested) -> dict:
+def _claim(runs_dir: Path, name: str, requested) -> dict:
     d = groups_dir(runs_dir)
     d.mkdir(parents=True, exist_ok=True)
-    manifest = {"group": name, "created_at": now_iso(), "epoch": uuid.uuid4().hex,
-                "derived_from": derived_from, "requested": requested, "members": []}
+    manifest = {"group": name, "created_at": now_iso(), "epoch": uuid.uuid4().hex, "requested": requested, "members": []}
     path = group_path(runs_dir, name)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -86,7 +85,7 @@ def release_group(runs_dir: Path, name: str):
 
 def record_members(runs_dir: Path, name: str, members: list, epoch=None) -> dict:
     """Record the member list so far, after every member: a spawned member must be reachable through its group from the instant it exists."""
-    manifest = group_manifest(runs_dir, name) or {"group": name, "created_at": now_iso(), "derived_from": None}
+    manifest = group_manifest(runs_dir, name) or {"group": name, "created_at": now_iso()}
     if epoch is not None and manifest.get("epoch") != epoch:
         raise Refusal(f"group {name!r} was released and claimed again while this batch was starting; the members listed in `spawned` are still recorded as members of it",
                       spawned=[m.get("run_id") for m in members if m.get("run_id")])
@@ -111,11 +110,6 @@ def owned_run_ids(runs_dir: Path, name: str):
     seen = set(ids)
     return ids + [m["run_id"] for _rd, m in iter_runs(runs_dir)
                   if m.get("group") == name and m.get("run_id") and m["run_id"] not in seen]
-
-
-def derived_groups(runs_dir: Path, name: str):
-    """Groups whose `--resume-from` was this one; their members work in this group's worktrees."""
-    return [g for g in list_groups(runs_dir) if (group_manifest(runs_dir, g) or {}).get("derived_from") == name]
 
 
 def group_view(runs_dir: Path, name: str):

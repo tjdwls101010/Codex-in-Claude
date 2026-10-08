@@ -39,6 +39,12 @@ class WorktreeCase(BridgeCase):
         self.wait_all(out)
         return out
 
+    def next_round(self, name, previous, *extra, **kw):
+        """A batch that continues each member of an earlier one: a tasks file with one `kind: resume` line per member."""
+        tf = self.tasks_file(*({"prompt": f"go on {i}", "kind": "resume", "resume": r["run_id"]}
+                               for i, r in enumerate(previous["runs"])), name=f"{name}.jsonl")
+        return self.bridge("batch", "--group", name, "--tasks-file", tf, *extra, **kw)
+
     def registered_worktrees(self):
         listed = self.git("worktree", "list", "--porcelain").stdout
         return [ln.split(" ", 1)[1] for ln in listed.splitlines() if ln.startswith("worktree ")][1:]
@@ -95,8 +101,7 @@ class WhoGetsACheckout(WorktreeCase):
 
     def test_a_phase_that_continues_threads_keeps_their_directories(self):
         one = self.finished()
-        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--worktree",
-                          "--task", "a", "--task", "b")
+        two = self.next_round("p2", one, "--worktree")
         self.wait_all(two)
         self.assertEqual([r["cwd"] for r in two["runs"]], [r["worktree"] for r in one["runs"]])
         self.assertEqual(len(self.registered_worktrees()), 2, "no new checkout for a resume")
@@ -110,12 +115,6 @@ class WhoGetsACheckout(WorktreeCase):
         self.assertEqual(out["spawned"], 2)
         self.assertIn("not a git repository", out["worktrees"]["note"])
         self.assertTrue(all(r["cwd"] == str(plain) for r in out["runs"]))
-
-    def test_an_unresolvable_base_is_refused_before_anything_is_claimed(self):
-        refused = self.group("--worktree", "--base", "no-such-ref", rc=2)
-        self.assertIn("no-such-ref", refused["error"])
-        self.assertEqual(self.run_dirs(), [])
-
 
 class WhatACheckoutHolds(WorktreeCase):
     """A checkout is `git worktree add` output: tracked files at the base commit and nothing else."""
@@ -144,21 +143,21 @@ class WhatACheckoutHolds(WorktreeCase):
         self.assertEqual(self.git("status", "--porcelain").stdout, "")
 
     def test_base_names_the_commit_and_instructions_missing_there_are_reported(self):
-        first = self.git("rev-parse", "HEAD").stdout.strip()
+        head = self.git("rev-parse", "HEAD").stdout.strip()
         (self.project / "AGENTS.md").write_text("# rules\n")
-        self.git("add", "-A")
-        self.git("commit", "-qm", "agents")
-        out = self.finished("--base", first)
-        self.assertEqual(out["worktrees"]["base"], first)
+        out = self.finished()
+        self.assertEqual(out["worktrees"]["base"], head)
         self.assertEqual(out["worktrees"]["missing_at_base"], ["AGENTS.md"])
         self.assertFalse((Path(out["runs"][0]["worktree"]) / "AGENTS.md").exists())
+        self.git("add", "-A")
+        self.git("commit", "-qm", "agents")
         self.assertNotIn("missing_at_base", self.finished(name="p2")["worktrees"])
 
     def test_a_member_refused_at_spawn_leaves_no_checkout(self):
-        tf = self.tasks_file({"prompt": "a", "image": ["/nonexistent/x.png"]}, "b", "c")
+        tf = self.tasks_file({"prompt": "a", "schema": "/nonexistent/schema.json"}, "b", "c")
         out = self.bridge("batch", "--group", "p1", "--worktree", "--tasks-file", tf)
         self.wait_all(out)
-        self.assertIn("image not found", out["runs"][0]["error"])
+        self.assertIn("schema file not found", out["runs"][0]["error"])
         self.assertEqual(len(self.registered_worktrees()), 2)
 
 
@@ -208,8 +207,7 @@ class Clean(WorktreeCase):
 
     def test_force_does_not_reach_a_worktree_another_group_is_working_in(self):
         one = self.finished()
-        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b",
-                          env={"FAKE_CODEX_HANG": 60})
+        two = self.next_round("p2", one, env={"FAKE_CODEX_HANG": 60})
         res = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual(res["removed"], [])
         self.assertFalse(res["name_released"])
@@ -240,25 +238,33 @@ class Clean(WorktreeCase):
 
     def test_a_run_living_in_a_checkout_keeps_it_when_the_group_graph_has_forgotten(self):
         one = self.finished()
-        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b")
+        two = self.next_round("p2", one)
         self.wait_all(two)
-        three = self.bridge("batch", "--group", "p3", "--resume-from", "p2", "--task", "a", "--task", "b",
-                            env={"FAKE_CODEX_HANG": 60})
+        three = self.next_round("p3", two, env={"FAKE_CODEX_HANG": 60})
         self.bridge("clean", "--group", "p2", "--force")
-        res = self.bridge("clean", "--group", "p1")
+        res = self.bridge("clean", "--group", "p1", "--force")
         self.assertEqual(res["removed"], [])
         self.assertFalse(res["name_released"])
         self.assertEqual({o for k in res["kept"] for o in k["occupied_by"]}, {r["run_id"] for r in three["runs"]})
         self.assertTrue(all(Path(r["worktree"]).exists() for r in one["runs"]))
 
-    def test_a_group_another_group_resumed_is_protected(self):
-        self.finished()
-        self.wait_all(self.bridge("batch", "--group", "p2", "--resume-from", "p1",
-                                  "--task", "a", "--task", "b"))
+    def test_a_checkout_another_run_continued_in_is_protected(self):
+        # Whoever continued a member's thread — a later batch's `kind: resume` task or a single `resume` — works in its checkout, so removing it would take that thread's directory away. Asked of the registry, so it holds however the run was started.
+        one = self.finished()
+        two = self.next_round("p2", one)
+        self.wait_all(two)
         refused = self.bridge("clean", "--group", "p1", rc=1)
-        self.assertEqual(refused["derived_groups"], ["p2"])
+        self.assertEqual(sorted(refused["continued_by"]), sorted(r["run_id"] for r in two["runs"]))
+        self.assertTrue(all(Path(r["worktree"]).exists() for r in one["runs"]))
         forced = self.bridge("clean", "--group", "p1", "--force")
-        self.assertEqual(forced["forced_past"]["derived_groups"], ["p2"])
+        self.assertEqual(sorted(forced["forced_past"]["continued_by"]), sorted(r["run_id"] for r in two["runs"]))
+        self.assertTrue(forced["name_released"])
+
+    def test_a_single_resume_in_a_checkout_protects_it_too(self):
+        one = self.finished(n=1)
+        again = self.bridge("resume", one["runs"][0]["run_id"], "go on")
+        self.wait_state(again["run_id"])
+        self.assertEqual(self.bridge("clean", "--group", "p1", rc=1)["continued_by"], [again["run_id"]])
 
     def test_an_unknown_group_is_named(self):
         self.assertIn("no such group", self.bridge("clean", "--group", "nope", rc=1)["error"])
@@ -500,7 +506,7 @@ class Overlaps(WorktreeCase):
         one = self.finished()
         for r in one["runs"]:
             self.plant(r["run_id"], [Path(r["worktree"]) / "shared.py"])
-        two = self.bridge("batch", "--group", "p2", "--resume-from", "p1", "--task", "a", "--task", "b")
+        two = self.next_round("p2", one)
         self.wait_all(two)
         for r in two["runs"]:
             self.plant(r["run_id"], [Path(r["cwd"]) / "shared.py"])

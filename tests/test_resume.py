@@ -28,7 +28,7 @@ class SettingsAreReasserted(ResumeCase):
 
     def test_every_recorded_setting_reaches_the_resumed_turn(self):
         first, second, rec = self.first_then_resume(
-            ("--sandbox", "read-only", "--model", "fake-big", "--effort", "low", "--no-priority"))
+            ("--sandbox", "read-only", "--model", "fake-big", "--effort", "low"))
         argv = rec["argv"]
         self.assertEqual(argv[:3], ["exec", "resume", first["thread_id"]])
         self.assertEqual(self.config_values(argv),
@@ -84,10 +84,10 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
 
     def test_a_flag_beats_the_config(self):
         self.config(self.CONFIG)
-        argv = self.started_argv("--model", "fake-small", "--effort", "medium", "--no-priority")
+        argv = self.started_argv("--model", "fake-small", "--effort", "medium")
         self.assertEqual(argv[argv.index("-m") + 1], "fake-small")
         self.assertEqual(self.config_values(argv), {"sandbox_mode": '"workspace-write"',
-                                                    "model_reasoning_effort": '"medium"'})
+                                                    "model_reasoning_effort": '"medium"', "service_tier": '"fast"'})
 
     def test_the_sandbox_is_never_taken_from_the_config(self):
         self.config('sandbox_mode = "danger-full-access"\n')
@@ -98,12 +98,16 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
         self.config('[profiles.work]\nmodel = "fake-small"\n')
         self.assertNotIn("-m", self.started_argv())
 
-    def test_inheriting_the_config_does_not_restate_it(self):
+    def test_a_thread_that_loads_the_config_is_not_handed_it_again(self):
         self.config(self.CONFIG)
-        argv = self.started_argv("--inherit-config")
+        self.install_legacy_registry()
+        out = self.bridge("resume", LEGACY_INHERITED, "again")
+        self.wait_state(out["run_id"])
+        argv = self.last_argv()
         self.assertNotIn("--ignore-user-config", argv)
         self.assertNotIn("-m", argv)
-        self.assertEqual(self.config_values(argv), {"sandbox_mode": '"workspace-write"'})
+        self.assertEqual(self.config_values(argv), {"sandbox_mode": '"read-only"'},
+                         "Codex reads config.toml itself, and the thread's recorded empty tier stays empty")
 
     def test_no_config_pins_nothing(self):
         argv = self.started_argv()
@@ -122,15 +126,18 @@ class UserDefaultsAndTheirPrecedence(ResumeCase):
         self.assertEqual(self.config_values(argv)["model_reasoning_effort"], '"high"')
 
     def test_a_recorded_no_tier_stays_no_tier(self):
+        first = self.bridge("start", "x")
+        self.wait_state(first["run_id"])
         self.config(self.CONFIG)
-        _f, _s, rec = self.first_then_resume(("--no-priority",))
-        self.assertNotIn("service_tier", self.config_values(rec["argv"]))
+        out = self.bridge("resume", first["run_id"], "y")
+        self.wait_state(out["run_id"])
+        self.assertNotIn("service_tier", self.config_values(self.last_argv()))
 
     def test_a_thread_from_an_older_release_keeps_its_boolean_tier(self):
         self.install_legacy_registry()
         for ref in (LEGACY_PREDECESSOR, LEGACY_REVIEW):
             with self.subTest(ref=ref):
-                self.bridge("stop", "--all")
+                self.bridge("stop", "--group", "p2")
                 out = self.bridge("resume", ref, "--force", "again")
                 self.wait_state(out["run_id"])
                 argv = self.last_argv()
@@ -224,30 +231,6 @@ class FindingTheThread(ResumeCase):
         first, second, rec = self.first_then_resume(ref_key="thread_id")
         self.assertEqual(rec["argv"][2], first["thread_id"])
         self.assertEqual(self.row(second["run_id"])["parent_run_id"], first["run_id"])
-
-    def test_last_picks_the_one_live_run(self):
-        done = self.bridge("start", "done")
-        self.wait_state(done["run_id"])
-        live, _m = self.running("live")
-        out = self.bridge("resume", "--last", "--force", "go on")
-        self.assertEqual(out["resolved_from_run_id"], live["run_id"])
-        self.bridge("stop", "--all")
-
-    def test_last_with_nothing_live_takes_the_newest_and_says_so(self):
-        for p in ("a", "b"):
-            self.wait_state(self.bridge("start", "--label", p, p)["run_id"])
-        newest = self.bridge("status", "--all")["runs"][-1]
-        out = self.bridge("resume", "--last", "go on")
-        self.wait_state(out["run_id"])
-        self.assertEqual(out["resolved_from_run_id"], newest["run_id"])
-        self.assertIn("newest", out["resolved_from"])
-        self.assertEqual(out["label"], newest["label"])
-
-    def test_last_with_two_live_runs_is_refused_with_the_candidates(self):
-        a, _ = self.running("a")
-        b, _ = self.running("b")
-        refused = self.bridge("resume", "--last", "go on", rc=1)
-        self.assertEqual({c["run_id"] for c in refused["candidates"]}, {a["run_id"], b["run_id"]})
 
     def test_a_run_that_never_recorded_a_thread_cannot_be_resumed(self):
         out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": os.devnull, "FAKE_CODEX_EXIT": 1})

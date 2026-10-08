@@ -6,10 +6,10 @@ import json
 
 from codex.errors import Refusal
 from codex.git import resolve_project
-from codex.observe.collect import final_message, member_result, overlaps, written_paths
+from codex.observe.collect import final_message, member_result, overlaps, read_final
 from codex.observe.follow import GroupWatch, wait_until
-from codex.observe.rows import group_snapshot, progress, turn_failed_excerpt
-from codex.registry import TERMINAL_STATES, group_view, is_live, read_meta, reap, resolve_runs_dir, run, still_writing
+from codex.observe.rows import group_snapshot, progress, settled, turn_failed_excerpt
+from codex.registry import TERMINAL_STATES, group_view, is_live, read_meta, reap, resolve_runs_dir, run
 
 
 def result(args):
@@ -17,7 +17,7 @@ def result(args):
     runs_dir = resolve_runs_dir(project, args.runs_dir)
     if args.group:
         if args.wait:
-            # Ended as `status --group --follow` closes, through the same watch: no readable member live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
+            # Ended once no readable member is live. A slot that never started and a member that will not parse are not waited for, which could be forever; `unstarted` names them.
             watch = GroupWatch(runs_dir, args.group, project)
             wait_until(lambda: not group_snapshot(watch.now()[0])[0], args.wait_timeout)
             # Collected from the watch too: the name may have been released, or taken by another batch, while it waited.
@@ -32,20 +32,20 @@ def result(args):
             return not now or not is_live(reap(rd, now))
         wait_until(ended, args.wait_timeout)
         rd, meta = run(runs_dir, rd.name)
-    meta = reap(rd, meta)
-    info = progress(rd, meta)
+    meta, (info, raw), writing = settled(rd, meta, lambda m: (progress(rd, m), read_final(rd)))
+    live = meta.get("state") not in TERMINAL_STATES or writing
     # A live run has no final answer yet: what it has said so far is not the object its schema shapes.
-    answer_due = meta.get("schema_path") and not is_live(meta)
+    answer_due = meta.get("schema_path") and not live
     try:
         # A --schema answer is parsed, and a replaced byte would parse into a different object than the one written.
-        message = final_message(rd, info, errors="strict" if answer_due else "replace")
+        message = final_message(raw, info, errors="strict" if answer_due else "replace")
     except UnicodeDecodeError as e:
         raise Refusal("the final message of a --schema run is not valid UTF-8", run_id=meta["run_id"], parse_error=str(e))
     out = {"run_id": meta["run_id"], "state": meta.get("state"), "exit_code": meta.get("exit_code"),
            "thread_id": meta.get("thread_id") or info["thread_id"]}
     if meta.get("state") not in TERMINAL_STATES:
         out["note"] = f"run is still {meta.get('state')}; this is a partial result"
-    elif still_writing(meta):
+    elif writing:
         # The same call later would return a different message, so this one is not final.
         out["note"] = "codex is still writing although the run is orphaned; this is a partial result"
     turn_failed = turn_failed_excerpt(info)
@@ -78,12 +78,10 @@ def result_group(args, project, found_members, never):
     """A group's result from its members, `(run_dir, meta)` in start order, and its gaps."""
     members, shown, per_run_paths, totals = [], [], {}, {"input_tokens": 0, "output_tokens": 0}
     for index, (rd, meta) in enumerate(found_members):
-        meta = reap(rd, meta)
-        row, info, text = member_result(rd, meta)
+        row, info, text, paths = member_result(rd, meta)
         members.append({"index": index, **row})
         shown.append(text)
-        per_run_paths[meta["run_id"]] = written_paths(
-            rd / "events.jsonl", (meta.get("worktree") or {}).get("path") or meta.get("cwd"))
+        per_run_paths[meta["run_id"]] = paths
         for key in totals:
             totals[key] += int((info["usage"] or {}).get(key) or 0)
     found = overlaps(per_run_paths)

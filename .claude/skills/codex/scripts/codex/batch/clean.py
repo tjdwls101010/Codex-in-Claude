@@ -7,8 +7,8 @@ from pathlib import Path
 from codex.errors import Refusal
 from codex.git import is_dirty as worktree_dirty, worktree_prune, worktree_remove
 from codex.registry import (
-    derived_groups, find_run, group_manifest, group_path, group_unreadable, is_live, iter_runs, list_groups, live_runs,
-    member_run_ids, meta_unreadable, owned_run_ids, release_group, still_writing,
+    find_run, group_manifest, group_path, group_unreadable, is_live, iter_runs, list_groups, live_runs, member_run_ids,
+    meta_unreadable, owned_run_ids, release_group, still_writing,
 )
 from codex.util import invocation, is_within
 
@@ -30,7 +30,7 @@ def stop_commands(runs, runs_dir, explicit_registry=False):
 def clean_group(project, runs_dir, name, *, force, explicit_registry):
     """Remove a group's worktrees and release its name when nothing is left behind.
 
-    Live work is never removed, `--force` or not: a live member refuses the call, and a worktree another live run is working in (or a member whose state cannot be read) is kept. `force` lifts the rest — an unreadable manifest or member, a derived group, git's refusal of a dirty tree — and the reply says what it overrode.
+    Live work is never removed, `--force` or not: a live member refuses the call, and a worktree another live run is working in (or a member whose state cannot be read) is kept. `force` lifts the rest — an unreadable manifest or member, a checkout another run continued a thread in, git's refusal of a dirty tree — and the reply says what it overrode.
     """
     lost_manifest = group_manifest(runs_dir, name) is None and group_unreadable(runs_dir, name)
     if group_manifest(runs_dir, name) is None and not lost_manifest:
@@ -80,9 +80,30 @@ def _member_liveness(runs_dir, name):
     return live, unknown
 
 
+def member_checkouts(runs_dir, name):
+    """`(run_id, run_dir, meta, path)` for each of a group's members whose checkout is on disk. A member's checkout is always `<run_dir>/wt`, which recovers one whose path was never recorded; `meta` is None when its meta.json will not parse."""
+    out = []
+    for rid in owned_run_ids(runs_dir, name) or []:
+        rd, meta = find_run(runs_dir, rid)
+        if rd is None:
+            continue
+        wt = (meta or {}).get("worktree")
+        path = Path(wt["path"]) if wt else rd / "wt"
+        if path.exists():
+            out.append((rid, rd, meta, path))
+    return out
+
+
+def continued_by(runs_dir, name):
+    """Runs other than a checkout's own member that worked in it — a later batch's `kind: resume` task or a single `resume` continuing that member's thread, live or finished — in registry order. Asked of the registry, so it holds however the run was started."""
+    checkouts = [(rid, path) for rid, _rd, _meta, path in member_checkouts(runs_dir, name)]
+    return [m["run_id"] for _rd, m in iter_runs(runs_dir)
+            if any(m.get("run_id") != rid and is_within(m.get("cwd"), path) for rid, path in checkouts)]
+
+
 def _check_liftable_guards(runs_dir, name, *, force, lost_manifest, unknown):
     """The refusals `--force` lifts, in check order; returns what was overridden, since one flag lifts all of them and the caller usually meant one."""
-    children = derived_groups(runs_dir, name)
+    continuing = continued_by(runs_dir, name)
     guards = [
         ("unreadable_manifest", lost_manifest,
          f"group {name!r} has a manifest that will not parse; its members are listed in `members_recorded_by_runs`, and --force cleans them",
@@ -92,10 +113,9 @@ def _check_liftable_guards(runs_dir, name, *, force, lost_manifest, unknown):
         ("unreadable_members", bool(unknown),
          f"group {name!r} has members whose meta.json will not parse, so whether they run is unknown; --force cleans the others and keeps those worktrees",
          lambda: {"running": unknown}, unknown),
-        # `--resume-from` puts phase 2 in phase 1's worktrees. One hop only, which is why the removal asks the registry again.
-        ("derived_groups", bool(children),
-         f"group {name!r} was continued by another group (--resume-from), whose members work in these worktrees; --force lifts this refusal, but a worktree a live run still works in is kept",
-         lambda: {"derived_groups": children}, children),
+        ("continued_by", bool(continuing),
+         f"another run continued a thread in group {name!r}'s worktrees (`continued_by`), so they are that thread's directory; --force lifts this refusal, but a worktree a live run still works in is kept",
+         lambda: {"continued_by": continuing}, continuing),
     ]
     overrode = {}
     for key, tripped, message, detail, forced_value in guards:
@@ -109,15 +129,8 @@ def _check_liftable_guards(runs_dir, name, *, force, lost_manifest, unknown):
 def _remove_worktrees(project, runs_dir, name, *, force, explicit_registry, overrode):
     removed, kept = [], []
     worktree_prune(project)
-    for rid in owned_run_ids(runs_dir, name) or []:
-        rd, meta = find_run(runs_dir, rid)
-        if rd is None:
-            continue
+    for rid, rd, meta, path in member_checkouts(runs_dir, name):
         wt = (meta or {}).get("worktree")
-        # A member's checkout is always `<run_dir>/wt`, which recovers one whose path was never recorded.
-        path = Path(wt["path"]) if wt else rd / "wt"
-        if not path.exists():
-            continue
         if meta is None:
             kept.append({"run_id": rid, "path": str(path),
                          "reason": "its run's meta.json will not parse, so whether it runs is unknown; repair or remove the run directory to release this worktree",

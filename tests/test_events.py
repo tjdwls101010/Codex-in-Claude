@@ -1,11 +1,9 @@
-"""Reading a run's event stream: exact cursors, damaged lines that are counted rather than dropped, the filter levels, and `show`.
-
-Command output is the one field that can put a whole file into the caller's context, so `compact` withholds it and reports its size, and `show` fetches one item on request.
-"""
+"""Reading a run's event stream: damaged lines that are counted rather than dropped, what `log` prints, and the readers that hand `status` and `result` changed paths and stderr in the skill's terms."""
 
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,56 +13,20 @@ from support.harness import BridgeCase, FIXTURES, engine
 MIXED = FIXTURES / "mixed-bigout-and-failure.jsonl"
 
 
-class Cursors(BridgeCase):
+class AHalfWrittenLine(BridgeCase):
 
-    def finished(self, **env):
-        out = self.bridge("start", "x", env=env)
+    def test_waits_until_its_line_is_complete(self):
+        # The file is appended to live: a line still being written is not an event yet, and shows once it is whole.
+        out = self.bridge("start", "x")
         self.wait_state(out["run_id"])
-        return out["run_id"], self.runs_dir / out["run_id"] / "events.jsonl"
-
-    def test_polling_a_live_run_never_duplicates_or_skips(self):
-        out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": MIXED, "FAKE_CODEX_DELAY": 0.15})
-        seen, cursor = [], 0
-        while True:
-            done = self.row(out["run_id"])["state"] == "completed"
-            body, cursor = self.log("--run", out["run_id"], "--since", cursor)
-            seen += body
-            if done:
-                break
-        whole, end = self.log("--run", out["run_id"])
-        self.assertEqual(seen, whole)
-        self.assertEqual(cursor, end)
-
-    def test_a_second_poll_at_the_same_cursor_is_empty(self):
-        rid, _ = self.finished()
-        first, c1 = self.log("--run", rid)
-        self.assertTrue(first)
-        again, c2 = self.log("--run", rid, "--since", c1)
-        self.assertEqual((again, c2), ([], c1))
-
-    def test_a_half_written_last_line_waits_for_the_next_poll(self):
-        rid, events = self.finished()
-        _body, cursor = self.log("--run", rid)
+        events = self.runs_dir / out["run_id"] / "events.jsonl"
+        before, _ = self.log("--run", out["run_id"])
         with events.open("a") as fh:
             fh.write('{"type":"turn.st')
-        self.assertEqual(self.log("--run", rid, "--since", cursor), ([], cursor))
+        self.assertEqual(self.log("--run", out["run_id"])[0], before)
         with events.open("a") as fh:
             fh.write('arted"}\n')
-        body, after = self.log("--run", rid, "--since", cursor)
-        self.assertEqual(body, ["turn.started"])
-        self.assertEqual(after, events.stat().st_size)
-
-    def test_a_cursor_past_the_end_is_refused(self):
-        rid, events = self.finished()
-        out = self.bridge("log", "--run", rid, "--since", events.stat().st_size + 1000, rc=1)
-        self.assertIn("past the end", out["error"])
-        self.assertEqual(out["run_id"], rid)
-
-    def test_a_cursor_that_is_not_a_line_boundary_is_refused(self):
-        rid, events = self.finished()
-        first_line = len(events.read_bytes().split(b"\n")[0])
-        out = self.bridge("log", "--run", rid, "--since", first_line - 3, rc=1)
-        self.assertIn("run=", out["error"])
+        self.assertEqual(self.log("--run", out["run_id"])[0], before + ["turn.started"])
 
 
 class DamagedLines(BridgeCase):
@@ -99,99 +61,52 @@ class DamagedLines(BridgeCase):
         self.assertEqual(self.row(rid)["unparsed_events"], 1)
 
 
-class Levels(BridgeCase):
+class WhatLogPrints(BridgeCase):
+    """`log` is one look at what a run did: every command with its exit code and output size, a failed command's output excerpted, the agent's own words whole, and a closing line naming the run and its state."""
 
     def setUp(self):
         super().setUp()
         out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": MIXED})
         self.wait_state(out["run_id"])
         self.rid = out["run_id"]
+        self.body, self.end = self.log("--run", self.rid)
 
-    def at(self, level):
-        return self.log("--run", self.rid, "--level", level)[0]
+    def test_each_command_is_its_exit_code_and_size_without_the_shell(self):
+        cmds = [ln for ln in self.body if ln.startswith("cmd ")]
+        self.assertEqual(len(cmds), 3, self.body)
+        self.assertRegex(cmds[0], r"^cmd exit=0 out=\d{5}B cat big\.txt$")
+        self.assertRegex(cmds[1], r"^cmd exit=1 out=\d+B ls /definitely/not/a/real/path$")
+        self.assertFalse([ln for ln in self.body if "/bin/zsh" in ln or "item_" in ln], "the shell wrapper and item ids are noise")
 
-    def test_compact_reports_each_commands_size_and_withholds_its_output(self):
-        body = self.at("compact")
-        cmds = [ln for ln in body if ln.startswith("cmd[")]
-        self.assertEqual(len(cmds), 3)
-        self.assertRegex(cmds[0], r"^cmd\[item_1\] exit=0 out=\d{5}B cat big\.txt$")
-        self.assertIn("exit=1", cmds[1])
-        self.assertFalse([ln for ln in body if ln.startswith("    | ")])
-        self.assertFalse([ln for ln in body if "/bin/zsh" in ln], "the shell wrapper is noise")
-
-    def test_the_agents_own_words_are_never_cut(self):
-        text = "\n".join(self.at("compact"))
-        self.assertIn("Exit codes, in order:\n\n1. `cat big.txt`: `0`", text)
-
-    def test_normal_adds_the_output_of_failed_commands_only(self):
-        body = self.at("normal")
-        excerpt = [ln for ln in body if ln.startswith("    | ")]
-        self.assertTrue(excerpt)
-        self.assertTrue(any("No such file" in ln for ln in excerpt))
+    def test_a_failed_commands_output_is_excerpted_and_a_successful_ones_is_not(self):
+        excerpt = [ln for ln in self.body if ln.startswith("    | ")]
+        self.assertTrue(any("No such file" in ln for ln in excerpt), self.body)
         self.assertFalse(any("quick brown fox" in ln for ln in excerpt))
 
-    def test_full_adds_a_bounded_excerpt_of_every_command(self):
-        body = "\n".join(self.at("full"))
-        self.assertIn("quick brown fox", body)
-        self.assertIn("bytes omitted", body)
-        self.assertLess(len(body.encode()), 20000, "the 22 KB output is excerpted, not reproduced")
+    def test_the_agents_own_words_are_never_cut(self):
+        self.assertIn("Exit codes, in order:\n\n1. `cat big.txt`: `0`", "\n".join(self.body))
 
-    def test_raw_is_the_event_lines_themselves(self):
-        body = self.at("raw")
-        stream = (self.runs_dir / self.rid / "events.jsonl").read_text().splitlines()
-        self.assertEqual([json.loads(ln) for ln in body], [json.loads(ln) for ln in stream])
+    def test_it_ends_on_the_run_and_its_state(self):
+        self.assertEqual(self.end, f"run={self.rid} state=completed")
+        self.assertFalse([ln for ln in self.body if ln.startswith("run=") or ln.startswith("# ")])
 
-    def test_an_unknown_level_is_refused_by_the_parser(self):
-        self.assertEqual(self.bridge_raw("log", "--run", self.rid, "--level", "verbose").returncode, 2)
+    def test_the_state_and_the_events_agree_when_the_run_ends_mid_read(self):
+        thread, started, done = ('{"type": "thread.started", "thread_id": "t"}\n', '{"type": "turn.started"}\n',
+                                 '{"type": "turn.completed", "usage": {"input_tokens": 7, "output_tokens": 1}}\n')
+        for start, moves, reads in (("running", ["completed"], [thread + started]),
+                                    ("starting", ["running", "completed"], [thread, thread + started])):
+            with self.subTest(moves=moves):
+                shutil.rmtree(self.runs_dir, ignore_errors=True)
+                rid = self.run_moving_mid_read(moves, reads, thread + started + done, start=start)
+                body, end = self.log("--run", rid)
+                self.assertEqual((body[-1], end), ("turn.completed in=7 cached=? out=1 reasoning=?", f"run={rid} state=completed"))
 
-
-class Show(BridgeCase):
-
-    def setUp(self):
-        super().setUp()
-        out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": MIXED})
-        self.wait_state(out["run_id"])
-        self.rid = out["run_id"]
-
-    def test_one_items_output_is_capped_loudly_and_whole_on_request(self):
-        capped = self.bridge("show", "--run", self.rid, "--item", "item_1", "--max-bytes", 500)
-        self.assertTrue(capped["truncated"])
-        self.assertEqual(len(capped["output"].encode()), 500)
-        self.assertIn("--max-bytes", capped["truncation_notice"])
-        whole = self.bridge("show", "--run", self.rid, "--item", "item_1", "--max-bytes", 100000)
-        self.assertFalse(whole["truncated"])
-        self.assertEqual(len(whole["output"].encode()), whole["total_bytes"])
-        self.assertEqual(capped["total_bytes"], whole["total_bytes"])
-        self.assertEqual(whole["command"], "cat big.txt")
-        self.assertIn("line 0400", whole["output"])
-
-    def test_the_default_cap_applies_to_a_large_output(self):
-        out = self.bridge("show", "--run", self.rid, "--item", "item_1")
-        self.assertTrue(out["truncated"])
-        self.assertGreater(out["total_bytes"], len(out["output"].encode()))
-
-    def test_an_unknown_item_lists_what_exists(self):
-        out = self.bridge("show", "--run", self.rid, "--item", "item_99", rc=1)
-        self.assertIn("item_1:command_execution", out["available"])
-
-    def test_item_ids_belong_to_one_run(self):
-        second = self.bridge("resume", self.rid, "again")
-        self.wait_state(second["run_id"])
-        a = self.bridge("show", "--run", self.rid, "--item", "item_0")
-        b = self.bridge("show", "--run", second["run_id"], "--item", "item_0")
-        self.assertNotEqual(a["item"]["text"], b["item"]["text"])
-
-    def test_a_file_change_returns_its_whole_change_list(self):
-        fixture = self.tmp / "fc.jsonl"
-        changes = [{"path": str(self.project / f"f{i}.py"), "kind": "add"} for i in range(3)]
-        fixture.write_text("".join(json.dumps(e) + "\n" for e in [
-            {"type": "thread.started", "thread_id": "t"},
-            {"type": "item.completed", "item": {"id": "item_0", "type": "file_change", "changes": changes}}]))
-        out = self.bridge("start", "x", env={"FAKE_CODEX_FIXTURE": fixture})
-        self.wait_state(out["run_id"])
-        self.assertEqual(self.bridge("show", "--run", out["run_id"], "--item", "item_0")["changes"], changes)
-        body, _ = self.log("--run", out["run_id"])
-        self.assertIn("file add f0.py", body, "paths are shown relative to the run's cwd")
+    def test_a_live_run_shows_the_command_it_is_inside(self):
+        out, _m = self.running("y", FAKE_CODEX_FIXTURE=FIXTURES / "mid-command.jsonl")
+        body, end = self.log("--run", out["run_id"])
+        self.assertEqual(body[-1], "cmd.running sleep 2 && echo tick4")
+        self.assertEqual(len([ln for ln in body if ln.startswith("cmd.running")]), 1, "a finished command shows only its result")
+        self.assertEqual(end, f"run={out['run_id']} state=running")
 
 
 def stream(*events):
@@ -207,28 +122,44 @@ class EventLines(unittest.TestCase):
     def setUp(self):
         self.codex_cli = engine("codex.codex_cli")
 
-    def lines(self, level, *events, project=None):
-        path = stream(*events)
-        lines, cursor = self.codex_cli.event_lines(path, 0, level, project)
-        self.assertEqual(cursor, path.stat().st_size)
-        return lines
+    def lines(self, *events, project=None):
+        return self.codex_cli.event_lines(stream(*events), rel_to=project)
+
+    def command(self, exit_code, output, status="completed"):
+        return {"type": "item.completed", "item": {"id": "item_3", "type": "command_execution", "command": "/bin/zsh -lc 'make test'",
+                                                   "aggregated_output": output, "exit_code": exit_code, "status": status}}
 
     def test_turn_lines(self):
         usage = {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 2, "reasoning_output_tokens": 1}
-        self.assertEqual(self.lines("compact", {"type": "thread.started", "thread_id": "t1"}, {"type": "turn.started"},
+        self.assertEqual(self.lines({"type": "thread.started", "thread_id": "t1"}, {"type": "turn.started"},
                                     {"type": "turn.completed", "usage": usage}),
                          ["thread t1", "turn.started", "turn.completed in=10 cached=4 out=2 reasoning=1"])
 
-    def test_a_started_command_is_shown_so_a_long_one_is_not_silence(self):
-        item = {"id": "item_3", "type": "command_execution", "command": "/bin/zsh -lc 'make test'"}
-        self.assertEqual(self.lines("compact", {"type": "item.started", "item": item}), ["cmd.start[item_3] make test"])
+    def test_a_command_still_running_is_shown_and_a_finished_one_only_by_its_result(self):
+        started = {"type": "item.started", "item": {"id": "item_3", "type": "command_execution", "command": "/bin/zsh -lc 'make test'"}}
+        self.assertEqual(self.lines(started), ["cmd.running make test"])
+        self.assertEqual(self.lines(started, self.command(0, "ok\n")), ["cmd exit=0 out=3B make test"])
 
-    def test_items_that_only_higher_levels_show(self):
+    def test_the_shell_wrapper_goes_whether_or_not_codex_quoted_the_command(self):
+        bare = {"type": "item.completed", "item": {"id": "c", "type": "command_execution", "command": "/bin/zsh -lc ls",
+                                                   "aggregated_output": "", "exit_code": 0}}
+        self.assertEqual(self.lines(bare), ["cmd exit=0 out=0B ls"])
+
+    def test_a_failed_command_carries_the_head_and_tail_of_its_output(self):
+        self.assertEqual(self.lines(self.command(2, "boom\n", "failed")), ["cmd exit=2 out=5B make test", "    | boom"])
+        big = "".join(f"line {i:04d}\n" for i in range(1000))
+        lines = self.lines(self.command(1, big, "failed"))
+        self.assertIn("line 0000", lines[1])
+        self.assertIn("line 0999", lines[1])
+        self.assertIn("bytes omitted", lines[1])
+        self.assertLess(len(lines[1].encode()), 4000)
+
+    def test_todo_lists_and_reasoning_are_left_out(self):
         todo = {"type": "item.completed", "item": {"id": "i", "type": "todo_list", "items": [{"text": "a"}]}}
         reasoning = {"type": "item.completed", "item": {"id": "r", "type": "reasoning", "text": "thinking"}}
-        self.assertEqual(self.lines("compact", todo, reasoning), [])
-        self.assertEqual(len(self.lines("normal", todo, reasoning)), 1)
-        self.assertEqual(self.lines("full", todo, reasoning)[1], "reasoning thinking")
+        # Codex reports a todo list's progress as `item.updated`, between its start and its completion.
+        updated = {"type": "item.updated", "item": {"id": "i", "type": "todo_list", "items": [{"text": "a", "completed": True}]}}
+        self.assertEqual(self.lines(todo, updated, reasoning), [])
 
     def test_other_kinds_are_one_line_each(self):
         evs = [{"type": "item.completed", "item": {"id": "e", "type": "error", "message": "bad config"}},
@@ -237,19 +168,20 @@ class EventLines(unittest.TestCase):
                                                     "status": "completed"}},
                {"type": "_unparsed", "raw": "{ broken"},
                {"type": "something.new", "x": 1}]
-        self.assertEqual(self.lines("compact", *evs),
-                         ["error bad config", "search q", "mcp[m] s/t status=completed", "unparsed { broken",
+        self.assertEqual(self.lines(*evs),
+                         ["error bad config", "search q", "mcp s/t status=completed", "unparsed { broken",
                           'something.new {"x": 1}'])
 
     def test_a_file_change_is_paths_relative_to_the_run(self):
         ev = {"type": "item.completed", "item": {"id": "f", "type": "file_change",
                                                  "changes": [{"path": "/p/src/a.py", "kind": "update"}]}}
-        self.assertEqual(self.lines("compact", ev, project=Path("/p")), ["file update src/a.py"])
-
+        self.assertEqual(self.lines(ev, project=Path("/p")), ["file update src/a.py"])
+        empty = {"type": "item.completed", "item": {"id": "f", "type": "file_change", "changes": []}}
+        self.assertEqual(self.lines(empty), ["file (no changes listed)"])
 
 
 class ItemsAndPaths(unittest.TestCase):
-    """`codex.codex_cli`'s readers that hand `show`, `status` and `result` an item, the item ids, the changed paths and stderr in the skill's terms."""
+    """`codex.codex_cli`'s readers that hand `status` and `result` the changed paths and stderr in the skill's terms."""
 
     COMMAND = {"id": "item_1", "type": "command_execution", "command": "/bin/zsh -lc 'make test'",
                "aggregated_output": "ok\n", "exit_code": 2, "status": "failed"}
@@ -264,24 +196,6 @@ class ItemsAndPaths(unittest.TestCase):
                            {"type": "item.completed", "item": self.COMMAND},
                            {"type": "item.completed", "item": self.CHANGE},
                            {"type": "item.completed", "item": self.MESSAGE})
-
-    def test_a_command_comes_without_its_shell_wrapper_and_with_its_whole_output(self):
-        self.assertEqual(self.codex_cli.find_item(self.path, "item_1")[0],
-                         {"kind": "command", "type": "command_execution", "command": "make test",
-                          "exit_code": 2, "output": "ok\n"})
-
-    def test_a_file_change_comes_with_its_changes(self):
-        self.assertEqual(self.codex_cli.find_item(self.path, "item_2")[0],
-                         {"kind": "file_change", "type": "file_change", "changes": self.CHANGE["changes"]})
-
-    def test_any_other_item_comes_as_recorded(self):
-        self.assertEqual(self.codex_cli.find_item(self.path, "item_3")[0],
-                         {"kind": "other", "type": "agent_message", "item": self.MESSAGE})
-
-    def test_an_unknown_item_is_none_beside_what_exists_in_the_same_read(self):
-        # One read for both, so a refusal never lists an item the lookup did not see, however fast the run appends.
-        self.assertEqual(self.codex_cli.find_item(self.path, "item_9"),
-                         (None, ["item_1:command_execution", "item_2:file_change", "item_3:agent_message"]))
 
     def test_changed_paths_are_every_path_a_file_change_names(self):
         self.assertEqual(self.codex_cli.changed_paths(self.path), {"/p/a.py", "/p/b.py"})

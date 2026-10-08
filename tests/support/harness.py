@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -190,16 +191,11 @@ class BridgeCase(unittest.TestCase):
         return header, members
 
     def log(self, *args, **kw):
-        """`log` output split into (event lines, cursor)."""
+        """`log` output split into (event lines, its closing line)."""
         p = self.bridge_raw("log", *args, **kw)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        body, cursor = [], None
-        for ln in p.stdout.splitlines():
-            if ln.startswith("# cursor="):
-                cursor = int(ln.split()[1].split("=", 1)[1])
-            else:
-                body.append(ln)
-        return body, cursor
+        lines = p.stdout.splitlines()
+        return lines[:-1], (lines[-1] if lines else None)
 
     # -- reading what happened ------------------------------------------------
 
@@ -238,6 +234,43 @@ class BridgeCase(unittest.TestCase):
         sup = self.detached_process()
         self.write_meta(LEGACY_WAITER, {**self.meta(LEGACY_WAITER), "supervisor_pid": sup, "pgid": sup})
         return sup
+
+    def run_moving_mid_read(self, moves, reads, final, path="events.jsonl", start="running", **meta):
+        """A run that moves while a view reads `path`. Read i of it is a FIFO held open until the run has made `moves[i]` — a state it records, or a callable that changes the run some other way — and the path has been swapped for the next read's FIFO — or, after the last move, for a regular file holding `final` — and only then gets `reads[i]`. So a view that reads again once the state moved sees the later state with the later data, and one that does not keeps data older or newer than the state it reports. The supervisor stays alive, so nothing but meta.json says the run moved. Returns the run id."""
+        sup = self.detached_process()
+        rid = "20990101-000000-moving-0001"
+        self.write_meta(rid, {"run_id": rid, "state": start, "thread_id": "t", "supervisor_pid": sup, "pgid": sup,
+                              "started_at": "2099-01-01T00:00:00.000Z", "cwd": str(self.project), **meta})
+        return self._moving(rid, moves, reads, final, path)
+
+    def _moving(self, rid, moves, reads, final, path):
+        d = self.runs_dir / rid
+        target = d / path
+        fifos = [d / f".read-{i}.fifo" for i in range(len(moves))]
+        for f in fifos:
+            os.mkfifo(f)
+        os.replace(fifos[0], target)
+
+        def writer():
+            for i, (state, text) in enumerate(zip(moves, reads)):
+                # Blocks until the view opens read i; the descriptor stays on that FIFO once the path is swapped.
+                fd = os.open(target, os.O_WRONLY)
+                if callable(state):
+                    state()
+                else:
+                    self.write_meta(rid, {**self.meta(rid), "state": state,
+                                          **({"exit_code": 0 if state == "completed" else 1} if state in ("completed", "failed") else {})})
+                if i + 1 < len(moves):
+                    os.replace(fifos[i + 1], target)
+                else:
+                    (d / ".final").write_text(final)
+                    os.replace(d / ".final", target)
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(text)
+
+        # A daemon: a view that never reads again leaves it waiting on a FIFO nobody opens, and the test fails on what the view printed.
+        threading.Thread(target=writer, daemon=True).start()
+        return rid
 
     def run_dirs(self):
         return sorted(p.name for p in self.runs_dir.iterdir()

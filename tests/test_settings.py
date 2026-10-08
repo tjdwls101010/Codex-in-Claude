@@ -1,4 +1,4 @@
-"""`codex.runs.settings_for`: one precedence for every setting — the flag, then what the continued thread recorded (while isolation is unchanged), then the user's config.toml (isolated runs only), then nothing. The sandbox is never taken from the config."""
+"""`codex.runs.settings_for`: one precedence for every setting — the flag, then what the continued thread recorded, then the user's config.toml (isolated runs only), then nothing. The sandbox is never taken from the config."""
 
 from __future__ import annotations
 
@@ -31,13 +31,14 @@ class Precedence(unittest.TestCase):
                                         "model_source": "config.toml", "effort_source": "config.toml"})
 
     def test_flags_beat_the_config_and_are_not_blamed_on_it(self):
-        r = resolve(model="m", effort="e", priority=False, sandbox="danger-full-access", user=USER)
-        self.assertEqual((r["model"], r["effort"], r["service_tier"], r["sandbox"]), ("m", "e", None, "danger-full-access"))
+        r = resolve(model="m", effort="e", sandbox="danger-full-access", user=USER)
+        self.assertEqual((r["model"], r["effort"], r["service_tier"], r["sandbox"]), ("m", "e", "fast", "danger-full-access"))
         self.assertEqual((r["adopted"]["model_source"], r["adopted"]["effort_source"]), (None, None))
 
-    def test_inheriting_the_config_means_codex_reads_it_itself(self):
-        r = resolve(inherit_config=True, user=USER)
-        self.assertEqual((r["isolated"], r["model"], r["effort"], r["service_tier"]), (False, None, None, None))
+    def test_a_thread_that_loads_the_config_takes_nothing_from_it(self):
+        r = resolve(base={**THREAD, "isolated": False, "model": None, "effort": None, "service_tier": None}, user=USER)
+        self.assertEqual((r["isolated"], r["model"], r["effort"], r["service_tier"]), (False, None, None, None),
+                         "Codex reads config.toml itself")
         self.assertEqual(r["adopted"]["model"], None)
 
     def test_a_resume_keeps_the_threads_record_over_the_config(self):
@@ -51,14 +52,9 @@ class Precedence(unittest.TestCase):
         r = resolve(base={**THREAD, "model": None, "effort": None, "service_tier": None}, user=USER)
         self.assertEqual((r["model"], r["effort"], r["service_tier"]), (None, None, None))
 
-    def test_changing_isolation_on_resume_drops_the_record(self):
-        r = resolve(base=THREAD, inherit_config=True, user=USER)
-        self.assertEqual((r["isolated"], r["model"], r["effort"]), (False, None, None))
-        self.assertEqual(r["sandbox"], "read-only", "the sandbox is re-asserted whatever else changes")
-
     def test_a_flag_still_beats_the_record(self):
-        r = resolve(base=THREAD, sandbox="workspace-write", model="new", priority=False, user=USER)
-        self.assertEqual((r["sandbox"], r["model"], r["effort"], r["service_tier"]), ("workspace-write", "new", "low", None))
+        r = resolve(base=THREAD, sandbox="workspace-write", model="new", user=USER)
+        self.assertEqual((r["sandbox"], r["model"], r["effort"], r["service_tier"]), ("workspace-write", "new", "low", "priority"))
         self.assertEqual((r["adopted"]["model"], r["adopted"]["effort"]), ("new", None))
 
     def test_an_older_threads_boolean_tier(self):
@@ -119,12 +115,6 @@ class ReadOnlyMarker(unittest.TestCase):
                 marker, note = self.marker(base=base, **kw)
                 self.assertEqual(marker, "strict")
                 self.assertTrue(note)
-
-    def test_a_new_run_that_loads_the_users_config_is_strict(self):
-        marker, note = self.marker(sandbox="read-only", inherit_config=True)
-        self.assertEqual(marker, "strict")
-        self.assertTrue(note)
-
 
 if __name__ == "__main__":
     unittest.main()

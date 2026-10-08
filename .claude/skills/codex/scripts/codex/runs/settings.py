@@ -5,30 +5,26 @@ from __future__ import annotations
 # Notes for a read-only run that gets the stricter sandbox for a reason of its own; a reason the install or directory gives comes in as `read_only_blocker`.
 KEPT_STRICT = ("this thread recorded the stricter read-only, which cannot write even a temporary file, and keeps it: tests and builds that need one fail. "
                "`resume --sandbox read-only` moves it to the read-only that writes TMPDIR and ~/.cache")
-LOADS_CONFIG = ("this run loads your config.toml, which could change the read-only profile, so it gets the stricter read-only, "
+LOADS_CONFIG = ("this thread loads your config.toml, which could change the read-only profile, so it keeps the stricter read-only, "
                 "which cannot write even a temporary file: tests and builds that need one fail")
 
 
-def settings_for(*, sandbox=None, model=None, effort=None, priority=None, inherit_config=False, cwd=None,
-            base=None, user=None, read_only_blocker=None):
+def settings_for(*, sandbox=None, model=None, effort=None, priority=None, cwd=None, base=None, user=None,
+                 read_only_blocker=None):
     """Resolve a run's settings from the caller's flags, the run it continues (`base`, or None) and the user's config.toml defaults (`user`).
 
-    Each setting: the flag, else what the continued thread recorded, else the config, else nothing (the server decides). The thread's record wins over the config only while isolation is unchanged — an empty record is a record, which is why this is not an `or` chain. The config is consulted only for an isolated run: under `--inherit-config` Codex reads it itself. The sandbox is never taken from the config.
+    Each setting: the flag, else what the continued thread recorded, else the config, else nothing (the server decides). The thread's record wins over the config — an empty record is a record, which is why this is not an `or` chain. A new run is isolated; a thread keeps the isolation it recorded, and one recorded as loading config.toml (`isolated: false`, from releases before 0.11) is handed nothing from it, since Codex reads it itself. The sandbox is never taken from the config.
 
     `adopted` holds the model and effort being taken up now rather than inherited, with where each came from; only those are checked against the catalog, so a model retired upstream cannot block the resume of an old thread.
 
     `read_only` is which read-only a read-only run gets (None for a writing one): `scratch` writes TMPDIR and ~/.cache, `strict` is the legacy sandbox, with `read_only_note` saying why. A run takes scratch up only when it is new or names `--sandbox read-only`, and only isolated, since a loaded config.toml could add to the profile; a thread that recorded scratch keeps it; any other read-only thread, recorded before scratch existed or strict, keeps the strict sandbox, so no thread's permissions widen unasked. `read_only_blocker` is why this install or directory cannot use scratch at all.
     """
     isolated = base.get("isolated", True) if base else True
-    if inherit_config:
-        isolated = False
-    inherits = bool(base) and isolated == base.get("isolated", True)
+    inherits = bool(base)
     user = {} if inherits or not isolated else (user or {})
 
-    if priority is True:
+    if priority:
         tier = "priority"
-    elif priority is False:
-        tier = None
     elif inherits:
         # A thread recorded before `service_tier` existed holds a boolean `priority`; a new record's None is a choice.
         tier = base["service_tier"] if "service_tier" in base else ("priority" if base.get("priority") else None)

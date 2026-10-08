@@ -32,7 +32,8 @@ EXIT_REFUSED, EXIT_ARGUMENTS, EXIT_BLOCKED = 1, 2, 3
 
 ROOT_EPILOG = """\
 Every command prints one JSON line on stdout — its result, or a refusal carrying `error` — unless its --help says it prints text.
-Exit codes: 0 success; 1 the registry's state refused the command, or what it asked for failed, and `error` says why; 2 the command line must change, and the reply's `help` names the --help to read; 3 `doctor` found a blocker. Each command's --help says what it prints and which of these it ends with when."""
+Exit codes: 0 success; 1 the registry's state refused the command, or what it asked for failed, and `error` says why; 2 the command line must change, and the reply's `help` names the --help to read; 3 `doctor` found a blocker. Each command's --help says what it prints and which of these it ends with when.
+A command or flag removed in 0.11 is refused with 2, and `instead` names what does its job now where something does."""
 
 
 START_DESC = f"""\

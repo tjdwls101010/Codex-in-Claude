@@ -2,6 +2,42 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] — 2026-10-09
+
+A read-only run can run tests and builds, the surface left without a job by `result --wait` is gone, and every checkout of a repository, linked worktrees included, shares one registry.
+
+**Read Changed and Removed before upgrading.** What `read-only` permits, where the registry lives, `log`'s output and what `clean` protects change, and a command and eighteen flags are gone.
+
+### Changed
+
+- **`read-only` writes `TMPDIR` and `~/.cache` — BREAKING.** It runs under a permissions profile — read anything, write only those two, the run's own directory named read-only, network off — instead of Codex's legacy `sandbox_mode="read-only"`, which could not write even a temporary file, so a read-only review could not run a test suite: 68 of 562 read-only runs reported exactly that. Replies carry `read_only` (`scratch` for the profile, `strict` for the legacy sandbox) and, when `strict`, a `read_only_note` saying why; batch member rows too; `doctor` reports what a read-only run in the project gets. A run is `strict` on Codex below 0.160.0 or of unknown version, when its directory is `TMPDIR` or `~/.cache` itself, and for a thread that loads your `config.toml`. **A thread recorded before 0.11 keeps the stricter read-only** on resume, so no permission widens unasked. **Migration:** nothing to do for new runs; `resume <id> --sandbox read-only` moves an older read-only thread to the new one.
+- **The registry lives in the repository's main checkout — BREAKING.** Without `--runs-dir`, every command uses `<main checkout>/.codex-runs`, whichever checkout it runs from, so a thread started in a linked worktree is found and resumed from any other (it was "not in this registry", and sessions added `--project` to every call). A run still works, by default, in the top level of the checkout it was started from. A bare repository's worktree, a directory in no repository, or one git cannot answer for keeps its own. `--project P` acts as if run from P. **Migration:** runs recorded in a linked worktree's own `.codex-runs` are reached with `--runs-dir <worktree>/.codex-runs`.
+- **`log` is one look at one run, in one format — BREAKING.** `log --run REF` (required) prints each command as `cmd exit=<n> out=<bytes>B <command>` without item ids or the shell wrapper, the head and tail of a failed command's output beneath it, `cmd.running` only for a command not yet finished, the agent's messages whole, changed paths, errors, searches, MCP calls and usage, then `run=<id> state=<state>`; no todo lists or reasoning. **Migration:** parse the closing `run=… state=…` line instead of `# cursor=`; `result --wait` waits.
+- **`clean` refuses a group whose worktree another run continued in — BREAKING** (`continued_by`, lifted by `--force` and reported in `forced_past.continued_by`), asked of the registry: a later batch's `kind: resume` task or a single `resume` alike. It replaces the refusal for a group another group's `--resume-from` named (`derived_groups`). When the checkout a worktree was cut from is gone, `clean` asks the main checkout instead, and only about a checkout that repository records; it prunes only a repository it removes a checkout from.
+- **A tasks-file line with a `resume` field and kind `start` is refused** (exit 2); nothing read that field once `--resume-from` was gone, so the task started a fresh thread.
+- **An isolated run on a Codex older than 0.122.0 is refused before anything is created** (exit 1, `codex_version`, `required_version`) — the first release with `--ignore-user-config`; the run used to fail after being reported started. `doctor` makes it a blocker.
+- The default `status` listing has no `--all`: every live run plus the 20 newest, and `status --run` for any run it leaves out.
+- `--sandbox` help says what each value can do; `--project` and `--runs-dir` help say where the registry is.
+- **`SKILL.md`**: the sandbox decides what a run can do and so what it can show — read-only can bring back what it ran, not only what it read; a read-only turn's permissions are in the rollout's `permission_profile`; sentences about removed surface are gone. In real headless sessions against v0.10.0's skill, the draft passed all four scenarios; v0.10.0's could not run the tests in the new one, and only the draft had Codex run experiments in a plain review.
+
+### Removed
+
+Each is refused with exit 2, its `--help`, and — where something else now does its job — `instead`.
+
+- **`show`.** **Migration:** `log --run <id>` prints each command with its exit code and a failed command's output; to ask about a run, `resume` its thread.
+- **`log --group`, `--since`, `--level`, `--follow`, `--follow-timeout`; `status --follow`, `--follow-timeout`, `--all`.** **Migration:** `result --run <id> --wait` or `result --group <name> --wait`, run in the background, returns when the run or group ends; `log --run <id>` reads one run; `status --run <id>` answers for any run.
+- **`batch --resume-from`, `--base`, `--force`.** **Migration:** a next round is a `--tasks-file` with one `{"kind": "resume", "resume": "<run id>", "prompt": "…"}` line per member, once every member has ended; worktrees are cut from HEAD.
+- **`resume --last`.** **Migration:** name the run; `status` lists run ids.
+- **`stop --all`, `--grace`.** **Migration:** `stop --run <id>` (repeatable) for each id `status` lists under `running`, or `stop --group <name>`; the ladder waits 5 s after SIGINT.
+- **`--image` (and the task field `image`), `--inherit-config`, `--no-priority`, `--add-dir`.** **Migration:** put an image's path in the prompt, which Codex opens itself; new runs are always isolated, and a thread recorded as loading `config.toml` goes on loading it.
+
+### Fixed
+
+- **`status`, `result` and `log` could report a state read at another moment than the data beside it** — `running` beside a finished turn, `completed` beside events that lacked the last line, a schema answer reported partial while it was final, an orphan's answer taken as final while its Codex still wrote. Each view now reads its events, final message, stderr and written paths together with the run's liveness, until the two agree.
+- **A one-word command Codex sent unquoted** (`/bin/zsh -lc ls`) kept its shell wrapper in `log` and `status`.
+- **Codex's `item.updated` events** (todo progress) appeared in `log` as raw items.
+- **Without git on PATH**, a command in a directory with a registry failed with an internal error; a git that gives no answer is now no repository, and never a "no" for what `clean` would delete or call clean.
+
 ## [0.10.0] — 2026-10-02
 
 Waiting and collecting are one call, and every command's `--help` states what it prints and how it can end before its options. `batch start` and `batch clean` become top-level commands, and inside the skill every unit is used through a small interface.

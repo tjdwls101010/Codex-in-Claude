@@ -24,7 +24,7 @@ The OpenAI [Codex CLI](https://developers.openai.com/codex/cli) is a capable cod
 
 It breaks in the opposite direction too: a `workspace-write` thread resumed under isolation with no flag silently *downgrades* to `read-only`, and its reasoning-effort setting disappears along with it.
 
-**Codex in Claude** is a Claude Code plugin that closes that gap, and in doing so turns the Codex CLI into something Claude can actually delegate real work to: a background subagent whose settings stay stable across turns. It's for anyone using Claude Code who wants a second model (Codex, running on GPT) working in parallel — checked in on through a filtered live log instead of a wall of raw output, stoppable and redirectable mid-task, and resumable later.
+**Codex in Claude** is a Claude Code plugin that closes that gap, and in doing so turns the Codex CLI into something Claude can actually delegate real work to: a background subagent whose settings stay stable across turns. It's for anyone using Claude Code who wants a second model (Codex, running on GPT) working in parallel — checked in on through a compact event log instead of a wall of raw output, stoppable and redirectable mid-task, and resumable later.
 
 It isn't a thin wrapper around the `codex` binary. Every per-invocation setting — sandbox, model, reasoning effort, isolation, working directory — is recorded the moment a run starts and re-injected on every subsequent call. That's what makes "safe to resume" a guarantee instead of a hope.
 
@@ -32,6 +32,7 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 
 - **Detached runs** — `start` returns a `run_id`/`thread_id` immediately instead of blocking, with `next`: `result --wait`, to run in a background call, which waits for the run and prints its result when it ends — the notification Claude gets points at the answer.
 - **Sandbox stability across turns** — every `resume` re-asserts the sandbox, model, and reasoning effort its thread was created with.
+- **A read-only run can run your tests** — `read-only` reads anything and writes only `TMPDIR` and `~/.cache`, with the network off, so a review can run the suite and report what it saw instead of what it guessed; the project tree stays untouched. Where that cannot hold, the reply says `read_only: strict` and why.
 - **Your Codex defaults survive isolation** — `--ignore-user-config` drops `config.toml` whole, so an isolated run would lose the model, reasoning effort and Fast mode you configured and take the server's defaults instead. Three keys are read back out of the file and re-injected; an explicit flag still wins, and a resumed thread re-asserts what it recorded rather than what the file says now. `sandbox_mode` is deliberately not one of them.
 - **One look at what a run did** — `log` prints each command with its exit code and output size, the head and tail of a failed command's output, and the agent's own words whole.
 - **Stop, then redirect** — interrupt a run mid-task and continue it on the same thread with new instructions. `stop` always targets a run's own process group, never a process by name, so concurrent runs never interfere with each other.
@@ -39,15 +40,16 @@ It isn't a thin wrapper around the `codex` binary. Every per-invocation setting 
 - **Schema-shaped results** — pass `--schema` and Codex shapes its final message to it; `result` hands back the parsed JSON instead of a message you have to eyeball.
 - **A deadline you choose** — `--timeout` works in the background and records a state of its own, so "it ran out of the time I gave it" never reads as "Codex failed". The thread stays resumable across it.
 - **Run several as one group** — `batch` launches N runs under one name; `status --group`, `result --group`, and `stop --group` then address all of them at once. Members share your tree by default, the way a fan-out of Claude's own subagents does; `--worktree` gives each writing member its own git checkout when they would edit the same files. Continue every member's thread in a next round with a `--tasks-file` of `kind: resume` lines, once the whole group has finished.
+- **One registry per repository** — runs started from any checkout, linked worktrees included, are recorded in the main checkout's `.codex-runs`, so a thread started in one worktree is found and resumed from any other.
 - **Built-in diagnostics** — `doctor` checks your PATH, Codex auth, config, and the run registry in a single call.
 
 ## 3. Quick Start
 
 **Prerequisites**
 
-- [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.156.1`, already authenticated (`codex login`)
+- [Codex CLI](https://developers.openai.com/codex/cli) — verified against `0.160.0`, already authenticated (`codex login`). Runs need `0.122.0` or later; a read-only run writes temporary files from `0.160.0` on, and below that falls back to the stricter read-only and says so
 - [uv](https://docs.astral.sh/uv/) — runs the CLI and provides the Python 3.11+ it needs; standard library only, no packages to install
-- Claude Code — verified against `2.1.283`
+- Claude Code — verified against `2.1.295`
 
 **Install the plugin**
 
@@ -137,7 +139,7 @@ $CODEX log --run <run_id>
 
 `status`, `result` and `stop` also take `--group <name>` to address a whole batch at once.
 
-Defaults: detached execution, `workspace-write` sandbox, isolated from your own Codex config (`--ignore-user-config`) apart from the three keys above, no hard timeout.
+Defaults: detached execution, `workspace-write` sandbox, isolated from your own Codex config (`--ignore-user-config`) apart from the three keys above, no hard timeout, the registry in the main checkout's `.codex-runs`.
 
 By default, a command's actual output never reaches Claude's context — only its size does:
 
@@ -166,9 +168,9 @@ Members work in your tree, the way a fan-out of your own subagents does: their c
 
 ## 5. Project Status
 
-Codex in Claude is at **v0.10.0** — an early, actively developed release, verified against `codex-cli 0.159.0` and Claude Code `2.1.287`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
+Codex in Claude is at **v0.11.0** — an early, actively developed release, verified against `codex-cli 0.160.0` and Claude Code `2.1.295`. The suite drives the CLI against a fake `codex`; an opt-in smoke test checks sandbox stability and what a read-only run may write against the real Codex CLI, and an opt-in harness runs real headless Claude sessions with the skill — see [CONTRIBUTING.md](CONTRIBUTING.md#4-tests--checks).
 
-**Upgrading from v0.9.0?** `batch start` and `batch clean` are now `batch` and `clean`, `next` is `result --wait`, `status --run` prints the row itself, and `--heartbeat` and `status --thread` are gone; see the [changelog](CHANGELOG.md#0100--2026-10-02).
+**Upgrading from v0.10.0?** `read-only` now writes `TMPDIR` and `~/.cache` (a thread recorded before keeps the stricter read-only until resumed with `--sandbox read-only`); `show`, `log --follow`/`--since`/`--level`/`--group`, `status --follow`/`--all`, `--image`, `--inherit-config`, `--no-priority`, `--add-dir`, `resume --last`, `batch --resume-from`/`--base`/`--force` and `stop --all`/`--grace` are gone, each refusal saying what to use instead; the registry moves to the main checkout; see the [changelog](CHANGELOG.md#0110--2026-10-09).
 
 A few things are deliberately out of scope for now, not overlooked: `codex cloud`, `codex mcp-server`/`app-server` integration, and true mid-turn steering.
 

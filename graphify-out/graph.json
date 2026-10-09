@@ -212,26 +212,13 @@
       "source_location": "L65"
     },
     {
-      "id": "tests_test_batch_amalformedregistry",
-      "label": "AMalformedRegistry",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": "amalformedregistry",
-      "source_file": "tests/test_batch.py",
-      "source_location": "L225"
-    },
-    {
       "id": "tests_test_batch_batchcase",
       "label": "BatchCase",
       "_callable": true,
       "_callable_class": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": "batchcase",
       "source_file": "tests/test_batch.py",
@@ -244,7 +231,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": "nextround",
       "source_file": "tests/test_batch.py",
@@ -257,7 +244,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": "onememberfailingdoesnottaketheothers",
       "source_file": "tests/test_batch.py",
@@ -270,7 +257,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": "readonlymembers",
       "source_file": "tests/test_batch.py",
@@ -283,7 +270,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": "starting",
       "source_file": "tests/test_batch.py",
@@ -296,7 +283,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": "tasksarevalidatedbeforeanythingstarts",
       "source_file": "tests/test_batch.py",
@@ -309,37 +296,11 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": "waitingforagroup",
       "source_file": "tests/test_batch.py",
       "source_location": "L208"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch",
-      "label": "ReadOnlyWritesScratch",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": "readonlywritesscratch",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L149"
-    },
-    {
-      "id": "tests_test_resume_threadstheregistryneversaw",
-      "label": "ThreadsTheRegistryNeverSaw",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": "threadstheregistryneversaw",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L245"
     },
     {
       "id": "tests_test_cli_contract_whatreachescodex",
@@ -712,7 +673,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 36,
-      "community_name": "test_install.py",
+      "community_name": "ThroughASymlink",
       "file_type": "code",
       "norm_label": "throughasymlink",
       "source_file": "tests/test_install.py",
@@ -758,13 +719,26 @@
       "source_location": "L116"
     },
     {
+      "id": "tests_test_batch_amalformedregistry",
+      "label": "AMalformedRegistry",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "code",
+      "norm_label": "amalformedregistry",
+      "source_file": "tests/test_batch.py",
+      "source_location": "L225"
+    },
+    {
       "id": "tests_test_resume_findingthethread",
       "label": "FindingTheThread",
       "_callable": true,
       "_callable_class": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": "findingthethread",
       "source_file": "tests/test_resume.py",
@@ -777,7 +751,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": "oneturnperthread",
       "source_file": "tests/test_resume.py",
@@ -790,7 +764,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": "resumecase",
       "source_file": "tests/test_resume.py",
@@ -803,11 +777,24 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": "settingsarereasserted",
       "source_file": "tests/test_resume.py",
       "source_location": "L27"
+    },
+    {
+      "id": "tests_test_resume_threadstheregistryneversaw",
+      "label": "ThreadsTheRegistryNeverSaw",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "code",
+      "norm_label": "threadstheregistryneversaw",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L245"
     },
     {
       "id": "tests_test_catalog_versionfloors",
@@ -836,6 +823,32 @@
       "source_location": "L448"
     },
     {
+      "id": "tests_test_resume_readonlywritesscratch",
+      "label": "ReadOnlyWritesScratch",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": "readonlywritesscratch",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L149"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates",
+      "label": "TerminalStates",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": "terminalstates",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L37"
+    },
+    {
       "id": "tests_test_run_lifecycle_anorphanthatisstillwriting",
       "label": "AnOrphanThatIsStillWriting",
       "_callable": true,
@@ -860,19 +873,6 @@
       "norm_label": "legacywaitingrun",
       "source_file": "tests/test_run_lifecycle.py",
       "source_location": "L240"
-    },
-    {
-      "id": "tests_test_run_lifecycle_terminalstates",
-      "label": "TerminalStates",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": "terminalstates",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L37"
     },
     {
       "id": "tests_test_observe_groupresult",
@@ -914,6 +914,19 @@
       "source_location": "L28"
     },
     {
+      "id": "tests_test_observe_anolderreleasesregistry",
+      "label": "AnOlderReleasesRegistry",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 63,
+      "community_name": "AnOlderReleasesRegistry",
+      "file_type": "code",
+      "norm_label": "anolderreleasesregistry",
+      "source_file": "tests/test_observe.py",
+      "source_location": "L352"
+    },
+    {
       "id": "claude_skills_codex_scripts_cli_onelineperparagraph",
       "label": "OneLinePerParagraph",
       "_callable": true,
@@ -927,26 +940,13 @@
       "source_location": "L130"
     },
     {
-      "id": "tests_test_observe_anolderreleasesregistry",
-      "label": "AnOlderReleasesRegistry",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 68,
-      "community_name": "test_observe.py",
-      "file_type": "code",
-      "norm_label": "anolderreleasesregistry",
-      "source_file": "tests/test_observe.py",
-      "source_location": "L352"
-    },
-    {
       "id": "tests_test_observe_statusofonerun",
       "label": "StatusOfOneRun",
       "_callable": true,
       "_callable_class": true,
       "_origin": "ast",
       "community": 68,
-      "community_name": "test_observe.py",
+      "community_name": "StatusOfOneRun",
       "file_type": "code",
       "norm_label": "statusofonerun",
       "source_file": "tests/test_observe.py",
@@ -3407,7 +3407,7 @@
       "file_type": "code",
       "norm_label": "base_cmd()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L108"
+      "source_location": "L123"
     },
     {
       "id": "tests_e2e_run_e2e_calls_to_result",
@@ -3419,7 +3419,19 @@
       "file_type": "code",
       "norm_label": "calls_to_result()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L162"
+      "source_location": "L177"
+    },
+    {
+      "id": "tests_e2e_run_e2e_check_tables",
+      "label": "check_tables()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "run_e2e.py",
+      "file_type": "code",
+      "norm_label": "check_tables()",
+      "source_file": "tests/e2e/run_e2e.py",
+      "source_location": "L50"
     },
     {
       "id": "tests_e2e_run_e2e_control_text",
@@ -3431,7 +3443,7 @@
       "file_type": "code",
       "norm_label": "control_text()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L47"
+      "source_location": "L62"
     },
     {
       "id": "tests_e2e_run_e2e_digest",
@@ -3443,7 +3455,7 @@
       "file_type": "code",
       "norm_label": "digest()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L172"
+      "source_location": "L187"
     },
     {
       "id": "tests_e2e_run_e2e_entry",
@@ -3455,7 +3467,7 @@
       "file_type": "code",
       "norm_label": "entry()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L42"
+      "source_location": "L57"
     },
     {
       "id": "tests_e2e_run_e2e_main",
@@ -3467,7 +3479,7 @@
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L210"
+      "source_location": "L225"
     },
     {
       "id": "tests_e2e_run_e2e_run_print",
@@ -3479,7 +3491,7 @@
       "file_type": "code",
       "norm_label": "run_print()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L144"
+      "source_location": "L159"
     },
     {
       "id": "tests_e2e_run_e2e_run_stream",
@@ -3491,7 +3503,7 @@
       "file_type": "code",
       "norm_label": "run_stream()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L115"
+      "source_location": "L130"
     },
     {
       "id": "tests_e2e_run_e2e_run_stream_read",
@@ -3503,7 +3515,7 @@
       "file_type": "code",
       "norm_label": "read()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L123"
+      "source_location": "L138"
     },
     {
       "id": "tests_e2e_run_e2e_setup",
@@ -3515,7 +3527,7 @@
       "file_type": "code",
       "norm_label": "setup()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L68"
+      "source_location": "L83"
     },
     {
       "id": "tests_e2e_run_e2e_stop_runs",
@@ -3527,7 +3539,7 @@
       "file_type": "code",
       "norm_label": "stop_runs()",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L54"
+      "source_location": "L69"
     },
     {
       "id": "tests_test_resume_userdefaultsandtheirprecedence_config",
@@ -3662,36 +3674,12 @@
       "source_location": "L92"
     },
     {
-      "id": "tests_support_harness_read_only_profile",
-      "label": "read_only_profile()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": "read_only_profile()",
-      "source_file": "tests/support/harness.py",
-      "source_location": "L49"
-    },
-    {
-      "id": "tests_test_batch_amalformedregistry_test_a_groups_entry_that_is_not_a_directory_refuses_the_claim",
-      "label": ".test_a_groups_entry_that_is_not_a_directory_refuses_the_claim()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_a_groups_entry_that_is_not_a_directory_refuses_the_claim()",
-      "source_file": "tests/test_batch.py",
-      "source_location": "L227"
-    },
-    {
       "id": "tests_test_batch_batchcase_assert_cost_nothing",
       "label": ".assert_cost_nothing()",
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".assert_cost_nothing()",
       "source_file": "tests/test_batch.py",
@@ -3703,7 +3691,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".batch()",
       "source_file": "tests/test_batch.py",
@@ -3715,7 +3703,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".manifest()",
       "source_file": "tests/test_batch.py",
@@ -3727,7 +3715,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".next_round()",
       "source_file": "tests/test_batch.py",
@@ -3739,7 +3727,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".phase_one()",
       "source_file": "tests/test_batch.py",
@@ -3751,7 +3739,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_next_round_resumes_each_member()",
       "source_file": "tests/test_batch.py",
@@ -3763,7 +3751,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_writers_sharing_a_tree_are_counted_with_the_sandbox_they_will_get()",
       "source_file": "tests/test_batch.py",
@@ -3775,7 +3763,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_member_that_cannot_spawn_keeps_its_slot()",
       "source_file": "tests/test_batch.py",
@@ -3787,7 +3775,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_members_that_spawned_before_the_batch_was_killed_stay_reachable()",
       "source_file": "tests/test_batch.py",
@@ -3799,7 +3787,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_new_member_and_a_resumed_one_each_say_when_they_got_the_legacy_sandbox()",
       "source_file": "tests/test_batch.py",
@@ -3811,7 +3799,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_read_only_members_get_the_profile_and_say_so()",
       "source_file": "tests/test_batch.py",
@@ -3823,7 +3811,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_batch_needs_a_task()",
       "source_file": "tests/test_batch.py",
@@ -3835,7 +3823,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_name_is_single_use_and_a_refusal_costs_nothing()",
       "source_file": "tests/test_batch.py",
@@ -3847,7 +3835,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_name_that_could_escape_the_registry_is_refused()",
       "source_file": "tests/test_batch.py",
@@ -3859,7 +3847,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_group_options_are_defaults_a_task_overrides()",
       "source_file": "tests/test_batch.py",
@@ -3871,7 +3859,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_members_start_in_order_and_the_manifest_records_it()",
       "source_file": "tests/test_batch.py",
@@ -3883,7 +3871,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_reading_stdin_for_one_task_leaves_it_usable_for_the_next()",
       "source_file": "tests/test_batch.py",
@@ -3895,7 +3883,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_the_prompt_is_a_per_task_field_only()",
       "source_file": "tests/test_batch.py",
@@ -3907,7 +3895,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_line_that_is_not_json_is_named()",
       "source_file": "tests/test_batch.py",
@@ -3919,7 +3907,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_blank_lines_and_comments_are_skipped()",
       "source_file": "tests/test_batch.py",
@@ -3931,7 +3919,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_each_broken_task_refuses_the_batch_and_names_its_line()",
       "source_file": "tests/test_batch.py",
@@ -3943,7 +3931,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_a_wait_on_a_live_group_can_be_bounded()",
       "source_file": "tests/test_batch.py",
@@ -3955,143 +3943,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "code",
       "norm_label": ".test_stopping_a_group_ends_it_partial()",
       "source_file": "tests/test_batch.py",
       "source_location": "L216"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_assert_strict",
-      "label": ".assert_strict()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".assert_strict()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L157"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_started",
-      "label": ".started()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".started()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L152"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_test_a_codex_below_the_profile_floor_or_of_unknown_version_gets_the_legacy_sandbox",
-      "label": ".test_a_codex_below_the_profile_floor_or_of_unknown_version_gets_the_legacy_sandbox()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_a_codex_below_the_profile_floor_or_of_unknown_version_gets_the_legacy_sandbox()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L197"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_test_a_directory_that_is_itself_tmpdir_or_the_cache_gets_the_legacy_sandbox",
-      "label": ".test_a_directory_that_is_itself_tmpdir_or_the_cache_gets_the_legacy_sandbox()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_a_directory_that_is_itself_tmpdir_or_the_cache_gets_the_legacy_sandbox()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L207"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_test_a_read_only_run_and_its_resume_get_the_profile",
-      "label": ".test_a_read_only_run_and_its_resume_get_the_profile()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_a_read_only_run_and_its_resume_get_the_profile()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L164"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_test_a_thread_from_before_keeps_the_legacy_sandbox_until_asked",
-      "label": ".test_a_thread_from_before_keeps_the_legacy_sandbox_until_asked()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_a_thread_from_before_keeps_the_legacy_sandbox_until_asked()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L181"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_test_a_thread_that_loads_the_users_config_stays_legacy_even_when_asked",
-      "label": ".test_a_thread_that_loads_the_users_config_stays_legacy_even_when_asked()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_a_thread_that_loads_the_users_config_stays_legacy_even_when_asked()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L191"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_test_a_writing_run_has_no_marker",
-      "label": ".test_a_writing_run_has_no_marker()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_a_writing_run_has_no_marker()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L175"
-    },
-    {
-      "id": "tests_test_resume_readonlywritesscratch_test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written",
-      "label": ".test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L219"
-    },
-    {
-      "id": "tests_test_resume_threadstheregistryneversaw_test_an_unknown_ref_is_passed_through_under_the_named_sandbox",
-      "label": ".test_an_unknown_ref_is_passed_through_under_the_named_sandbox()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_an_unknown_ref_is_passed_through_under_the_named_sandbox()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L248"
-    },
-    {
-      "id": "tests_test_resume_threadstheregistryneversaw_test_without_a_sandbox_it_is_refused_before_anything_is_claimed",
-      "label": ".test_without_a_sandbox_it_is_refused_before_anything_is_claimed()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": ".test_without_a_sandbox_it_is_refused_before_anything_is_claimed()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L256"
     },
     {
       "id": "tests_test_cli_contract_whatreachescodex_started",
@@ -6451,7 +6307,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 36,
-      "community_name": "test_install.py",
+      "community_name": "ThroughASymlink",
       "file_type": "code",
       "norm_label": ".test_a_run_started_through_the_link_is_finished_by_its_detached_supervisor()",
       "source_file": "tests/test_install.py",
@@ -6463,7 +6319,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 36,
-      "community_name": "test_install.py",
+      "community_name": "ThroughASymlink",
       "file_type": "code",
       "norm_label": "finished()",
       "source_file": "tests/test_install.py",
@@ -6475,7 +6331,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 36,
-      "community_name": "test_install.py",
+      "community_name": "ThroughASymlink",
       "file_type": "code",
       "norm_label": ".test_doctor_through_the_link_reports_the_installed_skill()",
       "source_file": "tests/test_install.py",
@@ -6487,7 +6343,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 36,
-      "community_name": "test_install.py",
+      "community_name": "ThroughASymlink",
       "file_type": "code",
       "norm_label": ".uv()",
       "source_file": "tests/test_install.py",
@@ -7442,12 +7298,36 @@
       "source_location": "L51"
     },
     {
+      "id": "tests_support_harness_read_only_profile",
+      "label": "read_only_profile()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "code",
+      "norm_label": "read_only_profile()",
+      "source_file": "tests/support/harness.py",
+      "source_location": "L49"
+    },
+    {
+      "id": "tests_test_batch_amalformedregistry_test_a_groups_entry_that_is_not_a_directory_refuses_the_claim",
+      "label": ".test_a_groups_entry_that_is_not_a_directory_refuses_the_claim()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "code",
+      "norm_label": ".test_a_groups_entry_that_is_not_a_directory_refuses_the_claim()",
+      "source_file": "tests/test_batch.py",
+      "source_location": "L227"
+    },
+    {
       "id": "tests_test_resume_findingthethread_test_a_run_that_never_recorded_a_thread_cannot_be_resumed",
       "label": ".test_a_run_that_never_recorded_a_thread_cannot_be_resumed()",
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_a_run_that_never_recorded_a_thread_cannot_be_resumed()",
       "source_file": "tests/test_resume.py",
@@ -7459,7 +7339,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_a_thread_id_resolves_to_the_run_that_recorded_it()",
       "source_file": "tests/test_resume.py",
@@ -7471,7 +7351,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_too_many_positionals_are_refused()",
       "source_file": "tests/test_resume.py",
@@ -7483,23 +7363,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".race()",
       "source_file": "tests/test_resume.py",
       "source_location": "L265"
-    },
-    {
-      "id": "tests_test_resume_oneturnperthread_test_an_orphan_whose_codex_still_writes_holds_the_thread",
-      "label": ".test_an_orphan_whose_codex_still_writes_holds_the_thread()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 5,
-      "community_name": "test_resume.py",
-      "file_type": "code",
-      "norm_label": ".test_an_orphan_whose_codex_still_writes_holds_the_thread()",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L298"
     },
     {
       "id": "tests_test_resume_oneturnperthread_test_an_unreadable_run_blocks_only_its_own_thread",
@@ -7507,7 +7375,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_an_unreadable_run_blocks_only_its_own_thread()",
       "source_file": "tests/test_resume.py",
@@ -7519,7 +7387,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_force_lets_a_second_turn_through()",
       "source_file": "tests/test_resume.py",
@@ -7531,7 +7399,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_simultaneous_resumes_of_a_known_thread_have_one_winner()",
       "source_file": "tests/test_resume.py",
@@ -7543,7 +7411,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_simultaneous_resumes_of_an_unknown_ref_have_one_winner()",
       "source_file": "tests/test_resume.py",
@@ -7555,7 +7423,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".first_then_resume()",
       "source_file": "tests/test_resume.py",
@@ -7567,7 +7435,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_changing_the_sandbox_is_explicit_and_recorded()",
       "source_file": "tests/test_resume.py",
@@ -7579,7 +7447,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_every_recorded_setting_reaches_the_resumed_turn()",
       "source_file": "tests/test_resume.py",
@@ -7591,7 +7459,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_options_between_the_ref_and_the_prompt_keep_the_prompt()",
       "source_file": "tests/test_resume.py",
@@ -7603,11 +7471,35 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": ".test_the_resumed_turn_runs_in_the_threads_directory()",
       "source_file": "tests/test_resume.py",
       "source_location": "L44"
+    },
+    {
+      "id": "tests_test_resume_threadstheregistryneversaw_test_an_unknown_ref_is_passed_through_under_the_named_sandbox",
+      "label": ".test_an_unknown_ref_is_passed_through_under_the_named_sandbox()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "code",
+      "norm_label": ".test_an_unknown_ref_is_passed_through_under_the_named_sandbox()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L248"
+    },
+    {
+      "id": "tests_test_resume_threadstheregistryneversaw_test_without_a_sandbox_it_is_refused_before_anything_is_claimed",
+      "label": ".test_without_a_sandbox_it_is_refused_before_anything_is_claimed()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "code",
+      "norm_label": ".test_without_a_sandbox_it_is_refused_before_anything_is_claimed()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L256"
     },
     {
       "id": "tests_test_catalog_versionfloors_support",
@@ -7850,6 +7742,210 @@
       "source_location": "L451"
     },
     {
+      "id": "tests_test_resume_readonlywritesscratch_assert_strict",
+      "label": ".assert_strict()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".assert_strict()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L157"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_started",
+      "label": ".started()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".started()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L152"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_test_a_codex_below_the_profile_floor_or_of_unknown_version_gets_the_legacy_sandbox",
+      "label": ".test_a_codex_below_the_profile_floor_or_of_unknown_version_gets_the_legacy_sandbox()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".test_a_codex_below_the_profile_floor_or_of_unknown_version_gets_the_legacy_sandbox()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L197"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_test_a_directory_that_is_itself_tmpdir_or_the_cache_gets_the_legacy_sandbox",
+      "label": ".test_a_directory_that_is_itself_tmpdir_or_the_cache_gets_the_legacy_sandbox()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".test_a_directory_that_is_itself_tmpdir_or_the_cache_gets_the_legacy_sandbox()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L207"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_test_a_read_only_run_and_its_resume_get_the_profile",
+      "label": ".test_a_read_only_run_and_its_resume_get_the_profile()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".test_a_read_only_run_and_its_resume_get_the_profile()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L164"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_test_a_thread_from_before_keeps_the_legacy_sandbox_until_asked",
+      "label": ".test_a_thread_from_before_keeps_the_legacy_sandbox_until_asked()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".test_a_thread_from_before_keeps_the_legacy_sandbox_until_asked()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L181"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_test_a_thread_that_loads_the_users_config_stays_legacy_even_when_asked",
+      "label": ".test_a_thread_that_loads_the_users_config_stays_legacy_even_when_asked()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".test_a_thread_that_loads_the_users_config_stays_legacy_even_when_asked()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L191"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_test_a_writing_run_has_no_marker",
+      "label": ".test_a_writing_run_has_no_marker()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".test_a_writing_run_has_no_marker()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L175"
+    },
+    {
+      "id": "tests_test_resume_readonlywritesscratch_test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written",
+      "label": ".test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "code",
+      "norm_label": ".test_tmpdir_is_the_variable_codex_reads_even_when_it_cannot_be_written()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L219"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_a_dead_codex_leaves_its_supervisor_to_record_the_outcome",
+      "label": ".test_a_dead_codex_leaves_its_supervisor_to_record_the_outcome()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_a_dead_codex_leaves_its_supervisor_to_record_the_outcome()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L110"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_a_deadline_is_its_own_state",
+      "label": ".test_a_deadline_is_its_own_state()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_a_deadline_is_its_own_state()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L58"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_a_nonzero_exit_is_failed_and_the_result_says_so",
+      "label": ".test_a_nonzero_exit_is_failed_and_the_result_says_so()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_a_nonzero_exit_is_failed_and_the_result_says_so()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L39"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out",
+      "label": ".test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L98"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_killing_the_whole_process_group_leaves_nothing_stuck_running",
+      "label": ".test_killing_the_whole_process_group_leaves_nothing_stuck_running()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_killing_the_whole_process_group_leaves_nothing_stuck_running()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L103"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_stderr_is_surfaced_without_codexs_routine_stdin_notice",
+      "label": ".test_stderr_is_surfaced_without_codexs_routine_stdin_notice()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_stderr_is_surfaced_without_codexs_routine_stdin_notice()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L52"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_the_deadline_counts_from_launch_not_from_the_thread_id",
+      "label": ".test_the_deadline_counts_from_launch_not_from_the_thread_id()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_the_deadline_counts_from_launch_not_from_the_thread_id()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L64"
+    },
+    {
+      "id": "tests_test_run_lifecycle_terminalstates_test_turn_failed_is_surfaced_without_reading_the_log",
+      "label": ".test_turn_failed_is_surfaced_without_reading_the_log()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 56,
+      "community_name": "TerminalStates",
+      "file_type": "code",
+      "norm_label": ".test_turn_failed_is_surfaced_without_reading_the_log()",
+      "source_file": "tests/test_run_lifecycle.py",
+      "source_location": "L45"
+    },
+    {
       "id": "tests_support_harness_alive",
       "label": "alive()",
       "_callable": true,
@@ -7896,6 +7992,18 @@
       "norm_label": ".test_a_member_whose_codex_still_writes_keeps_the_group_running()",
       "source_file": "tests/test_observe.py",
       "source_location": "L426"
+    },
+    {
+      "id": "tests_test_resume_oneturnperthread_test_an_orphan_whose_codex_still_writes_holds_the_thread",
+      "label": ".test_an_orphan_whose_codex_still_writes_holds_the_thread()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 58,
+      "community_name": "wait_until",
+      "file_type": "code",
+      "norm_label": ".test_an_orphan_whose_codex_still_writes_holds_the_thread()",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L298"
     },
     {
       "id": "tests_test_run_lifecycle_anorphanthatisstillwriting_test_its_turn_time_keeps_growing",
@@ -8006,18 +8114,6 @@
       "source_location": "L70"
     },
     {
-      "id": "tests_test_run_lifecycle_terminalstates_test_a_dead_codex_leaves_its_supervisor_to_record_the_outcome",
-      "label": ".test_a_dead_codex_leaves_its_supervisor_to_record_the_outcome()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_a_dead_codex_leaves_its_supervisor_to_record_the_outcome()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L110"
-    },
-    {
       "id": "tests_test_run_lifecycle_terminalstates_test_a_deadline_ends_the_whole_process_group",
       "label": ".test_a_deadline_ends_the_whole_process_group()",
       "_callable": true,
@@ -8030,66 +8126,6 @@
       "source_location": "L76"
     },
     {
-      "id": "tests_test_run_lifecycle_terminalstates_test_a_deadline_is_its_own_state",
-      "label": ".test_a_deadline_is_its_own_state()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_a_deadline_is_its_own_state()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L58"
-    },
-    {
-      "id": "tests_test_run_lifecycle_terminalstates_test_a_nonzero_exit_is_failed_and_the_result_says_so",
-      "label": ".test_a_nonzero_exit_is_failed_and_the_result_says_so()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_a_nonzero_exit_is_failed_and_the_result_says_so()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L39"
-    },
-    {
-      "id": "tests_test_run_lifecycle_terminalstates_test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out",
-      "label": ".test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_a_timed_run_that_is_stopped_is_interrupted_not_timed_out()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L98"
-    },
-    {
-      "id": "tests_test_run_lifecycle_terminalstates_test_killing_the_whole_process_group_leaves_nothing_stuck_running",
-      "label": ".test_killing_the_whole_process_group_leaves_nothing_stuck_running()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_killing_the_whole_process_group_leaves_nothing_stuck_running()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L103"
-    },
-    {
-      "id": "tests_test_run_lifecycle_terminalstates_test_stderr_is_surfaced_without_codexs_routine_stdin_notice",
-      "label": ".test_stderr_is_surfaced_without_codexs_routine_stdin_notice()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_stderr_is_surfaced_without_codexs_routine_stdin_notice()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L52"
-    },
-    {
       "id": "tests_test_run_lifecycle_terminalstates_test_stop_ends_a_descendant_its_codex_left_behind",
       "label": ".test_stop_ends_a_descendant_its_codex_left_behind()",
       "_callable": true,
@@ -8100,30 +8136,6 @@
       "norm_label": ".test_stop_ends_a_descendant_its_codex_left_behind()",
       "source_file": "tests/test_run_lifecycle.py",
       "source_location": "L90"
-    },
-    {
-      "id": "tests_test_run_lifecycle_terminalstates_test_the_deadline_counts_from_launch_not_from_the_thread_id",
-      "label": ".test_the_deadline_counts_from_launch_not_from_the_thread_id()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_the_deadline_counts_from_launch_not_from_the_thread_id()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L64"
-    },
-    {
-      "id": "tests_test_run_lifecycle_terminalstates_test_turn_failed_is_surfaced_without_reading_the_log",
-      "label": ".test_turn_failed_is_surfaced_without_reading_the_log()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 58,
-      "community_name": "wait_until",
-      "file_type": "code",
-      "norm_label": ".test_turn_failed_is_surfaced_without_reading_the_log()",
-      "source_file": "tests/test_run_lifecycle.py",
-      "source_location": "L45"
     },
     {
       "id": "tests_test_observe_answer_fixture",
@@ -8450,6 +8462,42 @@
       "source_location": "L501"
     },
     {
+      "id": "tests_test_observe_anolderreleasesregistry_setup",
+      "label": ".setUp()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 63,
+      "community_name": "AnOlderReleasesRegistry",
+      "file_type": "code",
+      "norm_label": ".setup()",
+      "source_file": "tests/test_observe.py",
+      "source_location": "L355"
+    },
+    {
+      "id": "tests_test_observe_anolderreleasesregistry_test_a_finished_legacy_group_is_continued_and_cleaned",
+      "label": ".test_a_finished_legacy_group_is_continued_and_cleaned()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 63,
+      "community_name": "AnOlderReleasesRegistry",
+      "file_type": "code",
+      "norm_label": ".test_a_finished_legacy_group_is_continued_and_cleaned()",
+      "source_file": "tests/test_observe.py",
+      "source_location": "L376"
+    },
+    {
+      "id": "tests_test_observe_anolderreleasesregistry_test_the_views_read_it",
+      "label": ".test_the_views_read_it()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 63,
+      "community_name": "AnOlderReleasesRegistry",
+      "file_type": "code",
+      "norm_label": ".test_the_views_read_it()",
+      "source_file": "tests/test_observe.py",
+      "source_location": "L359"
+    },
+    {
       "id": "claude_skills_codex_scripts_codex_observe_collect_final_message",
       "label": "final_message()",
       "_callable": true,
@@ -8654,48 +8702,12 @@
       "source_location": "L133"
     },
     {
-      "id": "tests_test_observe_anolderreleasesregistry_setup",
-      "label": ".setUp()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 68,
-      "community_name": "test_observe.py",
-      "file_type": "code",
-      "norm_label": ".setup()",
-      "source_file": "tests/test_observe.py",
-      "source_location": "L355"
-    },
-    {
-      "id": "tests_test_observe_anolderreleasesregistry_test_a_finished_legacy_group_is_continued_and_cleaned",
-      "label": ".test_a_finished_legacy_group_is_continued_and_cleaned()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 68,
-      "community_name": "test_observe.py",
-      "file_type": "code",
-      "norm_label": ".test_a_finished_legacy_group_is_continued_and_cleaned()",
-      "source_file": "tests/test_observe.py",
-      "source_location": "L376"
-    },
-    {
-      "id": "tests_test_observe_anolderreleasesregistry_test_the_views_read_it",
-      "label": ".test_the_views_read_it()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 68,
-      "community_name": "test_observe.py",
-      "file_type": "code",
-      "norm_label": ".test_the_views_read_it()",
-      "source_file": "tests/test_observe.py",
-      "source_location": "L359"
-    },
-    {
       "id": "tests_test_observe_statusofonerun_test_a_run_inside_a_long_command_names_that_command",
       "label": ".test_a_run_inside_a_long_command_names_that_command()",
       "_callable": true,
       "_origin": "ast",
       "community": 68,
-      "community_name": "test_observe.py",
+      "community_name": "StatusOfOneRun",
       "file_type": "code",
       "norm_label": ".test_a_run_inside_a_long_command_names_that_command()",
       "source_file": "tests/test_observe.py",
@@ -8707,7 +8719,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 68,
-      "community_name": "test_observe.py",
+      "community_name": "StatusOfOneRun",
       "file_type": "code",
       "norm_label": ".test_a_run_prefix_resolves_to_the_newest_match()",
       "source_file": "tests/test_observe.py",
@@ -8719,7 +8731,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 68,
-      "community_name": "test_observe.py",
+      "community_name": "StatusOfOneRun",
       "file_type": "code",
       "norm_label": ".test_an_unreadable_run_is_not_called_absent()",
       "source_file": "tests/test_observe.py",
@@ -8731,7 +8743,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 68,
-      "community_name": "test_observe.py",
+      "community_name": "StatusOfOneRun",
       "file_type": "code",
       "norm_label": ".test_one_run_is_its_row_itself()",
       "source_file": "tests/test_observe.py",
@@ -8743,7 +8755,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 68,
-      "community_name": "test_observe.py",
+      "community_name": "StatusOfOneRun",
       "file_type": "code",
       "norm_label": ".test_the_last_message_is_clipped_and_the_rest_is_in_result()",
       "source_file": "tests/test_observe.py",
@@ -10991,7 +11003,7 @@
       "source_location": ""
     },
     {
-      "id": "tests_e2e_run_e2e_rationale_116",
+      "id": "tests_e2e_run_e2e_rationale_131",
       "label": "A session whose stdin stays open, so a finished background task can start\u2026",
       "_origin": "ast",
       "community": 18,
@@ -10999,10 +11011,10 @@
       "file_type": "rationale",
       "norm_label": "a session whose stdin stays open, so a finished background task can start...",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L116"
+      "source_location": "L131"
     },
     {
-      "id": "tests_e2e_run_e2e_rationale_163",
+      "id": "tests_e2e_run_e2e_rationale_178",
       "label": "Bridge calls between the first one that starts work and the first that collects\u2026",
       "_origin": "ast",
       "community": 18,
@@ -11010,21 +11022,32 @@
       "file_type": "rationale",
       "norm_label": "bridge calls between the first one that starts work and the first that collects...",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L163"
+      "source_location": "L178"
     },
     {
       "id": "tests_e2e_run_e2e_rationale_2",
-      "label": "Run one S6 scenario against the draft, the control or the v0.9.0 skill,\u2026",
+      "label": "Run one S6 scenario against the draft, the control or the released skill,\u2026",
       "_origin": "ast",
       "community": 18,
       "community_name": "run_e2e.py",
       "file_type": "rationale",
-      "norm_label": "run one s6 scenario against the draft, the control or the v0.9.0 skill,...",
+      "norm_label": "run one s6 scenario against the draft, the control or the released skill,...",
       "source_file": "tests/e2e/run_e2e.py",
       "source_location": "L2"
     },
     {
-      "id": "tests_e2e_run_e2e_rationale_43",
+      "id": "tests_e2e_run_e2e_rationale_51",
+      "label": "Every scenario has its files, prompts and host, so a scenario added to one\u2026",
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "run_e2e.py",
+      "file_type": "rationale",
+      "norm_label": "every scenario has its files, prompts and host, so a scenario added to one...",
+      "source_file": "tests/e2e/run_e2e.py",
+      "source_location": "L51"
+    },
+    {
+      "id": "tests_e2e_run_e2e_rationale_58",
       "label": "The command line that calls the bridge, as every variant's SKILL.md writes it,\u2026",
       "_origin": "ast",
       "community": 18,
@@ -11032,10 +11055,10 @@
       "file_type": "rationale",
       "norm_label": "the command line that calls the bridge, as every variant's skill.md writes it,...",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L43"
+      "source_location": "L58"
     },
     {
-      "id": "tests_e2e_run_e2e_rationale_48",
+      "id": "tests_e2e_run_e2e_rationale_63",
       "label": "The draft's frontmatter and its call paragraph, without any judgement text.",
       "_origin": "ast",
       "community": 18,
@@ -11043,10 +11066,10 @@
       "file_type": "rationale",
       "norm_label": "the draft's frontmatter and its call paragraph, without any judgement text.",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L48"
+      "source_location": "L63"
     },
     {
-      "id": "tests_e2e_run_e2e_rationale_55",
+      "id": "tests_e2e_run_e2e_rationale_70",
       "label": "Detached runs outlive the session that started them; stop them so none keeps\u2026",
       "_origin": "ast",
       "community": 18,
@@ -11054,7 +11077,7 @@
       "file_type": "rationale",
       "norm_label": "detached runs outlive the session that started them; stop them so none keeps...",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L55"
+      "source_location": "L70"
     },
     {
       "id": "tests_test_resume_rationale_66",
@@ -11068,44 +11091,11 @@
       "source_location": "L66"
     },
     {
-      "id": "tests_test_batch",
-      "label": "test_batch.py",
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "code",
-      "norm_label": "test_batch.py",
-      "source_file": "tests/test_batch.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "tests_support_harness_rationale_50",
-      "label": "The `-c` entries a read-only run that can write scratch hands Codex, as\u2026",
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "rationale",
-      "norm_label": "the `-c` entries a read-only run that can write scratch hands codex, as...",
-      "source_file": "tests/support/harness.py",
-      "source_location": "L50"
-    },
-    {
-      "id": "tests_test_batch_rationale_1",
-      "label": "Batches: N runs under one name, validated before anything starts, recorded slot\u2026",
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "rationale",
-      "norm_label": "batches: n runs under one name, validated before anything starts, recorded slot...",
-      "source_file": "tests/test_batch.py",
-      "source_location": "L1"
-    },
-    {
       "id": "tests_test_batch_rationale_119",
       "label": "A read-only member is a read-only run: it gets the profile that writes scratch,\u2026",
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "rationale",
       "norm_label": "a read-only member is a read-only run: it gets the profile that writes scratch,...",
       "source_file": "tests/test_batch.py",
@@ -11116,7 +11106,7 @@
       "label": "A next round is a batch whose tasks resume the earlier members' threads, one\u2026",
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "rationale",
       "norm_label": "a next round is a batch whose tasks resume the earlier members' threads, one...",
       "source_file": "tests/test_batch.py",
@@ -11127,33 +11117,11 @@
       "label": "A batch that continues each member of an earlier one: a tasks file with one\u2026",
       "_origin": "ast",
       "community": 2,
-      "community_name": "read_only_profile",
+      "community_name": "BatchCase",
       "file_type": "rationale",
       "norm_label": "a batch that continues each member of an earlier one: a tasks file with one...",
       "source_file": "tests/test_batch.py",
       "source_location": "L185"
-    },
-    {
-      "id": "tests_test_resume_rationale_150",
-      "label": "A read-only run can run tests and builds: it reads anything and writes only\u2026",
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "rationale",
-      "norm_label": "a read-only run can run tests and builds: it reads anything and writes only...",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L150"
-    },
-    {
-      "id": "tests_test_resume_rationale_246",
-      "label": "A thread started outside this skill has no recorded sandbox, so the caller has\u2026",
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "read_only_profile",
-      "file_type": "rationale",
-      "norm_label": "a thread started outside this skill has no recorded sandbox, so the caller has...",
-      "source_file": "tests/test_resume.py",
-      "source_location": "L246"
     },
     {
       "id": "tests_test_cli_contract_rationale_211",
@@ -11904,17 +11872,6 @@
       "source_location": "L19"
     },
     {
-      "id": "tests_support_harness",
-      "label": "harness.py",
-      "_origin": "ast",
-      "community": 34,
-      "community_name": "engine",
-      "file_type": "code",
-      "norm_label": "harness.py",
-      "source_file": "tests/support/harness.py",
-      "source_location": "L1"
-    },
-    {
       "id": "tests_test_config",
       "label": "test_config.py",
       "_origin": "ast",
@@ -11956,17 +11913,6 @@
       "file_type": "code",
       "norm_label": "test_registry_races.py",
       "source_file": "tests/test_registry_races.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "tests_support_harness_rationale_1",
-      "label": "Scaffolding shared by every test: a throwaway git project, the fake `codex`\u2026",
-      "_origin": "ast",
-      "community": 34,
-      "community_name": "engine",
-      "file_type": "rationale",
-      "norm_label": "scaffolding shared by every test: a throwaway git project, the fake `codex`...",
-      "source_file": "tests/support/harness.py",
       "source_location": "L1"
     },
     {
@@ -12058,33 +12004,11 @@
       "source_location": "L152"
     },
     {
-      "id": "tests_test_install",
-      "label": "test_install.py",
-      "_origin": "ast",
-      "community": 36,
-      "community_name": "test_install.py",
-      "file_type": "code",
-      "norm_label": "test_install.py",
-      "source_file": "tests/test_install.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "tests_test_install_rationale_1",
-      "label": "Installs: the skill reached through a symlink, from a directory that has\u2026",
-      "_origin": "ast",
-      "community": 36,
-      "community_name": "test_install.py",
-      "file_type": "rationale",
-      "norm_label": "installs: the skill reached through a symlink, from a directory that has...",
-      "source_file": "tests/test_install.py",
-      "source_location": "L1"
-    },
-    {
       "id": "tests_test_install_rationale_34",
       "label": "The call SKILL.md teaches, through the link, from a directory unrelated to the\u2026",
       "_origin": "ast",
       "community": 36,
-      "community_name": "test_install.py",
+      "community_name": "ThroughASymlink",
       "file_type": "rationale",
       "norm_label": "the call skill.md teaches, through the link, from a directory unrelated to the...",
       "source_file": "tests/test_install.py",
@@ -13443,14 +13367,47 @@
       "source_location": "L11"
     },
     {
+      "id": "tests_test_batch",
+      "label": "test_batch.py",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "code",
+      "norm_label": "test_batch.py",
+      "source_file": "tests/test_batch.py",
+      "source_location": "L1"
+    },
+    {
       "id": "tests_test_resume",
       "label": "test_resume.py",
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "code",
       "norm_label": "test_resume.py",
       "source_file": "tests/test_resume.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "tests_support_harness_rationale_50",
+      "label": "The `-c` entries a read-only run that can write scratch hands Codex, as\u2026",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "rationale",
+      "norm_label": "the `-c` entries a read-only run that can write scratch hands codex, as...",
+      "source_file": "tests/support/harness.py",
+      "source_location": "L50"
+    },
+    {
+      "id": "tests_test_batch_rationale_1",
+      "label": "Batches: N runs under one name, validated before anything starts, recorded slot\u2026",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "rationale",
+      "norm_label": "batches: n runs under one name, validated before anything starts, recorded slot...",
+      "source_file": "tests/test_batch.py",
       "source_location": "L1"
     },
     {
@@ -13458,18 +13415,29 @@
       "label": "Resuming a thread: its settings stay what they were, it is found by the ref the\u2026",
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "rationale",
       "norm_label": "resuming a thread: its settings stay what they were, it is found by the ref the...",
       "source_file": "tests/test_resume.py",
       "source_location": "L1"
     },
     {
+      "id": "tests_test_resume_rationale_246",
+      "label": "A thread started outside this skill has no recorded sandbox, so the caller has\u2026",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "read_only_profile",
+      "file_type": "rationale",
+      "norm_label": "a thread started outside this skill has no recorded sandbox, so the caller has...",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L246"
+    },
+    {
       "id": "tests_test_resume_rationale_263",
       "label": "Two turns on one thread append to one rollout file. The check and the new run's\u2026",
       "_origin": "ast",
       "community": 5,
-      "community_name": "test_resume.py",
+      "community_name": "read_only_profile",
       "file_type": "rationale",
       "norm_label": "two turns on one thread append to one rollout file. the check and the new run's...",
       "source_file": "tests/test_resume.py",
@@ -13496,6 +13464,17 @@
       "norm_label": "`result --wait` waits for the end, then prints exactly what `result` would;...",
       "source_file": "tests/test_observe.py",
       "source_location": "L449"
+    },
+    {
+      "id": "tests_test_resume_rationale_150",
+      "label": "A read-only run can run tests and builds: it reads anything and writes only\u2026",
+      "_origin": "ast",
+      "community": 54,
+      "community_name": "ReadOnlyWritesScratch",
+      "file_type": "rationale",
+      "norm_label": "a read-only run can run tests and builds: it reads anything and writes only...",
+      "source_file": "tests/test_resume.py",
+      "source_location": "L150"
     },
     {
       "id": "claude_skills_codex_scripts_codex_init",
@@ -13664,6 +13643,39 @@
       "source_location": "L13"
     },
     {
+      "id": "tests_support_harness",
+      "label": "harness.py",
+      "_origin": "ast",
+      "community": 58,
+      "community_name": "wait_until",
+      "file_type": "code",
+      "norm_label": "harness.py",
+      "source_file": "tests/support/harness.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "tests_test_install",
+      "label": "test_install.py",
+      "_origin": "ast",
+      "community": 58,
+      "community_name": "wait_until",
+      "file_type": "code",
+      "norm_label": "test_install.py",
+      "source_file": "tests/test_install.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "tests_test_observe",
+      "label": "test_observe.py",
+      "_origin": "ast",
+      "community": 58,
+      "community_name": "wait_until",
+      "file_type": "code",
+      "norm_label": "test_observe.py",
+      "source_file": "tests/test_observe.py",
+      "source_location": "L1"
+    },
+    {
       "id": "tests_test_run_lifecycle",
       "label": "test_run_lifecycle.py",
       "_origin": "ast",
@@ -13683,6 +13695,39 @@
       "file_type": "code",
       "norm_label": "test_worktree.py",
       "source_file": "tests/test_worktree.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "tests_support_harness_rationale_1",
+      "label": "Scaffolding shared by every test: a throwaway git project, the fake `codex`\u2026",
+      "_origin": "ast",
+      "community": 58,
+      "community_name": "wait_until",
+      "file_type": "rationale",
+      "norm_label": "scaffolding shared by every test: a throwaway git project, the fake `codex`...",
+      "source_file": "tests/support/harness.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "tests_test_install_rationale_1",
+      "label": "Installs: the skill reached through a symlink, from a directory that has\u2026",
+      "_origin": "ast",
+      "community": 58,
+      "community_name": "wait_until",
+      "file_type": "rationale",
+      "norm_label": "installs: the skill reached through a symlink, from a directory that has...",
+      "source_file": "tests/test_install.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "tests_test_observe_rationale_1",
+      "label": "What `status` and `result` say about runs: progress while live, the answer once\u2026",
+      "_origin": "ast",
+      "community": 58,
+      "community_name": "wait_until",
+      "file_type": "rationale",
+      "norm_label": "what `status` and `result` say about runs: progress while live, the answer once...",
+      "source_file": "tests/test_observe.py",
       "source_location": "L1"
     },
     {
@@ -13763,6 +13808,17 @@
       "norm_label": "s6 scenarios",
       "source_file": "tests/e2e/scenarios.md",
       "source_location": "L1"
+    },
+    {
+      "id": "tests_test_observe_rationale_353",
+      "label": "A registry written by 0.4\u20130.7 \u2014 a `review` run, a boolean `priority`, a batch\u2026",
+      "_origin": "ast",
+      "community": 63,
+      "community_name": "AnOlderReleasesRegistry",
+      "file_type": "rationale",
+      "norm_label": "a registry written by 0.4\u20130.7 \u2014 a `review` run, a boolean `priority`, a batch...",
+      "source_file": "tests/test_observe.py",
+      "source_location": "L353"
     },
     {
       "id": "tests_support_init",
@@ -13939,39 +13995,6 @@
       "norm_label": "renders each help paragraph and list item as one physical line, never re-...",
       "source_file": ".claude/skills/codex/scripts/cli.py",
       "source_location": "L131"
-    },
-    {
-      "id": "tests_test_observe",
-      "label": "test_observe.py",
-      "_origin": "ast",
-      "community": 68,
-      "community_name": "test_observe.py",
-      "file_type": "code",
-      "norm_label": "test_observe.py",
-      "source_file": "tests/test_observe.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "tests_test_observe_rationale_1",
-      "label": "What `status` and `result` say about runs: progress while live, the answer once\u2026",
-      "_origin": "ast",
-      "community": 68,
-      "community_name": "test_observe.py",
-      "file_type": "rationale",
-      "norm_label": "what `status` and `result` say about runs: progress while live, the answer once...",
-      "source_file": "tests/test_observe.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "tests_test_observe_rationale_353",
-      "label": "A registry written by 0.4\u20130.7 \u2014 a `review` run, a boolean `priority`, a batch\u2026",
-      "_origin": "ast",
-      "community": 68,
-      "community_name": "test_observe.py",
-      "file_type": "rationale",
-      "norm_label": "a registry written by 0.4\u20130.7 \u2014 a `review` run, a boolean `priority`, a batch...",
-      "source_file": "tests/test_observe.py",
-      "source_location": "L353"
     },
     {
       "id": "claude_skills_codex_scripts_codex_observe_follow",
@@ -19642,7 +19665,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L112",
+      "source_location": "L127",
       "weight": 1.0
     },
     {
@@ -19654,7 +19677,31 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L204",
+      "source_location": "L219",
+      "weight": 1.0
+    },
+    {
+      "source": "tests_e2e_run_e2e_main",
+      "target": "tests_e2e_run_e2e_check_tables",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "tests/e2e/run_e2e.py",
+      "source_location": "L235",
+      "weight": 1.0
+    },
+    {
+      "source": "tests_e2e_run_e2e_main",
+      "target": "tests_e2e_run_e2e_py_path",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "tests/e2e/run_e2e.py",
+      "source_location": "L239",
       "weight": 1.0
     },
     {
@@ -19666,7 +19713,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L222",
+      "source_location": "L242",
       "weight": 1.0
     },
     {
@@ -19678,7 +19725,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L224",
+      "source_location": "L244",
       "weight": 1.0
     },
     {
@@ -19690,7 +19737,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L229",
+      "source_location": "L249",
       "weight": 1.0
     },
     {
@@ -19702,7 +19749,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L231",
+      "source_location": "L251",
       "weight": 1.0
     },
     {
@@ -19714,7 +19761,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L236",
+      "source_location": "L256",
       "weight": 1.0
     },
     {
@@ -19726,7 +19773,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L237",
+      "source_location": "L257",
       "weight": 1.0
     },
     {
@@ -19738,7 +19785,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L70",
+      "source_location": "L85",
       "weight": 1.0
     },
     {
@@ -19750,7 +19797,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L83",
+      "source_location": "L98",
       "weight": 1.0
     },
     {
@@ -30910,7 +30957,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L172",
+      "source_location": "L187",
       "weight": 1.0
     },
     {
@@ -30922,7 +30969,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L42",
+      "source_location": "L57",
       "weight": 1.0
     },
     {
@@ -30934,7 +30981,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L68",
+      "source_location": "L83",
       "weight": 1.0
     },
     {
@@ -30946,7 +30993,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L54",
+      "source_location": "L69",
       "weight": 1.0
     },
     {
@@ -33595,7 +33642,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L108",
+      "source_location": "L123",
       "weight": 1.0
     },
     {
@@ -33606,7 +33653,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L115",
+      "source_location": "L130",
       "weight": 1.0
     },
     {
@@ -33617,7 +33664,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L144",
+      "source_location": "L159",
       "weight": 1.0
     },
     {
@@ -33628,7 +33675,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L162",
+      "source_location": "L177",
       "weight": 1.0
     },
     {
@@ -33639,7 +33686,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L172",
+      "source_location": "L187",
       "weight": 1.0
     },
     {
@@ -33650,7 +33697,18 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L210",
+      "source_location": "L225",
+      "weight": 1.0
+    },
+    {
+      "source": "tests_e2e_run_e2e",
+      "target": "tests_e2e_run_e2e_check_tables",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "tests/e2e/run_e2e.py",
+      "source_location": "L50",
       "weight": 1.0
     },
     {
@@ -33661,7 +33719,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L42",
+      "source_location": "L57",
       "weight": 1.0
     },
     {
@@ -33672,7 +33730,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L47",
+      "source_location": "L62",
       "weight": 1.0
     },
     {
@@ -33683,7 +33741,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L54",
+      "source_location": "L69",
       "weight": 1.0
     },
     {
@@ -33694,7 +33752,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L68",
+      "source_location": "L83",
       "weight": 1.0
     },
     {
@@ -42685,25 +42743,25 @@
       "weight": 1.0
     },
     {
-      "source": "tests_e2e_run_e2e_rationale_116",
+      "source": "tests_e2e_run_e2e_rationale_131",
       "target": "tests_e2e_run_e2e_run_stream",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L116",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
-      "source": "tests_e2e_run_e2e_rationale_163",
+      "source": "tests_e2e_run_e2e_rationale_178",
       "target": "tests_e2e_run_e2e_calls_to_result",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L163",
+      "source_location": "L178",
       "weight": 1.0
     },
     {
@@ -42718,36 +42776,47 @@
       "weight": 1.0
     },
     {
-      "source": "tests_e2e_run_e2e_rationale_43",
+      "source": "tests_e2e_run_e2e_rationale_51",
+      "target": "tests_e2e_run_e2e_check_tables",
+      "relation": "rationale_for",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "tests/e2e/run_e2e.py",
+      "source_location": "L51",
+      "weight": 1.0
+    },
+    {
+      "source": "tests_e2e_run_e2e_rationale_58",
       "target": "tests_e2e_run_e2e_entry",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L43",
+      "source_location": "L58",
       "weight": 1.0
     },
     {
-      "source": "tests_e2e_run_e2e_rationale_48",
+      "source": "tests_e2e_run_e2e_rationale_63",
       "target": "tests_e2e_run_e2e_control_text",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L48",
+      "source_location": "L63",
       "weight": 1.0
     },
     {
-      "source": "tests_e2e_run_e2e_rationale_55",
+      "source": "tests_e2e_run_e2e_rationale_70",
       "target": "tests_e2e_run_e2e_stop_runs",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L55",
+      "source_location": "L70",
       "weight": 1.0
     },
     {
@@ -44145,7 +44214,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "tests/e2e/run_e2e.py",
-      "source_location": "L131",
+      "source_location": "L146",
       "weight": 1.0
     },
     {
@@ -44572,5 +44641,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "a53e26a8366330711b7ad9dd89672e276e079644"
+  "built_at_commit": "de1993f9b6b31118c245ce74cc0c1e40f2a37d61"
 }

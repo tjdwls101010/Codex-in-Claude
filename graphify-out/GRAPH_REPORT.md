@@ -1,27 +1,27 @@
 # Graph Report - codex in claude  (2026-10-09)
 
 ## Corpus Check
-- 79 files · ~83,837 words
+- 79 files · ~84,144 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 9 file(s) not represented in the graph (top: .jsonl 7, (none) 2)
 
 ## Summary
-- 1239 nodes · 2590 edges · 67 communities (45 shown, 21 thin omitted)
+- 1241 nodes · 2594 edges · 70 communities (44 shown, 25 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 43 edges (avg confidence: 0.86)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `a53e26a8`
+- Built from commit: `de1993f9`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - events.py
 - .finished
-- read_only_profile
+- BatchCase
 - cli.py
 - codex_cli/__init__.py
-- test_resume.py
+- read_only_profile
 - Result
 - follow.py
 - BridgeCase
@@ -52,7 +52,7 @@
 - create.py
 - engine
 - HelpIsTheInterface
-- test_install.py
+- ThroughASymlink
 - AStaleReap
 - runs.py
 - StopLadder
@@ -70,16 +70,19 @@
 - Graph-First Navigation
 - VersionFloors
 - WaitingForTheResult
+- ReadOnlyWritesScratch
 - codex/__init__.py
+- TerminalStates
 - codex 스킬 재작성 계획
 - wait_until
 - Scoped Contribution Workflow
 - scenarios.md
 - Graphify-First Codebase Navigation
 - Tiered Contribution Verification
+- AnOlderReleasesRegistry
 - result.py
 - OneLinePerParagraph
-- test_observe.py
+- StatusOfOneRun
 - AStateThatMovesWhileItIsRead
 - APidAnotherProcessNowHolds
 
@@ -110,7 +113,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (67 total, 21 thin omitted)
+## Communities (70 total, 25 thin omitted)
 
 ### Community 0 - "events.py"
 Cohesion: 0.10
@@ -120,9 +123,9 @@ Nodes (33): changed_paths(), event_lines(), _format_item(), head_tail(), _indent
 Cohesion: 0.06
 Nodes (11): Clean, Overlaps, A checkout is `git worktree add` output: tracked files at the base commit and…, This CLI's own call for `words`, written out whole the way the pre-approval…, Run a command a reply handed back, as the caller would: exactly as written,…, A batch that continues each member of an earlier one: a tasks file with one…, Codex reports absolute paths, and each checkout has its own prefix, so paths…, Append a file_change naming these absolute paths, the shape real events have. (+3 more)
 
-### Community 2 - "read_only_profile"
-Cohesion: 0.06
-Nodes (18): The `-c` entries a read-only run that can write scratch hands Codex, as…, read_only_profile(), AMalformedRegistry, BatchCase, NextRound, OneMemberFailingDoesNotTakeTheOthers, Batches: N runs under one name, validated before anything starts, recorded slot…, A read-only member is a read-only run: it gets the profile that writes scratch,… (+10 more)
+### Community 2 - "BatchCase"
+Cohesion: 0.09
+Nodes (10): BatchCase, NextRound, OneMemberFailingDoesNotTakeTheOthers, A read-only member is a read-only run: it gets the profile that writes scratch,…, A next round is a batch whose tasks resume the earlier members' threads, one…, A batch that continues each member of an earlier one: a tasks file with one…, ReadOnlyMembers, Starting (+2 more)
 
 ### Community 3 - "cli.py"
 Cohesion: 0.10
@@ -132,9 +135,9 @@ Nodes (27): add_common(), add_run_options(), build_parser(), cmd_result(), cmd_r
 Cohesion: 0.08
 Nodes (44): check_task_settings(), Refuse what would refuse a member — a Codex too old for an isolated member, a…, apply_preamble(), The `codex exec` argv for a run, and the paragraphs put in front of its prompt.…, The caller's uncommitted work is absent from a checkout either way; only the…, Prepend the run-context paragraphs. Not optional., Why a read-only run in `cwd` cannot write scratch on this install, as the note…, read_only_blocker() (+36 more)
 
-### Community 5 - "test_resume.py"
-Cohesion: 0.14
-Nodes (6): FindingTheThread, OneTurnPerThread, Resuming a thread: its settings stay what they were, it is found by the ref the…, Two turns on one thread append to one rollout file. The check and the new run's…, ResumeCase, SettingsAreReasserted
+### Community 5 - "read_only_profile"
+Cohesion: 0.09
+Nodes (12): The `-c` entries a read-only run that can write scratch hands Codex, as…, read_only_profile(), AMalformedRegistry, Batches: N runs under one name, validated before anything starts, recorded slot…, FindingTheThread, OneTurnPerThread, Resuming a thread: its settings stay what they were, it is found by the ref the…, A thread started outside this skill has no recorded sandbox, so the caller has… (+4 more)
 
 ### Community 6 - "Result"
 Cohesion: 0.09
@@ -181,8 +184,8 @@ Cohesion: 0.12
 Nodes (7): OutputFrame, The CLI's output frame, its selector rules, and what reaches `codex`. Callers…, Two selectors name different things; honouring one silently drops the other., Flags nothing used, removed from the parser rather than left to accept and do…, RemovedSurface, SelectorsAreExclusive, TheRegistryGoesWhereItIsTold
 
 ### Community 18 - "run_e2e.py"
-Cohesion: 0.18
-Nodes (17): base_cmd(), calls_to_result(), control_text(), digest(), entry(), main(), Path, A session whose stdin stays open, so a finished background task can start… (+9 more)
+Cohesion: 0.17
+Nodes (19): base_cmd(), calls_to_result(), check_tables(), control_text(), digest(), entry(), main(), Path (+11 more)
 
 ### Community 21 - "resolve"
 Cohesion: 0.15
@@ -226,11 +229,11 @@ Nodes (29): build_argv(), Compose the argv from a run's recorded settings, re-as
 
 ### Community 34 - "engine"
 Cohesion: 0.08
-Nodes (19): engine(), Scaffolding shared by every test: a throwaway git project, the fake `codex`…, Import a unit's interface (`"codex.runs"`, `"codex.registry"`, …) from the…, `codex.codex_cli`'s `user_defaults` and `config_summary`: the top-level values…, AHalfWrittenLine, Reading a run's event stream: damaged lines that are counted rather than…, Where the registry is: one per repository, in its main checkout's `.codex-…, AFailureInsideALockIsReportedAsItself (+11 more)
+Nodes (18): engine(), Import a unit's interface (`"codex.runs"`, `"codex.registry"`, …) from the…, `codex.codex_cli`'s `user_defaults` and `config_summary`: the top-level values…, AHalfWrittenLine, Reading a run's event stream: damaged lines that are counted rather than…, Where the registry is: one per repository, in its main checkout's `.codex-…, AFailureInsideALockIsReportedAsItself, ManyRunsAtOnce (+10 more)
 
-### Community 36 - "test_install.py"
-Cohesion: 0.32
-Nodes (4): Installs: the skill reached through a symlink, from a directory that has…, The call SKILL.md teaches, through the link, from a directory unrelated to the…, ThroughASymlink, finished()
+### Community 36 - "ThroughASymlink"
+Cohesion: 0.47
+Nodes (3): The call SKILL.md teaches, through the link, from a directory unrelated to the…, ThroughASymlink, finished()
 
 ### Community 38 - "runs.py"
 Cohesion: 0.09
@@ -281,31 +284,27 @@ Cohesion: 0.17
 Nodes (11): codex 스킬 재작성 계획, Context, --help·에러 메시지 작성 규칙 (PR5), SKILL.md 섹션 구조 (한 파일, 목표 약 130줄 이하), 검증 (전체 완료 판정), 단계 (PR별, 각 단계의 완료 판정 포함), 참고: 재사용하는 기존 코드, 최종 디렉터리 구조 (+3 more)
 
 ### Community 58 - "wait_until"
-Cohesion: 0.11
-Nodes (8): alive(), wait_until(), AnOrphanThatIsStillWriting, LegacyWaitingRun, A run's life: detached start, every terminal state, the stop ladder, and what a…, Releases before 0.8 could leave a batch member `waiting` on its predecessor.…, TerminalStates, `batch --worktree`: which members get a checkout, what the checkout holds, how…
+Cohesion: 0.13
+Nodes (10): alive(), Scaffolding shared by every test: a throwaway git project, the fake `codex`…, wait_until(), Installs: the skill reached through a symlink, from a directory that has…, What `status` and `result` say about runs: progress while live, the answer once…, AnOrphanThatIsStillWriting, LegacyWaitingRun, A run's life: detached start, every terminal state, the stop ladder, and what a… (+2 more)
 
 ### Community 65 - "result.py"
 Cohesion: 0.15
 Nodes (26): final_message(), member_result(), read(), overlaps(), Collecting a group: what each member concluded and which paths more than one…, A run's `-o` file as written, or None when there is none yet., What a run concluded: its `-o` file (`raw`, from `read_final`) decoded as UTF-8…, One member of `result --group`: its row, the part of its message that is shown,… (+18 more)
 
-### Community 68 - "test_observe.py"
-Cohesion: 0.17
-Nodes (4): AnOlderReleasesRegistry, What `status` and `result` say about runs: progress while live, the answer once…, A registry written by 0.4–0.7 — a `review` run, a boolean `priority`, a batch…, StatusOfOneRun
-
 ## Knowledge Gaps
 - **68 isolated node(s):** `Context`, `합의 장부`, `최종 디렉터리 구조`, `SKILL.md 섹션 구조 (한 파일, 목표 약 130줄 이하)`, `--help·에러 메시지 작성 규칙 (PR5)` (+63 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 515 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **21 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 516 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **25 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `BridgeCase` connect `BridgeCase` to `.finished`, `read_only_profile`, `test_resume.py`, `Result`, `git`, `EventLines`, `DamagedLines`, `test_cli_contract.py`, `WhatReachesCodex`, `test_catalog.py`, `Doctor`, `ExitCodes`, `test_doctor.py`, `TheNextStep`, `engine`, `HelpIsTheInterface`, `test_install.py`, `StopLadder`, `WaitingForTheResult`, `wait_until`, `test_observe.py`, `AStateThatMovesWhileItIsRead`, `APidAnotherProcessNowHolds`?**
-  _High betweenness centrality (0.475) - this node is a cross-community bridge._
+- **Why does `BridgeCase` connect `BridgeCase` to `.finished`, `BatchCase`, `read_only_profile`, `Result`, `git`, `EventLines`, `DamagedLines`, `test_cli_contract.py`, `WhatReachesCodex`, `test_catalog.py`, `Doctor`, `ExitCodes`, `test_doctor.py`, `TheNextStep`, `engine`, `HelpIsTheInterface`, `ThroughASymlink`, `StopLadder`, `WaitingForTheResult`, `TerminalStates`, `wait_until`, `AnOlderReleasesRegistry`, `StatusOfOneRun`, `AStateThatMovesWhileItIsRead`, `APidAnotherProcessNowHolds`?**
+  _High betweenness centrality (0.478) - this node is a cross-community bridge._
 - **Why does `check()` connect `create.py` to `Refusal`, `engine`?**
-  _High betweenness centrality (0.283) - this node is a cross-community bridge._
+  _High betweenness centrality (0.281) - this node is a cross-community bridge._
 - **Why does `Refusal` connect `Refusal` to `result.py`, `create.py`, `cli.py`, `codex_cli/__init__.py`, `runs.py`, `follow.py`, `runs/commands.py`, `registry/__init__.py`?**
-  _High betweenness centrality (0.186) - this node is a cross-community bridge._
+  _High betweenness centrality (0.185) - this node is a cross-community bridge._
 - **Are the 5 inferred relationships involving `Refusal` (e.g. with `main()` and `spawn_members()`) actually correct?**
   _`Refusal` has 5 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `Context`, `합의 장부`, `최종 디렉터리 구조` to the rest of the system?**

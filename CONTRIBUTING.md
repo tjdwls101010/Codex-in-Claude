@@ -48,15 +48,15 @@ It drives the real `cli.py` as a subprocess, with a fake `codex` executable (`te
 CODEX_BRIDGE_REAL=1 python3 tests/smoke_real_codex.py
 ```
 
-Starts, follows, collects and resumes a real thread in a throwaway repository and a `CODEX_HOME` of its own, then reads the rollout Codex wrote to check that the resumed turn ran under the sandbox the thread started with. Run it when your change touches how the CLI invokes `codex` (argv, sandbox/model/effort handling, process lifecycle).
+Starts, waits for, collects and resumes real threads in a throwaway repository outside `TMPDIR` and a `CODEX_HOME` of its own, then reads the rollout Codex wrote: a resumed turn ran under the sandbox its thread started with, and a read-only turn wrote `TMPDIR` and `~/.cache` but not its directory or the network, judged on disk and by the rollout's `permission_profile`. Run it when your change touches how the CLI invokes `codex` (argv, sandbox/model/effort handling, process lifecycle).
 
 **S6 — real headless Claude sessions with the skill, consumes tokens:**
 
 ```bash
-python3 tests/e2e/run_e2e.py --scenario 1 --variant draft --out /tmp/e2e
+python3 tests/e2e/run_e2e.py --scenario 1 --variant draft --out .tmp/e2e
 ```
 
-Runs one scenario from `tests/e2e/scenarios.md` in a session that loads only this skill — as written (`draft`), as a control without its judgement text (`control`), or as released in v0.9.0 (`baseline`) — and saves a digest of every tool call, ending in a `METRICS` line. Run it when you change `SKILL.md`, and compare the variants against the scenario's pass criteria and each other's metrics.
+Runs one scenario from `tests/e2e/scenarios.md` in a session that loads only this skill — as written (`draft`), as a control without its judgement text (`control`), or as released in v0.10.0 (`baseline`) — and saves a digest of every tool call, ending in a `METRICS` line. `--out` must be outside `TMPDIR`, which a read-only run may write. Run it when you change `SKILL.md`, and compare the variants against the scenario's pass criteria and each other's metrics.
 
 **Plugin validation:**
 

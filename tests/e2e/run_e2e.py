@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one S6 scenario against the draft, the control or the v0.9.0 skill, isolated, and save what the session did.
+"""Run one S6 scenario against the draft, the control or the released skill, isolated, and save what the session did.
 
     python3 tests/e2e/run_e2e.py --scenario 1 --variant draft --out /tmp/e2e
 
@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -26,6 +27,12 @@ FILES = {
     2: {"src/app.py": "def greet(name):\n    return 'Hello, ' + name\n\n\ndef add(a, b):\n    return a + b\n\n\ndef shout(text):\n    return text.upper() + '!'\n"},
     3: {"src/util.py": "import os\n\n\ndef join(a, b):\n    return os.path.join(a, b)\n\n\ndef stem(path):\n    return os.path.splitext(os.path.basename(path))[0]\n\n\ndef exists(path):\n    return os.path.exists(path)\n"},
     4: {"src/calc.py": "def average(values):\n    return sum(values) / len(values)\n", "README.md": "# tiny\n\nA tiny calculator package.\n"},
+    # The test writes its file under a temporary directory, so it runs only where the run may write TMPDIR; the planted bug shows when it runs.
+    5: {"src/__init__.py": "",
+        "src/report.py": "from pathlib import Path\n\n\ndef write_report(rows, path):\n    \"\"\"Write one `name: value` line per row, in name order, and return how many lines were written.\"\"\"\n    lines = [f\"{name}: {value}\" for name, value in sorted(rows.items(), key=lambda kv: kv[1])]\n    Path(path).write_text(\"\\n\".join(lines) + \"\\n\")\n    return len(lines)\n",
+        "tests/__init__.py": "",
+        "tests/test_report.py": "import tempfile\nimport unittest\nfrom pathlib import Path\n\nfrom src.report import write_report\n\n\nclass WriteReport(unittest.TestCase):\n\n    def test_lines_are_in_name_order(self):\n        with tempfile.TemporaryDirectory() as d:\n            path = Path(d) / \"report.txt\"\n            self.assertEqual(write_report({\"beta\": 1, \"alpha\": 2}, path), 2)\n            self.assertEqual(path.read_text().splitlines(), [\"alpha: 2\", \"beta: 1\"])\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n",
+        "README.md": "# report\n\nRun the tests with `python3 -m unittest discover`.\n"},
 }
 
 PROMPTS = {
@@ -34,9 +41,17 @@ PROMPTS = {
     3: ["Ask Codex to add type hints to every function in src/util.py. Let it work in the background; don't wait for it in this turn.",
         "Change of plan: that Codex run should also give every function a one-line docstring — same work, one more requirement."],
     4: ["Ask Codex for a short summary of what this repository contains and tell me. This is a one-shot session: you get no later turn, so finish within this reply."],
+    5: ["Have Codex check src/report.py by actually running its tests, and tell me what it finds. Don't change any files."],
 }
-HOST = {1: "stream", 2: "stream", 3: "resume", 4: "print"}
-BASELINE = "v0.9.0"
+HOST = {1: "stream", 2: "stream", 3: "resume", 4: "print", 5: "stream"}
+BASELINE = "v0.10.0"
+
+
+def check_tables():
+    """Every scenario has its files, prompts and host, so a scenario added to one table cannot run half-defined."""
+    keys = [set(FILES), set(PROMPTS), set(HOST)]
+    if any(k != keys[0] for k in keys):
+        raise SystemExit(f"scenario tables disagree: FILES={sorted(keys[0])} PROMPTS={sorted(keys[1])} HOST={sorted(keys[2])}")
 
 
 def entry(plugin: Path) -> str:
@@ -217,8 +232,13 @@ def main():
     ap.add_argument("--idle", type=float, default=240, help="stream hosts: seconds of quiet after a result before stdin is closed (default: 240)")
     ap.add_argument("--cap", type=float, default=1800, help="stream hosts: longest a session may run, in seconds (default: 1800)")
     args = ap.parse_args()
+    check_tables()
     # the session runs with the repo as its cwd, so every path handed to it must be absolute
     out = args.out.resolve() / f"{args.scenario}-{args.variant}"
+    # A read-only run may write TMPDIR, so a repo inside it would look writable and the scenario would prove nothing about the tree.
+    tmp = Path(tempfile.gettempdir()).resolve()
+    if out == tmp or tmp in out.parents:
+        raise SystemExit(f"--out must be outside TMPDIR ({tmp})")
     plugin, repo, home, settings = setup(out, args.scenario, args.variant)
     env = {**os.environ, "CODEX_HOME": str(home)}
     cmd = base_cmd(plugin, settings, args.model)
